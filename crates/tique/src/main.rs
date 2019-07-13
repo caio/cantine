@@ -1,7 +1,9 @@
-use actix_web::{web, App, HttpResponse, HttpServer, Responder, Result as ActixResult};
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Arc;
+
+use actix_web::{error, web, App, HttpResponse, HttpServer, Responder, Result as ActixResult};
+
 use tantivy::collector::TopDocs;
 use tantivy::query::QueryParser;
 use tantivy::schema::{Document, Field, SchemaBuilder, STORED, TEXT};
@@ -40,20 +42,20 @@ fn search(
     println!("Searching: {:?}", query);
 
     let searcher = state.index_reader.searcher();
-    let query = state
+    let parsed_query = state
         .query_parser
         .parse_query(&*query.q)
-        .expect("Failed to parse query");
+        .map_err(|_e| error::ErrorBadRequest("failed to parse"))?;
 
     let top_docs = searcher
-        .search(&query, &TopDocs::with_limit(10))
-        .expect("Failed to execute search");
+        .search(&parsed_query, &TopDocs::with_limit(10))
+        .map_err(|_e| error::ErrorInternalServerError("failed to search"))?;
 
     let found_ids = top_docs
         .iter()
-        .map(|(_, d)| {
+        .map(|(_, addr)| {
             searcher
-                .doc(*d)
+                .doc(*addr)
                 .expect("search found doc that doesnt exist?")
                 .get_first(state.id_field)
                 .expect("id field empty?")
