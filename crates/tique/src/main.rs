@@ -41,17 +41,16 @@ fn search(
 ) -> ActixResult<HttpResponse> {
     println!("Searching: {:?}", query);
 
-    let searcher = state.index_reader.searcher();
     let parsed_query = state
         .query_parser
         .parse_query(&*query.q)
         .map_err(|_e| error::ErrorBadRequest("failed to parse"))?;
 
-    let top_docs = searcher
-        .search(&parsed_query, &TopDocs::with_limit(10))
-        .map_err(|_e| error::ErrorInternalServerError("failed to search"))?;
+    let searcher = state.index_reader.searcher();
 
-    let found_ids = top_docs
+    let found_ids = searcher
+        .search(&parsed_query, &TopDocs::with_limit(10))
+        .map_err(|_e| error::ErrorInternalServerError("failed to search"))?
         .iter()
         .map(|(_, addr)| {
             searcher
