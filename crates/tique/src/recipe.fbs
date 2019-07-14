@@ -1,0 +1,6 @@
+table Recipe {
+  id:long;
+  name:string;
+}
+
+root_type Recipe;

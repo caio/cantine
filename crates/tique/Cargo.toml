@@ -4,8 +4,12 @@ version = "0.1.0"
 authors = ["Caio Romão <hello@caio.co>"]
 edition = "2018"
 
+[build-dependencies]
+flatc-rust = "*"
+
 [dependencies]
 tantivy = "0.10"
 actix-web = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+flatbuffers = "0.5"
