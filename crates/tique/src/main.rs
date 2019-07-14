@@ -44,23 +44,25 @@ fn search(
     let parsed_query = state
         .query_parser
         .parse_query(&*query.q)
-        .map_err(|_e| error::ErrorBadRequest("failed to parse"))?;
+        .map_err(|_| error::ErrorBadRequest("failed to parse query"))?;
 
     let searcher = state.index_reader.searcher();
 
-    let found_ids = searcher
+    let top_docs = searcher
         .search(&parsed_query, &TopDocs::with_limit(10))
-        .map_err(|_e| error::ErrorInternalServerError("failed to search"))?
-        .iter()
-        .map(|(_, addr)| {
+        .map_err(|_| error::ErrorInternalServerError("failed to execute search"))?;
+
+    let mut found_ids = Vec::new();
+    for (_, addr) in top_docs.iter() {
+        found_ids.push(
             searcher
                 .doc(*addr)
-                .expect("search found doc that doesnt exist?")
+                .map_err(|_| error::ErrorInternalServerError("doc not found"))?
                 .get_first(state.id_field)
-                .expect("id field empty?")
-                .u64_value()
-        })
-        .collect();
+                .ok_or_else(|| error::ErrorInternalServerError("id field not found"))?
+                .u64_value(),
+        );
+    }
 
     Ok(HttpResponse::Ok().json(SearchResult {
         recipe_ids: found_ids,
