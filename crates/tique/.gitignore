@@ -1,5 +1,5 @@
 .vscode/
-src/*_generated.rs
+**/*_generated.rs
 
 /target/
 **/*.rs.bk

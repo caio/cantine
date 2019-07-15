@@ -10,8 +10,7 @@ use tantivy::schema::{Document, Field, SchemaBuilder, FAST, STORED, TEXT};
 use tantivy::ReloadPolicy;
 use tantivy::{Index, IndexReader};
 
-#[allow(dead_code, unused_imports)]
-mod recipe_generated;
+mod database;
 
 struct AppState {
     counter: Arc<AtomicU16>,
