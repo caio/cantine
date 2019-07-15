@@ -6,13 +6,12 @@ use actix_web::{error, web, App, HttpResponse, HttpServer, Responder, Result as 
 
 use tantivy::collector::TopDocs;
 use tantivy::query::QueryParser;
-use tantivy::schema::{Document, Field, SchemaBuilder, STORED, FAST, TEXT};
+use tantivy::schema::{Document, Field, SchemaBuilder, FAST, STORED, TEXT};
 use tantivy::ReloadPolicy;
 use tantivy::{Index, IndexReader};
 
 #[allow(dead_code, unused_imports)]
-#[path = "../target/flatbuffers/recipe_generated.rs"]
-mod recipe_flatbuffers;
+mod recipe_generated;
 
 struct AppState {
     counter: Arc<AtomicU16>,

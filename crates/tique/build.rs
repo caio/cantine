@@ -6,7 +6,8 @@ fn main() {
     println!("cargo:rerun-if-changed=src/main.rs");
     flatc_rust::run(flatc_rust::Args {
         inputs: &[Path::new("src/recipe.fbs")],
-        out_dir: Path::new("target/flatbuffers/"),
+        out_dir: Path::new("src/"),
         ..Default::default()
-    }).expect("flatc");
+    })
+    .expect("flatc");
 }
