@@ -6,15 +6,13 @@ use actix_web::{error, web, App, HttpResponse, HttpServer, Responder, Result as 
 
 use tantivy::collector::TopDocs;
 use tantivy::query::QueryParser;
-use tantivy::schema::{Document, Field, SchemaBuilder, STORED, TEXT};
+use tantivy::schema::{Document, Field, SchemaBuilder, STORED, FAST, TEXT};
 use tantivy::ReloadPolicy;
 use tantivy::{Index, IndexReader};
 
 #[allow(dead_code, unused_imports)]
 #[path = "../target/flatbuffers/recipe_generated.rs"]
 mod recipe_flatbuffers;
-
-use recipe_flatbuffers::get_root_as_recipe;
 
 struct AppState {
     counter: Arc<AtomicU16>,
@@ -75,15 +73,15 @@ fn search(
     }))
 }
 
-fn init_search() -> SearchState {
+fn init_search() -> Result<SearchState, tantivy::Error> {
     let mut schema_builder = SchemaBuilder::default();
 
-    let id = schema_builder.add_u64_field("id", STORED);
+    let id = schema_builder.add_u64_field("id", STORED | FAST);
     let title = schema_builder.add_text_field("title", TEXT);
 
     let schema = schema_builder.build();
     let index = Index::create_in_ram(schema.clone());
-    let mut writer = index.writer(5_000_000).unwrap();
+    let mut writer = index.writer(5_000_000)?;
 
     let make_doc = |i: u64, t: &str| -> Document {
         let mut doc = Document::new();
@@ -97,17 +95,16 @@ fn init_search() -> SearchState {
     writer.add_document(make_doc(2, "caio romao"));
     writer.add_document(make_doc(3, "caio romao costa nascimento"));
 
-    writer.commit().unwrap();
+    writer.commit()?;
 
-    SearchState {
+    Ok(SearchState {
         index_reader: index
             .reader_builder()
             .reload_policy(ReloadPolicy::OnCommit)
-            .try_into()
-            .unwrap(),
+            .try_into()?,
         query_parser: QueryParser::for_index(&index, vec![title]),
         id_field: id,
-    }
+    })
 }
 
 fn main() -> Result<(), std::io::Error> {
@@ -116,10 +113,11 @@ fn main() -> Result<(), std::io::Error> {
             .data(AppState {
                 counter: Arc::new(AtomicU16::new(0)),
             })
-            .data(init_search())
+            .data(init_search().unwrap())
             .route("/", web::get().to(index_))
             .route("/search", web::post().to(search))
     })
     .bind("0.0.0.0:42000")?
-    .run()
+    .run()?;
+    Ok(())
 }
