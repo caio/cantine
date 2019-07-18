@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::prelude::Seek;
-use std::io::BufReader;
+use std::io::BufWriter;
 use std::io::Read;
 use std::io::SeekFrom;
 use std::io::Write;
@@ -41,18 +41,9 @@ struct MappedData {
     data: Mmap,
 }
 
-impl MappedData {
-    fn read_log_entry(&self, from_offset: usize) -> (u64, u64) {
-        // assert from_offset % 16 == 0
-        let id = LittleEndian::read_u64(&self.log[from_offset..]);
-        let offset = LittleEndian::read_u64(&self.log[from_offset..]);
-        return (id, offset);
-    }
-}
-
 trait BytesDatabase {
     fn size(&self) -> usize;
-    fn add(&self, id: u64, payload: &[u8]) -> Result<()>;
+    fn add(&mut self, id: u64, payload: &mut [u8]) -> Result<()>;
     fn get(&self, id: u64) -> Result<()>;
 }
 
@@ -61,7 +52,13 @@ impl BytesDatabase for Database {
         self.index.len()
     }
 
-    fn add(&self, id: u64, payload: &[u8]) -> Result<()> {
+    fn add(&mut self, id: u64, payload: &mut [u8]) -> Result<()> {
+        self.data.write_all(payload)?;
+        let offset = self.data.seek(SeekFrom::Current(0))?;
+
+        self.log.write_u64::<LittleEndian>(id)?;
+        self.log.write_u64::<LittleEndian>(offset)?;
+
         Ok(())
     }
 
@@ -73,6 +70,7 @@ impl BytesDatabase for Database {
 impl Database {
     pub fn reload(&mut self) -> Result<()> {
         let log_len = self.log.metadata()?.len();
+        println!("Log has size={}", log_len);
 
         // Empty database, nothing to do
         if log_len == 0 {
@@ -86,7 +84,7 @@ impl Database {
             }
         }
 
-        let mut position = self.log.seek(SeekFrom::Current(0))?;
+        let position = self.log.seek(SeekFrom::Current(0))?;
 
         if position >= log_len {
             return Err(io::Error::new(
@@ -112,16 +110,16 @@ impl Database {
         let mut new_entries = new_data_len / 16;
         println!("New entries found: {}", new_entries);
 
-        let mut pos = position as usize;
-        let log_map = self.mapped.as_ref().expect("shouldn't happen");
+        let m = &self.mapped.as_ref().expect("Never happens").log;
+        let mut cursor = io::Cursor::new(m);
 
         while new_entries > 0 {
-            let (id, offset) = log_map.read_log_entry(pos);
+            let id = cursor.read_u64::<LittleEndian>()?;
+            let offset = cursor.read_u64::<LittleEndian>()?;
+
             println!("Entry[ id: {}, offset: {} ]", id, offset);
 
             self.index.insert(id, offset);
-
-            pos += 16;
             new_entries -= 1;
         }
 
@@ -148,12 +146,16 @@ impl Database {
             .create(true)
             .open(base_dir.join("data.bin"))?;
 
-        Ok(Database {
+        let mut db = Database {
             log: log,
             data: data,
             index: HashMap::new(),
             mapped: None,
-        })
+        };
+
+        db.reload()?;
+
+        Ok(db)
     }
 }
 
@@ -165,6 +167,16 @@ mod tests {
     #[test]
     fn test_runme() {
         let tempdir = TempDir::new().expect("Unable to create tempdir");
-        let db = Database::open(tempdir.path());
+        let mut db = Database::open(tempdir.path()).unwrap();
+
+        db.reload().unwrap();
+
+        db.add(1, std::slice::from_mut(&mut 1u8)).unwrap();
+        db.reload().unwrap();
+
+        db.add(2, std::slice::from_mut(&mut 2u8)).unwrap();
+        db.add(3, std::slice::from_mut(&mut 3u8)).unwrap();
+
+        db.reload().unwrap();
     }
 }
