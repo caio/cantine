@@ -1,5 +1,5 @@
 table Recipe {
-  id:long;
+  id:ulong;
   name:string;
 }
 

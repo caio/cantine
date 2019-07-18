@@ -1,64 +1,160 @@
-use memmap::Mmap;
+use memmap::{Mmap, MmapOptions};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::prelude::Seek;
+use std::io::BufReader;
 use std::io::Read;
 use std::io::SeekFrom;
 use std::io::Write;
+use std::path::Path;
 use tempfile::TempDir;
+
+use byteorder::{ByteOrder, LittleEndian, ReadBytesExt, WriteBytesExt};
+use std::io;
+
+use recipe_generated::{
+    finish_size_prefixed_recipe_buffer, get_size_prefixed_root_as_recipe,
+    Recipe as GeneratedRecipe, RecipeArgs,
+};
+
+use flatbuffers::FlatBufferBuilder;
 
 #[allow(dead_code, unused_imports)]
 mod recipe_generated;
 
-use recipe_generated::{Recipe, RecipeArgs};
+pub type Error = io::Error;
+pub type Result<T> = io::Result<T>;
 
-#[allow(dead_code)]
-pub fn run() -> std::io::Result<()> {
-    let tmpdir = TempDir::new().expect("Unable to create tempdir");
+pub struct Database {
+    log: File,
+    data: File,
 
-    let mut db_file = tmpdir.into_path();
-    db_file.push("test.mmap");
+    mapped: Option<MappedData>,
 
-    println!("{:?}", db_file);
+    index: HashMap<u64, u64>,
+}
 
-    let mut file = OpenOptions::new()
-        .read(true)
-        .append(true)
-        .create(true)
-        .open(db_file.into_os_string())?;
+struct MappedData {
+    log: Mmap,
+    data: Mmap,
+}
 
-    let mut fb_builder = flatbuffers::FlatBufferBuilder::new();
+impl MappedData {
+    fn read_log_entry(&self, from_offset: usize) -> (u64, u64) {
+        // assert from_offset % 16 == 0
+        let id = LittleEndian::read_u64(&self.log[from_offset..]);
+        let offset = LittleEndian::read_u64(&self.log[from_offset..]);
+        return (id, offset);
+    }
+}
 
-    let name = fb_builder.create_string("Caio");
-    let recipe = Recipe::create(
-        &mut fb_builder,
-        &RecipeArgs {
-            id: 1,
-            name: Some(name),
-        },
-    );
+trait BytesDatabase {
+    fn size(&self) -> usize;
+    fn add(&self, id: u64, payload: &[u8]) -> Result<()>;
+    fn get(&self, id: u64) -> Result<()>;
+}
 
-    fb_builder.finish_size_prefixed(recipe, None);
+impl BytesDatabase for Database {
+    fn size(&self) -> usize {
+        self.index.len()
+    }
 
-    let ser_data = fb_builder.finished_data();
+    fn add(&self, id: u64, payload: &[u8]) -> Result<()> {
+        Ok(())
+    }
 
-    file.write_all(ser_data)?;
-    file.sync_all()?;
+    fn get(&self, id: u64) -> Result<()> {
+        Ok(())
+    }
+}
 
-    file.seek(SeekFrom::Start(0))?;
+impl Database {
+    pub fn reload(&mut self) -> Result<()> {
+        let log_len = self.log.metadata()?.len();
 
-    let mut buf: Vec<u8> = Vec::new();
+        // Empty database, nothing to do
+        if log_len == 0 {
+            return Ok(());
+        }
 
-    file.read_to_end(buf.as_mut())?;
+        if let Some(current_mapping) = &self.mapped {
+            // No changes, nothing to do
+            if (current_mapping.log.len() as u64) == log_len {
+                return Ok(());
+            }
+        }
 
-    let r = recipe_generated::get_size_prefixed_root_as_recipe(buf.as_slice());
+        let mut position = self.log.seek(SeekFrom::Current(0))?;
 
-    println!("Id: {} Name: {}", r.id(), r.name().expect("fml"));
+        if position >= log_len {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Didn't this grow?",
+            ));
+        }
 
-    let mmap = unsafe { Mmap::map(&file).expect("Failed to mmap()") };
+        let new_data_len = log_len - position;
 
-    let rw_mmap = mmap.make_mut().expect("Failed to set +w on mmap()ed file");
+        if new_data_len % 16 != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Log should only have <u64><u64> pairs",
+            ));
+        }
 
-    Ok(())
+        self.mapped.replace(MappedData {
+            log: unsafe { Mmap::map(&self.log)? },
+            data: unsafe { Mmap::map(&self.data)? },
+        });
+
+        let mut new_entries = new_data_len / 16;
+        println!("New entries found: {}", new_entries);
+
+        let mut pos = position as usize;
+        let log_map = self.mapped.as_ref().expect("shouldn't happen");
+
+        while new_entries > 0 {
+            let (id, offset) = log_map.read_log_entry(pos);
+            println!("Entry[ id: {}, offset: {} ]", id, offset);
+
+            self.index.insert(id, offset);
+
+            pos += 16;
+            new_entries -= 1;
+        }
+
+        Ok(())
+    }
+
+    pub fn open(base_dir: &Path) -> Result<Database> {
+        if !base_dir.is_dir() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Not a directory",
+            ));
+        }
+
+        let log = OpenOptions::new()
+            .read(true)
+            .append(true)
+            .create(true)
+            .open(base_dir.join("log.bin"))?;
+
+        let data = OpenOptions::new()
+            .read(true)
+            .append(true)
+            .create(true)
+            .open(base_dir.join("data.bin"))?;
+
+        Ok(Database {
+            log: log,
+            data: data,
+            index: HashMap::new(),
+            mapped: None,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -68,6 +164,7 @@ mod tests {
 
     #[test]
     fn test_runme() {
-        run().unwrap();
+        let tempdir = TempDir::new().expect("Unable to create tempdir");
+        let db = Database::open(tempdir.path());
     }
 }
