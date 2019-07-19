@@ -1,7 +1,6 @@
 use memmap::{MmapMut, MmapOptions};
 use std::fs::{File, OpenOptions};
 use std::io;
-use std::io::Write;
 use std::path::Path;
 
 type Result<T> = super::Result<T>;
@@ -34,9 +33,14 @@ impl AppendOnlyMappedFile {
     }
 
     pub fn append(&mut self, data: &[u8]) -> Result<()> {
-        // XXX would it be better to grow+remap+write instead?
-        self.file.write_all(data)?;
+        let current_len = self.len();
+        let target_size = current_len + data.len();
+
+        self.file.set_len(target_size as u64)?;
         self.remap()?;
+
+        let mmap = self.mmap.as_mut().expect("Impossible?");
+        mmap[current_len..].copy_from_slice(data);
         Ok(())
     }
 
@@ -53,19 +57,19 @@ impl AppendOnlyMappedFile {
         self.mmap.as_ref().map_or(Ok(()), |mmap| mmap.flush())
     }
 
-    pub fn read(&self, offset: usize, length: usize) -> Result<&[u8]> {
+    pub fn from_offset(&self, offset: usize) -> Result<&[u8]> {
         let mmap = self.mmap.as_ref().ok_or(io::Error::new(
             io::ErrorKind::Other,
             "No mmap found. File empty?",
         ))?;
 
-        if (offset + length) > mmap.len() {
+        if offset > mmap.len() {
             Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "Can't read beyond the mmap",
             ))
         } else {
-            Ok(&mmap[offset..(offset + length)])
+            Ok(&mmap[offset..])
         }
     }
 }
@@ -99,7 +103,7 @@ mod tests {
     #[test]
     #[should_panic]
     fn cannot_read_empty_db() {
-        open_empty().read(0, 1).unwrap();
+        open_empty().from_offset(0).unwrap();
     }
 
     #[test]
@@ -109,7 +113,7 @@ mod tests {
 
         db.append(data).unwrap();
 
-        assert_eq!(data, db.read(0, data.len()).unwrap());
+        assert_eq!(data, db.from_offset(0).unwrap());
     }
 
     #[test]
@@ -134,10 +138,7 @@ mod tests {
         let mut db = open_empty();
 
         db.append(&[1, 2, 3, 4, 5]).unwrap();
-
-        db.read(0, 6).map(|_| panic!("length > db.len()"));
-        db.read(6, 2).map(|_| panic!("offset > db.len()"));
-        db.read(5, 3).map(|_| panic!("offset + length > db.len()"));
+        db.from_offset(6).map(|_| panic!("offset > db.len()"));
     }
 
     #[test]
@@ -153,6 +154,6 @@ mod tests {
 
         let mut db = AppendOnlyMappedFile::new(&db_path).unwrap();
         db.append(&[4, 5]).unwrap();
-        assert_eq!(&[1, 2, 3, 4, 5], db.read(0, 5).unwrap())
+        assert_eq!(&[1, 2, 3, 4, 5], db.from_offset(0).unwrap())
     }
 }
