@@ -160,25 +160,3 @@ impl Database {
         Ok(db)
     }
 }
-
-#[cfg(test)]
-mod tests {
-
-    use super::*;
-
-    #[test]
-    fn test_runme() {
-        let tempdir = TempDir::new().expect("Unable to create tempdir");
-        let mut db = Database::open(tempdir.path()).unwrap();
-
-        db.reload().unwrap();
-
-        db.add(1, std::slice::from_mut(&mut 1u8)).unwrap();
-        db.reload().unwrap();
-
-        db.add(2, std::slice::from_mut(&mut 2u8)).unwrap();
-        db.add(3, std::slice::from_mut(&mut 3u8)).unwrap();
-
-        db.reload().unwrap();
-    }
-}
