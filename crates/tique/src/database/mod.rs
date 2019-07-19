@@ -11,7 +11,6 @@ use mapped_file::AppendOnlyMappedFile;
 mod recipe_generated;
 use recipe_generated::Recipe;
 
-pub type Error = io::Error;
 pub type Result<T> = io::Result<T>;
 
 struct RecipeDatabase {
@@ -38,7 +37,7 @@ impl RecipeDatabase {
         // XXX I'm sure this can be better
         let mut buf = Vec::with_capacity(16);
         buf.write_u64::<LittleEndian>(id)?;
-        buf.write_u64::<LittleEndian>(id)?;
+        buf.write_u64::<LittleEndian>(cur_offset as u64)?;
 
         self.log.append(buf.as_mut_slice())?;
 
@@ -51,7 +50,7 @@ impl RecipeDatabase {
         self.index.get(&recipe_id).map_or(None, |offset| {
             // Care about read errors?
             self.data
-                .read(*offset, self.data.len())
+                .from_offset(*offset)
                 .ok()
                 .map(|data| recipe_generated::get_root_as_recipe(&data))
         })
@@ -65,7 +64,7 @@ mod tests {
     use tempfile;
 
     use flatbuffers::FlatBufferBuilder;
-    use recipe_generated::{RecipeArgs, RecipeBuilder};
+    use recipe_generated::RecipeArgs;
 
     fn open_empty() -> RecipeDatabase {
         let tmpdir = tempfile::TempDir::new().unwrap();
@@ -91,11 +90,15 @@ mod tests {
 
     #[test]
     fn can_add_and_get() {
-        let recipe_id = 42u64;
         let mut db = open_empty();
         let mut fbb = FlatBufferBuilder::new();
 
-        db.add(&create_recipe(&mut fbb, recipe_id)).unwrap();
-        assert_eq!(recipe_id, db.get(recipe_id).unwrap().id())
+        db.add(&create_recipe(&mut fbb, 1)).unwrap();
+        db.add(&create_recipe(&mut fbb, 2)).unwrap();
+        db.add(&create_recipe(&mut fbb, 3)).unwrap();
+
+        assert_eq!(1, db.get(1).unwrap().id());
+        assert_eq!(3, db.get(3).unwrap().id());
+        assert_eq!(2, db.get(2).unwrap().id());
     }
 }
