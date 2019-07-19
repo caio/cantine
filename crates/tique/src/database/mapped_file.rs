@@ -4,7 +4,7 @@ use std::io;
 use std::io::Write;
 use std::path::Path;
 
-pub type Result<T> = io::Result<T>;
+type Result<T> = super::Result<T>;
 
 pub struct AppendOnlyMappedFile {
     file: File,
@@ -155,5 +155,4 @@ mod tests {
         db.append(&[4, 5]).unwrap();
         assert_eq!(&[1, 2, 3, 4, 5], db.read(0, 5).unwrap())
     }
-
 }
