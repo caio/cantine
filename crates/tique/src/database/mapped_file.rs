@@ -53,7 +53,7 @@ impl AppendOnlyMappedFile {
         self.mmap.as_ref().map_or(Ok(()), |mmap| mmap.flush())
     }
 
-    fn read(&self, offset: usize, length: usize) -> Result<&[u8]> {
+    pub fn read(&self, offset: usize, length: usize) -> Result<&[u8]> {
         let mmap = self.mmap.as_ref().ok_or(io::Error::new(
             io::ErrorKind::Other,
             "No mmap found. File empty?",
