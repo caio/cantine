@@ -1,3 +1,8 @@
+mod mapped_file;
+
+#[allow(dead_code, unused_imports)]
+mod recipe_generated;
+
 use memmap::{Mmap, MmapOptions};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -20,9 +25,6 @@ use recipe_generated::{
 };
 
 use flatbuffers::FlatBufferBuilder;
-
-#[allow(dead_code, unused_imports)]
-mod recipe_generated;
 
 pub type Error = io::Error;
 pub type Result<T> = io::Result<T>;
