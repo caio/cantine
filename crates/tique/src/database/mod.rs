@@ -103,7 +103,13 @@ mod tests {
 
     fn create_recipe<'a>(fbb: &'a mut FlatBufferBuilder, id: u64) -> Recipe<'a> {
         fbb.reset();
-        let offset = Recipe::create(fbb, &RecipeArgs { id: id, name: None });
+        let offset = Recipe::create(
+            fbb,
+            &RecipeArgs {
+                id: id,
+                ..Default::default()
+            },
+        );
         fbb.finish(offset, None);
         recipe_generated::get_root_as_recipe(fbb.finished_data())
     }
