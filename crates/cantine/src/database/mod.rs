@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::io;
 use std::path::Path;
 
-use byteorder::{LittleEndian, WriteBytesExt};
+use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 
 mod mapped_file;
 use mapped_file::AppendOnlyMappedFile;
@@ -21,11 +21,31 @@ struct RecipeDatabase {
 
 impl RecipeDatabase {
     pub fn new(base_dir: &Path) -> Result<RecipeDatabase> {
-        Ok(RecipeDatabase {
+        let mut db = RecipeDatabase {
             index: HashMap::new(),
             log: AppendOnlyMappedFile::new(&base_dir.join("log.bin"))?,
             data: AppendOnlyMappedFile::new(&base_dir.join("data.bin"))?,
-        })
+        };
+
+        db.process_log()?;
+
+        Ok(db)
+    }
+
+    fn process_log(&mut self) -> Result<()> {
+        let index = &mut self.index;
+        self.log.each_chunk(16, |chunk| {
+            let mut cursor = io::Cursor::new(&chunk);
+            let id = cursor.read_u64::<LittleEndian>()?;
+            let offset = cursor.read_u64::<LittleEndian>()?;
+
+            // So, when a id is already known it gets replaced
+            // TODO decide wether to clean the db somehow (externally?)
+            index.insert(id, offset as usize);
+            Ok(())
+        })?;
+
+        Ok(())
     }
 
     pub fn add(&mut self, recipe: &Recipe) -> Result<()> {
@@ -100,5 +120,23 @@ mod tests {
         assert_eq!(1, db.get(1).unwrap().id());
         assert_eq!(3, db.get(3).unwrap().id());
         assert_eq!(2, db.get(2).unwrap().id());
+    }
+
+    #[test]
+    fn can_load_existing_database() {
+        let tmpdir = tempfile::TempDir::new().unwrap();
+        let db_path = tmpdir.path();
+
+        {
+            let mut db = RecipeDatabase::new(db_path).unwrap();
+            let mut fbb = FlatBufferBuilder::new();
+
+            db.add(&create_recipe(&mut fbb, 1)).unwrap();
+            db.add(&create_recipe(&mut fbb, 2)).unwrap();
+        }
+
+        let existing_db = RecipeDatabase::new(db_path).unwrap();
+        assert_eq!(1, existing_db.get(1).unwrap().id());
+        assert_eq!(2, existing_db.get(2).unwrap().id());
     }
 }
