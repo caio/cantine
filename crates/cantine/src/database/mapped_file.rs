@@ -72,6 +72,23 @@ impl AppendOnlyMappedFile {
             Ok(&mmap[offset..])
         }
     }
+
+    pub fn each_chunk<F>(&self, chunk_size: usize, mapper: F) -> usize
+    where
+        F: Fn(&[u8]),
+    {
+        match self.mmap.as_ref().map(|m| m.chunks(chunk_size)) {
+            None => 0,
+            Some(mut iter) => {
+                let mut num_hits = 0;
+                while let Some(chunk) = iter.next() {
+                    mapper(chunk);
+                    num_hits += 1;
+                }
+                num_hits
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -79,6 +96,8 @@ mod tests {
 
     use super::*;
     use tempfile;
+
+    use byteorder::ReadBytesExt;
 
     fn open_empty() -> AppendOnlyMappedFile {
         let tmpdir = tempfile::TempDir::new().unwrap();
@@ -155,5 +174,23 @@ mod tests {
         let mut db = AppendOnlyMappedFile::new(&db_path).unwrap();
         db.append(&[4, 5]).unwrap();
         assert_eq!(&[1, 2, 3, 4, 5], db.from_offset(0).unwrap())
+    }
+
+    #[test]
+    fn can_use_chunks_on_empty() {
+        assert_eq!(0, open_empty().each_chunk(1, |_| {}));
+    }
+
+    #[test]
+    fn chunking_works() {
+        let mut db = open_empty();
+        db.append(&[1, 2, 3, 4, 5, 6]).unwrap();
+
+        let num_hits = db.each_chunk(2, |chunk| {
+            let mut cursor = io::Cursor::new(&chunk);
+            assert_eq!(cursor.read_u8().unwrap() + 1, cursor.read_u8().unwrap());
+        });
+
+        assert_eq!(3, num_hits);
     }
 }
