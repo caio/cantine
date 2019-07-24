@@ -1,11 +1,11 @@
 use nom::{
     self,
     branch::alt,
-    bytes::complete::{is_not, take_till1, take_while1},
+    bytes::complete::take_while1,
     character::complete::{char as is_char, multispace0},
-    combinator::{map, not},
+    combinator::map,
     multi::{many0, many1},
-    sequence::{delimited, preceded, terminated},
+    sequence::{delimited, preceded},
     IResult,
 };
 
