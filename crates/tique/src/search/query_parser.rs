@@ -1,53 +1,54 @@
 use nom::{
     self,
     branch::alt,
-    bytes::complete::take_while1,
+    bytes::complete::{tag, take_while1},
     character::complete::{char as is_char, multispace0},
     combinator::map,
-    multi::{many0, many1},
+    multi::many0,
     sequence::{delimited, preceded},
     IResult,
 };
 
 #[derive(Debug, PartialEq)]
 enum KnownQuery<'a> {
-    Negated(Box<KnownQuery<'a>>),
-    Phrase(Vec<KnownQuery<'a>>),
+    NotPhrase(&'a str),
+    NotTerm(&'a str),
+    Phrase(&'a str),
     Term(&'a str),
 }
 
+fn parse_not_phrase(input: &str) -> IResult<&str, KnownQuery> {
+    map(
+        delimited(tag("-\""), take_while1(|c| c != '"'), is_char('"')),
+        |r| KnownQuery::NotPhrase(r),
+    )(input)
+}
+
+fn parse_phrase(input: &str) -> IResult<&str, KnownQuery> {
+    map(
+        delimited(is_char('"'), take_while1(|c| c != '"'), is_char('"')),
+        |r| KnownQuery::Phrase(r),
+    )(input)
+}
+
 fn parse_term(input: &str) -> IResult<&str, KnownQuery> {
-    map(take_while1(is_term_char), |t| KnownQuery::Term(t))(input)
+    map(take_while1(is_term_char), |r| KnownQuery::Term(r))(input)
+}
+
+fn parse_not_term(input: &str) -> IResult<&str, KnownQuery> {
+    map(preceded(is_char('-'), take_while1(is_term_char)), |r| {
+        KnownQuery::NotTerm(r)
+    })(input)
 }
 
 fn is_term_char(c: char) -> bool {
-    // XXX This never allows dangling quotes
-    !(c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '"')
-}
-
-// XXX no support for escaping the quotes
-fn parse_phrase(input: &str) -> IResult<&str, KnownQuery> {
-    map(
-        delimited(
-            is_char('"'),
-            many1(delimited(multispace0, parse_term, multispace0)),
-            is_char('"'),
-        ),
-        |p| KnownQuery::Phrase(p),
-    )(input)
-}
-
-fn parse_negated(input: &str) -> IResult<&str, KnownQuery> {
-    map(
-        preceded(is_char('-'), alt((parse_phrase, parse_term))),
-        |inner| KnownQuery::Negated(Box::new(inner)),
-    )(input)
+    !(c == ' ' || c == '\t' || c == '\r' || c == '\n')
 }
 
 fn parse_query(input: &str) -> IResult<&str, Vec<KnownQuery>> {
     many0(delimited(
         multispace0,
-        alt((parse_negated, parse_phrase, parse_term)),
+        alt((parse_not_phrase, parse_phrase, parse_not_term, parse_term)),
         multispace0,
     ))(input)
 }
@@ -64,10 +65,23 @@ mod tests {
     }
 
     #[test]
+    fn not_term_extraction() {
+        assert_eq!(parse_not_term("-ads"), Ok(("", NotTerm("ads"))))
+    }
+
+    #[test]
     fn phrase_extraction() {
         assert_eq!(
-            parse_phrase("\"  gula     recipes  \""),
-            Ok(("", Phrase(vec![Term("gula"), Term("recipes")])))
+            parse_phrase("\"gula recipes\""),
+            Ok(("", Phrase("gula recipes")))
+        );
+    }
+
+    #[test]
+    fn not_phrase_extraction() {
+        assert_eq!(
+            parse_not_phrase("-\"ads and tracking\""),
+            Ok(("", NotPhrase("ads and tracking")))
         );
     }
 
@@ -82,40 +96,12 @@ mod tests {
     }
 
     #[test]
-    fn negated_extraction() {
-        assert_eq!(
-            parse_negated("-hunger"),
-            Ok(("", Negated(Box::new(Term("hunger")))))
-        );
-        assert_eq!(
-            parse_negated("-\"ads\""),
-            Ok(("", Negated(Box::new(Phrase(vec![Term("ads")])))))
-        );
-    }
-
-    #[test]
-    fn negation_does_not_allow_spaces() {
-        assert!(parse_negated("- bacon").is_err());
-        assert!(parse_negated("- \"peanut butter\"").is_err());
-    }
-
-    #[test]
-    fn negation_requires_more_tokens() {
-        assert!(parse_negated("-").is_err());
-        assert!(parse_negated("-\"\"").is_err());
-    }
-
-    #[test]
     fn parse_query_works() {
         assert_eq!(
-            parse_query(" peanut -\" peanut butter  \" -sugar "),
+            parse_query(" peanut -\"peanut butter\" -sugar "),
             Ok((
                 "",
-                vec![
-                    Term("peanut"),
-                    Negated(Box::new(Phrase(vec![Term("peanut"), Term("butter")]))),
-                    Negated(Box::new(Term("sugar")))
-                ]
+                vec![Term("peanut"), NotPhrase("peanut butter"), NotTerm("sugar")]
             ))
         );
     }
@@ -127,10 +113,7 @@ mod tests {
     }
 
     #[test]
-    fn parsed_solo_negation_token_becomes_term() {
-        assert_eq!(
-            parse_query("- potato"),
-            Ok(("", vec![Term("-"), Term("potato")]))
-        )
+    fn garbage_is_extracted_as_term() {
+        assert_eq!(parse_query("- \""), Ok(("", vec![Term("-"), Term("\"")])));
     }
 }
