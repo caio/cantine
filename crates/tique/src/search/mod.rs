@@ -1,5 +1,6 @@
 use tantivy;
 
+mod parser;
 mod query_parser;
 mod search;
 

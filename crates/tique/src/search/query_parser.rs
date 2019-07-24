@@ -1,119 +1,176 @@
-use nom::{
+use super::parser::{parse_query, KnownQuery};
+
+use tantivy::{
     self,
-    branch::alt,
-    bytes::complete::{tag, take_while1},
-    character::complete::{char as is_char, multispace0},
-    combinator::map,
-    multi::many0,
-    sequence::{delimited, preceded},
-    IResult,
+    query::{AllQuery, BooleanQuery, Occur, PhraseQuery, Query, TermQuery},
+    schema::{Field, IndexRecordOption},
+    tokenizer::{BoxedTokenizer, TokenizerManager},
+    Term,
 };
 
-#[derive(Debug, PartialEq)]
-enum KnownQuery<'a> {
-    NotPhrase(&'a str),
-    NotTerm(&'a str),
-    Phrase(&'a str),
-    Term(&'a str),
+type Result<T> = super::Result<T>;
+
+struct QueryParser {
+    field: Field,
+    tokenizer: Box<BoxedTokenizer>,
 }
 
-fn parse_not_phrase(input: &str) -> IResult<&str, KnownQuery> {
-    map(
-        delimited(tag("-\""), take_while1(|c| c != '"'), is_char('"')),
-        |r| KnownQuery::NotPhrase(r),
-    )(input)
-}
+impl QueryParser {
+    pub fn new(field: Field) -> QueryParser {
+        QueryParser {
+            field: field,
+            //schema: schema,
+            tokenizer: TokenizerManager::default()
+                .get("en_stem")
+                .expect("cannot happen!"),
+        }
+    }
 
-fn parse_phrase(input: &str) -> IResult<&str, KnownQuery> {
-    map(
-        delimited(is_char('"'), take_while1(|c| c != '"'), is_char('"')),
-        |r| KnownQuery::Phrase(r),
-    )(input)
-}
+    pub fn parse(&self, input: &str) -> Result<Option<Box<dyn Query>>> {
+        // XXX custom error module
+        let (_, parsed) = parse_query(input)
+            .map_err(|e| tantivy::TantivyError::InvalidArgument(format!("{:?}", e)))?;
 
-fn parse_term(input: &str) -> IResult<&str, KnownQuery> {
-    map(take_while1(is_term_char), |r| KnownQuery::Term(r))(input)
-}
+        Ok(match parsed.len() {
+            0 => Some(Box::new(AllQuery)),
+            1 => self.query_from_token(&parsed[0])?,
+            _ => {
+                let mut subqueries: Vec<(Occur, Box<dyn Query>)> = Vec::new();
 
-fn parse_not_term(input: &str) -> IResult<&str, KnownQuery> {
-    map(preceded(is_char('-'), take_while1(is_term_char)), |r| {
-        KnownQuery::NotTerm(r)
-    })(input)
-}
+                for tok in parsed {
+                    self.query_from_token(&tok)?
+                        .map(|query| subqueries.push((Occur::Must, query)));
+                }
 
-fn is_term_char(c: char) -> bool {
-    !(c == ' ' || c == '\t' || c == '\r' || c == '\n')
-}
+                let bq: BooleanQuery = subqueries.into();
+                Some(Box::new(bq))
+            }
+        })
+    }
 
-fn parse_query(input: &str) -> IResult<&str, Vec<KnownQuery>> {
-    many0(delimited(
-        multispace0,
-        alt((parse_not_phrase, parse_phrase, parse_not_term, parse_term)),
-        multispace0,
-    ))(input)
+    // FIXME make Result<>
+    // FIXME add `accept_phrase: bool`
+    fn assemble_query(&self, text: &str) -> Option<Box<dyn Query>> {
+        let tokens = self.tokenize(text);
+
+        match &tokens[..] {
+            [] => None,
+            [(_, term)] => Some(Box::new(TermQuery::new(
+                term.clone(),
+                IndexRecordOption::WithFreqs,
+            ))),
+            _ => Some(Box::new(PhraseQuery::new_with_offset(tokens))),
+        }
+    }
+
+    //Not[Inner] queries are always [MatchAllDocs() - Inner]
+    fn negate_query(inner: Box<dyn Query>) -> Box<dyn Query> {
+        let subqueries: Vec<(Occur, Box<dyn Query>)> =
+            vec![(Occur::MustNot, inner), (Occur::Must, Box::new(AllQuery))];
+
+        let bq: BooleanQuery = subqueries.into();
+        Box::new(bq)
+    }
+
+    // May result in Ok(None) because the tokenizer might give us nothing
+    fn query_from_token(&self, token: &KnownQuery) -> Result<Option<Box<dyn Query>>> {
+        match token {
+            // FIXME this swallows a potential parse problem where parser.rs
+            // found something to be a Term but after applying a tokenizer
+            // it becomes a Phrase. Ditto for NotTerm()
+            KnownQuery::Term(t) => Ok(self.assemble_query(t)),
+
+            KnownQuery::Phrase(p) => Ok(self.assemble_query(p)),
+
+            KnownQuery::NotTerm(t) => Ok(self
+                .assemble_query(t)
+                .map(|inner| Self::negate_query(inner))),
+
+            KnownQuery::NotPhrase(p) => Ok(self
+                .assemble_query(p)
+                .map(|inner| Self::negate_query(inner))),
+        }
+    }
+
+    fn tokenize(&self, phrase: &str) -> Vec<(usize, Term)> {
+        let mut terms: Vec<(usize, Term)> = Vec::new();
+        let mut stream = self.tokenizer.token_stream(phrase);
+
+        stream.process(&mut |token| {
+            let term = Term::from_field_text(self.field, &token.text);
+            terms.push((token.position, term));
+        });
+
+        terms
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    use super::KnownQuery::*;
+    use tantivy::{
+        self,
+        schema::{SchemaBuilder, TEXT},
+    };
 
-    #[test]
-    fn term_extraction() {
-        assert_eq!(parse_term("gula"), Ok(("", Term("gula"))));
+    fn test_parser() -> QueryParser {
+        let mut schema_builder = SchemaBuilder::new();
+        let field = schema_builder.add_text_field("text", TEXT);
+        QueryParser::new(field)
+    }
+
+    fn parsed(input: &str) -> Box<Query> {
+        test_parser()
+            .parse(input)
+            .unwrap()
+            .expect("Should have gotten Some(dyn Query)")
     }
 
     #[test]
-    fn not_term_extraction() {
-        assert_eq!(parse_not_term("-ads"), Ok(("", NotTerm("ads"))))
+    fn can_parse_term_query() {
+        assert!(parsed("gula")
+            .as_any()
+            .downcast_ref::<TermQuery>()
+            .is_some());
     }
 
     #[test]
-    fn phrase_extraction() {
-        assert_eq!(
-            parse_phrase("\"gula recipes\""),
-            Ok(("", Phrase("gula recipes")))
-        );
+    fn can_parse_phrase_query() {
+        assert!(parsed(" \"gula recipes\" ")
+            .as_any()
+            .downcast_ref::<PhraseQuery>()
+            .is_some());
     }
 
     #[test]
-    fn not_phrase_extraction() {
-        assert_eq!(
-            parse_not_phrase("-\"ads and tracking\""),
-            Ok(("", NotPhrase("ads and tracking")))
-        );
+    fn single_term_phrase_query_becomes_term_query() {
+        assert!(parsed(" \"gula\" ")
+            .as_any()
+            .downcast_ref::<TermQuery>()
+            .is_some());
     }
 
     #[test]
-    fn empty_term_not_allowed() {
-        assert!(parse_term("").is_err());
-    }
+    fn negation_works() {
+        let input = vec!["-hunger", "-\"ads and tracking\""];
 
-    #[test]
-    fn empty_phrase_not_allowed() {
-        assert!(parse_phrase("\"\"").is_err());
-    }
+        for i in input {
+            let p = parsed(i);
+            let query = p
+                .as_any()
+                .downcast_ref::<BooleanQuery>()
+                .expect("Must be a boolean query");
 
-    #[test]
-    fn parse_query_works() {
-        assert_eq!(
-            parse_query(" peanut -\"peanut butter\" -sugar "),
-            Ok((
-                "",
-                vec![Term("peanut"), NotPhrase("peanut butter"), NotTerm("sugar")]
-            ))
-        );
-    }
+            let clauses = dbg!(query.clauses());
 
-    #[test]
-    fn parse_query_accepts_empty_string() {
-        assert_eq!(parse_query(""), Ok(("", vec![])));
-        assert_eq!(parse_query(" "), Ok((" ", vec![])));
-    }
+            assert_eq!(2, clauses.len());
+            // XXX First clause is the wrapped {Term,Phrase}Query
 
-    #[test]
-    fn garbage_is_extracted_as_term() {
-        assert_eq!(parse_query("- \""), Ok(("", vec![Term("-"), Term("\"")])));
+            // Second clause is the MatchAllDocs()
+            let (occur, inner) = &clauses[1];
+            assert_eq!(Occur::Must, *occur);
+            assert!(inner.as_any().downcast_ref::<AllQuery>().is_some())
+        }
     }
 }
