@@ -9,36 +9,35 @@ use nom::{
     IResult,
 };
 
-// XXX better name
 #[derive(Debug, PartialEq)]
-pub enum KnownQuery<'a> {
+pub enum Token<'a> {
     NotPhrase(&'a str),
     NotTerm(&'a str),
     Phrase(&'a str),
     Term(&'a str),
 }
 
-fn parse_not_phrase(input: &str) -> IResult<&str, KnownQuery> {
+fn parse_not_phrase(input: &str) -> IResult<&str, Token> {
     map(
         delimited(tag("-\""), take_while1(|c| c != '"'), is_char('"')),
-        |r| KnownQuery::NotPhrase(r),
+        |r| Token::NotPhrase(r),
     )(input)
 }
 
-fn parse_phrase(input: &str) -> IResult<&str, KnownQuery> {
+fn parse_phrase(input: &str) -> IResult<&str, Token> {
     map(
         delimited(is_char('"'), take_while1(|c| c != '"'), is_char('"')),
-        |r| KnownQuery::Phrase(r),
+        |r| Token::Phrase(r),
     )(input)
 }
 
-fn parse_term(input: &str) -> IResult<&str, KnownQuery> {
-    map(take_while1(is_term_char), |r| KnownQuery::Term(r))(input)
+fn parse_term(input: &str) -> IResult<&str, Token> {
+    map(take_while1(is_term_char), |r| Token::Term(r))(input)
 }
 
-fn parse_not_term(input: &str) -> IResult<&str, KnownQuery> {
+fn parse_not_term(input: &str) -> IResult<&str, Token> {
     map(preceded(is_char('-'), take_while1(is_term_char)), |r| {
-        KnownQuery::NotTerm(r)
+        Token::NotTerm(r)
     })(input)
 }
 
@@ -46,7 +45,7 @@ fn is_term_char(c: char) -> bool {
     !(c == ' ' || c == '\t' || c == '\r' || c == '\n')
 }
 
-pub fn parse_query(input: &str) -> IResult<&str, Vec<KnownQuery>> {
+pub fn parse_query(input: &str) -> IResult<&str, Vec<Token>> {
     many0(delimited(
         multispace0,
         alt((parse_not_phrase, parse_phrase, parse_not_term, parse_term)),
@@ -58,7 +57,7 @@ pub fn parse_query(input: &str) -> IResult<&str, Vec<KnownQuery>> {
 mod tests {
     use super::*;
 
-    use super::KnownQuery::*;
+    use super::Token::*;
 
     #[test]
     fn term_extraction() {

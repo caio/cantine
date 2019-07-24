@@ -1,4 +1,4 @@
-use super::parser::{parse_query, KnownQuery};
+use super::parser::{parse_query, Token};
 
 use tantivy::{
     self,
@@ -8,6 +8,7 @@ use tantivy::{
     Term,
 };
 
+// TODO stop using tantivy's Result
 type Result<T> = super::Result<T>;
 
 struct QueryParser {
@@ -19,7 +20,6 @@ impl QueryParser {
     pub fn new(field: Field) -> QueryParser {
         QueryParser {
             field: field,
-            //schema: schema,
             tokenizer: TokenizerManager::default()
                 .get("en_stem")
                 .expect("cannot happen!"),
@@ -27,7 +27,6 @@ impl QueryParser {
     }
 
     pub fn parse(&self, input: &str) -> Result<Option<Box<dyn Query>>> {
-        // XXX custom error module
         let (_, parsed) = parse_query(input)
             .map_err(|e| tantivy::TantivyError::InvalidArgument(format!("{:?}", e)))?;
 
@@ -48,18 +47,24 @@ impl QueryParser {
         })
     }
 
-    // FIXME make Result<>
-    // FIXME add `accept_phrase: bool`
-    fn assemble_query(&self, text: &str) -> Option<Box<dyn Query>> {
+    fn assemble_query(&self, text: &str, allow_phrase: bool) -> Result<Option<Box<dyn Query>>> {
         let tokens = self.tokenize(text);
 
         match &tokens[..] {
-            [] => None,
-            [(_, term)] => Some(Box::new(TermQuery::new(
+            [] => Ok(None),
+            [(_, term)] => Ok(Some(Box::new(TermQuery::new(
                 term.clone(),
                 IndexRecordOption::WithFreqs,
-            ))),
-            _ => Some(Box::new(PhraseQuery::new_with_offset(tokens))),
+            )))),
+            _ => {
+                if allow_phrase {
+                    Ok(Some(Box::new(PhraseQuery::new_with_offset(tokens))))
+                } else {
+                    Err(tantivy::TantivyError::InvalidArgument(
+                        "More than one token found but allow_phrase is false".to_owned(),
+                    ))
+                }
+            }
         }
     }
 
@@ -73,21 +78,18 @@ impl QueryParser {
     }
 
     // May result in Ok(None) because the tokenizer might give us nothing
-    fn query_from_token(&self, token: &KnownQuery) -> Result<Option<Box<dyn Query>>> {
+    fn query_from_token(&self, token: &Token) -> Result<Option<Box<dyn Query>>> {
         match token {
-            // FIXME this swallows a potential parse problem where parser.rs
-            // found something to be a Term but after applying a tokenizer
-            // it becomes a Phrase. Ditto for NotTerm()
-            KnownQuery::Term(t) => Ok(self.assemble_query(t)),
+            Token::Term(t) => self.assemble_query(t, false),
 
-            KnownQuery::Phrase(p) => Ok(self.assemble_query(p)),
+            Token::Phrase(p) => self.assemble_query(p, true),
 
-            KnownQuery::NotTerm(t) => Ok(self
-                .assemble_query(t)
+            Token::NotTerm(t) => Ok(self
+                .assemble_query(t, false)?
                 .map(|inner| Self::negate_query(inner))),
 
-            KnownQuery::NotPhrase(p) => Ok(self
-                .assemble_query(p)
+            Token::NotPhrase(p) => Ok(self
+                .assemble_query(p, true)?
                 .map(|inner| Self::negate_query(inner))),
         }
     }
@@ -109,10 +111,7 @@ impl QueryParser {
 mod tests {
     use super::*;
 
-    use tantivy::{
-        self,
-        schema::{SchemaBuilder, TEXT},
-    };
+    use tantivy::schema::{SchemaBuilder, TEXT};
 
     fn test_parser() -> QueryParser {
         let mut schema_builder = SchemaBuilder::new();
@@ -172,5 +171,10 @@ mod tests {
             assert_eq!(Occur::Must, *occur);
             assert!(inner.as_any().downcast_ref::<AllQuery>().is_some())
         }
+    }
+
+    #[test]
+    fn cannot_assemble_phrase_when_allow_phrase_is_false() {
+        assert!(test_parser().assemble_query("hello world", false).is_err());
     }
 }
