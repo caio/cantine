@@ -1,8 +1,8 @@
 use std::io;
 
 mod mapped_file;
-mod recipe_database;
+mod database;
 
-pub use recipe_database::RecipeDatabase;
+pub use database::BytesDatabase;
 
 pub type Result<T> = io::Result<T>;
