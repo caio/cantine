@@ -4,6 +4,9 @@ use std::path::Path;
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 
+use bincode::{deserialize, serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
+
 use super::mapped_file::AppendOnlyMappedFile;
 
 type Result<T> = super::Result<T>;
@@ -12,6 +15,45 @@ pub struct BytesDatabase {
     log: AppendOnlyMappedFile,
     data: AppendOnlyMappedFile,
     index: HashMap<u64, usize>,
+}
+
+pub trait Database<T> {
+    fn add(&mut self, id: u64, obj: &T) -> Result<()>;
+    fn get(&self, id: u64) -> Result<Option<T>>;
+}
+
+pub struct BincodeDatabase {
+    delegate: BytesDatabase,
+}
+
+impl BincodeDatabase {
+    pub fn new<T: Serialize + DeserializeOwned>(p: &Path) -> Result<Box<impl Database<T>>> {
+        Ok(Box::new(BincodeDatabase {
+            delegate: BytesDatabase::new(p)?,
+        }))
+    }
+}
+
+impl<T> Database<T> for BincodeDatabase
+where
+    T: Serialize + DeserializeOwned,
+{
+    fn add(&mut self, id: u64, obj: &T) -> Result<()> {
+        let buf = serialize(obj).map_err(|_| {
+            io::Error::new(io::ErrorKind::InvalidData, "Failed to serialize Recipe")
+        })?;
+
+        self.delegate.add(id, buf.as_slice())?;
+
+        Ok(())
+    }
+    fn get(&self, id: u64) -> Result<Option<T>> {
+        self.delegate.get(id)?.map_or(Ok(None), |data| {
+            Ok(Some(deserialize::<T>(data).map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidData, "deserialize")
+            })?))
+        })
+    }
 }
 
 impl BytesDatabase {
@@ -69,10 +111,10 @@ impl BytesDatabase {
         Ok(())
     }
 
-    pub fn get(&self, id: u64) -> Option<&[u8]> {
-        self.index
-            .get(&id)
-            .map_or(None, |offset| self.data.from_offset(*offset).ok())
+    pub fn get(&self, id: u64) -> Result<Option<&[u8]>> {
+        self.index.get(&id).map_or(Ok(None), |offset| {
+            self.data.from_offset(*offset).map(|slice| Some(slice))
+        })
     }
 }
 
@@ -82,46 +124,24 @@ mod tests {
     use super::*;
     use tempfile;
 
-    use bincode::{deserialize, serialize};
-    use serde::{Deserialize, Serialize};
-
     #[derive(Serialize, Deserialize, Debug, PartialEq)]
-    pub struct Recipe<'a> {
+    pub struct Recipe {
         pub id: u64,
-        name: &'a str,
+        name: String,
     }
 
-    struct RecipeDatabase {
-        delegate: BytesDatabase,
-    }
-
-    impl RecipeDatabase {
-        pub fn new(base_dir: &Path) -> Result<RecipeDatabase> {
-            Ok(RecipeDatabase {
-                delegate: BytesDatabase::new(base_dir)?,
-            })
-        }
-
-        pub fn add(&mut self, recipe: &Recipe) -> Result<()> {
-            let recipe_bytes = serialize(recipe).map_err(|_| {
-                io::Error::new(io::ErrorKind::InvalidData, "Failed to serialize Recipe")
-            })?;
-
-            self.delegate.add(recipe.id, recipe_bytes.as_slice())?;
-
-            Ok(())
-        }
-
-        pub fn get(&self, recipe_id: u64) -> Option<Recipe> {
-            self.delegate.get(recipe_id).map(|data| {
-                deserialize(data).expect("Should be able to always deserialize written data")
-            })
+    impl Recipe {
+        fn new(id: u64) -> Recipe {
+            Recipe {
+                id: id,
+                name: "hue".to_owned(),
+            }
         }
     }
 
-    fn open_empty() -> RecipeDatabase {
+    fn open_empty<'a>() -> Box<impl Database<Recipe>> {
         let tmpdir = tempfile::TempDir::new().unwrap();
-        RecipeDatabase::new(&tmpdir.path()).unwrap()
+        BincodeDatabase::new::<Recipe>(&tmpdir.path()).unwrap()
     }
 
     #[test]
@@ -131,42 +151,42 @@ mod tests {
 
     #[test]
     fn get_on_empty_works() {
-        assert_eq!(None, open_empty().get(10));
-    }
-
-    fn create_recipe<'a>(id: u64) -> Recipe<'a> {
-        Recipe {
-            id: id,
-            name: "recipe",
-        }
+        assert_eq!(None, open_empty().get(10).unwrap());
     }
 
     #[test]
-    fn can_add_and_get() {
+    fn can_add_and_get() -> Result<()> {
         let mut db = open_empty();
 
-        db.add(&create_recipe(1)).unwrap();
-        db.add(&create_recipe(2)).unwrap();
-        db.add(&create_recipe(3)).unwrap();
+        let one = Recipe::new(1);
+        let two = Recipe::new(2);
+        let three = Recipe::new(3);
 
-        assert_eq!(create_recipe(1), db.get(1).unwrap());
-        assert_eq!(create_recipe(3), db.get(3).unwrap());
-        assert_eq!(create_recipe(2), db.get(2).unwrap());
+        db.add(1, &one)?;
+        db.add(2, &two)?;
+        db.add(3, &three)?;
+
+        assert_eq!(Some(one), db.get(1)?);
+        assert_eq!(Some(three), db.get(3)?);
+        assert_eq!(Some(two), db.get(2)?);
+
+        Ok(())
     }
 
     #[test]
     fn can_load_existing_database() {
         let tmpdir = tempfile::TempDir::new().unwrap();
         let db_path = tmpdir.path();
-        let mut db = RecipeDatabase::new(db_path).unwrap();
+
+        let mut db = BincodeDatabase::new::<Recipe>(&db_path).unwrap();
 
         {
-            db.add(&create_recipe(1)).unwrap();
-            db.add(&create_recipe(2)).unwrap();
+            db.add(1, &Recipe::new(1)).unwrap();
+            db.add(2, &Recipe::new(2)).unwrap();
         }
 
-        let existing_db = RecipeDatabase::new(db_path).unwrap();
-        assert_eq!(create_recipe(1), existing_db.get(1).unwrap());
-        assert_eq!(create_recipe(2), existing_db.get(2).unwrap());
+        let existing_db = BincodeDatabase::new::<Recipe>(&db_path).unwrap();
+        assert_eq!(Some(Recipe::new(1)), existing_db.get(1).unwrap());
+        assert_eq!(Some(Recipe::new(2)), existing_db.get(2).unwrap());
     }
 }
