@@ -2,20 +2,13 @@ use std::collections::HashMap;
 use std::io;
 use std::path::Path;
 
+use bincode;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-
-use bincode::{deserialize, serialize};
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Serialize};
 
 use super::mapped_file::AppendOnlyMappedFile;
 
 type Result<T> = super::Result<T>;
-
-pub struct BytesDatabase {
-    log: AppendOnlyMappedFile,
-    data: AppendOnlyMappedFile,
-    index: HashMap<u64, usize>,
-}
 
 pub trait Database<T> {
     fn add(&mut self, id: u64, obj: &T) -> Result<()>;
@@ -23,41 +16,13 @@ pub trait Database<T> {
 }
 
 pub struct BincodeDatabase {
-    delegate: BytesDatabase,
+    log: AppendOnlyMappedFile,
+    data: AppendOnlyMappedFile,
+    index: HashMap<u64, usize>,
 }
 
 impl BincodeDatabase {
-    pub fn new<T: Serialize + DeserializeOwned>(p: &Path) -> Result<Box<impl Database<T>>> {
-        Ok(Box::new(BincodeDatabase {
-            delegate: BytesDatabase::new(p)?,
-        }))
-    }
-}
-
-impl<T> Database<T> for BincodeDatabase
-where
-    T: Serialize + DeserializeOwned,
-{
-    fn add(&mut self, id: u64, obj: &T) -> Result<()> {
-        let buf = serialize(obj).map_err(|_| {
-            io::Error::new(io::ErrorKind::InvalidData, "Failed to serialize Recipe")
-        })?;
-
-        self.delegate.add(id, buf.as_slice())?;
-
-        Ok(())
-    }
-    fn get(&self, id: u64) -> Result<Option<T>> {
-        self.delegate.get(id)?.map_or(Ok(None), |data| {
-            Ok(Some(deserialize::<T>(data).map_err(|_| {
-                io::Error::new(io::ErrorKind::InvalidData, "deserialize")
-            })?))
-        })
-    }
-}
-
-impl BytesDatabase {
-    pub fn new(base_dir: &Path) -> Result<BytesDatabase> {
+    pub fn new<T: Serialize + DeserializeOwned>(base_dir: &Path) -> Result<Box<impl Database<T>>> {
         let mut index = HashMap::new();
         let mut max_offset = 0;
 
@@ -85,19 +50,25 @@ impl BytesDatabase {
                 "index points at unreachable",
             ))
         } else {
-            let db = BytesDatabase {
+            Ok(Box::new(BincodeDatabase {
                 index: index,
                 log: log,
                 data: data,
-            };
-
-            Ok(db)
+            }))
         }
     }
+}
 
-    pub fn add(&mut self, id: u64, data: &[u8]) -> Result<()> {
+impl<T> Database<T> for BincodeDatabase
+where
+    T: Serialize + DeserializeOwned,
+{
+    fn add(&mut self, id: u64, obj: &T) -> Result<()> {
+        let data = bincode::serialize(obj)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Failed to serialize"))?;
+
         let cur_offset = self.data.len();
-        self.data.append(data)?;
+        self.data.append(data.as_slice())?;
 
         // XXX Awkward
         let mut buf = Vec::with_capacity(16);
@@ -105,17 +76,24 @@ impl BytesDatabase {
         buf.write_u64::<LittleEndian>(cur_offset as u64)?;
 
         self.log.append(buf.as_mut_slice())?;
-
         self.index.insert(id, cur_offset);
-
         Ok(())
     }
+    fn get(&self, id: u64) -> Result<Option<T>> {
+        match self.index.get(&id) {
+            None => Ok(None),
 
-    pub fn get(&self, id: u64) -> Result<Option<&[u8]>> {
-        self.index.get(&id).map_or(Ok(None), |offset| {
-            self.data.from_offset(*offset).map(|slice| Some(slice))
-        })
+            Some(&offset) => {
+                let found = self.data.from_offset(offset)?;
+                Ok(Some(deserialize_local(found)?))
+            }
+        }
     }
+}
+
+fn deserialize_local<'a, T: Serialize + DeserializeOwned>(bytes: &'a [u8]) -> Result<T> {
+    bincode::deserialize(bytes)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Failed to deserialize"))
 }
 
 #[cfg(test)]
@@ -123,6 +101,8 @@ mod tests {
 
     use super::*;
     use tempfile;
+
+    use serde::Deserialize;
 
     #[derive(Serialize, Deserialize, Debug, PartialEq)]
     pub struct Recipe {
