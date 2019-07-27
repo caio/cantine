@@ -99,101 +99,106 @@ mod tests {
 
     use byteorder::ReadBytesExt;
 
-    fn open_empty() -> AppendOnlyMappedFile {
-        let tmpdir = tempfile::TempDir::new().unwrap();
-        AppendOnlyMappedFile::new(&tmpdir.path().join("db.bin")).unwrap()
+    fn open_empty() -> Result<AppendOnlyMappedFile> {
+        let tmpdir = tempfile::TempDir::new()?;
+        AppendOnlyMappedFile::new(&tmpdir.path().join("db.bin"))
     }
 
     #[test]
     fn can_open_empty() {
-        open_empty();
+        assert!(open_empty().is_ok());
     }
 
     #[test]
-    fn can_flush_empty_db() {
-        open_empty().flush().unwrap();
+    fn can_flush_empty_db() -> Result<()> {
+        open_empty()?.flush()
     }
 
     #[test]
-    fn can_remap_empty_db() {
-        open_empty().remap().unwrap();
+    fn can_remap_empty_db() -> Result<()> {
+        open_empty()?.remap()
     }
 
     #[test]
-    #[should_panic]
-    fn cannot_read_empty_db() {
-        open_empty().from_offset(0).unwrap();
+    fn cannot_read_empty_db() -> Result<()> {
+        assert!(open_empty()?.from_offset(0).is_err());
+        Ok(())
     }
 
     #[test]
-    fn can_append_and_read_on_empty() {
-        let mut db = open_empty();
+    fn can_append_and_read_on_empty() -> Result<()> {
+        let mut db = open_empty()?;
         let data: &[u8] = &[1, 2, 3, 4, 5];
 
-        db.append(data).unwrap();
+        db.append(data)?;
 
-        assert_eq!(data, db.from_offset(0).unwrap());
+        assert_eq!(data, db.from_offset(0)?);
+        Ok(())
     }
 
     #[test]
-    fn length_grows_along_with_append_size() {
-        let mut db = open_empty();
+    fn length_grows_along_with_append_size() -> Result<()> {
+        let mut db = open_empty()?;
 
         assert_eq!(0, db.len());
 
-        db.append(&[1]).unwrap();
+        db.append(&[1])?;
         assert_eq!(1, db.len());
 
-        db.append(&[2]).unwrap();
+        db.append(&[2])?;
         assert_eq!(2, db.len());
 
-        db.append(&[3, 4, 5]).unwrap();
+        db.append(&[3, 4, 5])?;
         assert_eq!(5, db.len());
+
+        Ok(())
     }
 
     #[test]
-    #[allow(unused_must_use)]
-    fn cannot_read_beyond_map() {
-        let mut db = open_empty();
+    fn cannot_read_beyond_map() -> Result<()> {
+        let mut db = open_empty()?;
 
-        db.append(&[1, 2, 3, 4, 5]).unwrap();
-        db.from_offset(6).map(|_| panic!("offset > db.len()"));
+        db.append(&[1, 2, 3, 4, 5])?;
+        assert!(db.from_offset(6).is_err());
+        Ok(())
     }
 
     #[test]
-    fn can_operate_existing_db() {
-        let tmpdir = tempfile::TempDir::new().unwrap();
+    fn can_operate_existing_db() -> Result<()> {
+        let tmpdir = tempfile::TempDir::new()?;
         let db_path = tmpdir.path().join("db.bin");
 
         {
-            let mut db = AppendOnlyMappedFile::new(&db_path).unwrap();
-            db.append(&[1, 2, 3]).unwrap();
-            db.flush().unwrap();
+            let mut db = AppendOnlyMappedFile::new(&db_path)?;
+            db.append(&[1, 2, 3])?;
+            db.flush()?;
         } // db goes out of scope, all should be synced
 
-        let mut db = AppendOnlyMappedFile::new(&db_path).unwrap();
-        db.append(&[4, 5]).unwrap();
-        assert_eq!(&[1, 2, 3, 4, 5], db.from_offset(0).unwrap())
+        let mut db = AppendOnlyMappedFile::new(&db_path)?;
+        db.append(&[4, 5])?;
+        assert_eq!(&[1, 2, 3, 4, 5], db.from_offset(0)?);
+
+        Ok(())
     }
 
     #[test]
-    fn can_use_chunks_on_empty() {
-        assert_eq!(0, open_empty().each_chunk(1, |_| { Ok(()) }).unwrap());
+    fn can_use_chunks_on_empty() -> Result<()> {
+        assert_eq!(0, open_empty()?.each_chunk(1, |_| { Ok(()) })?);
+        Ok(())
     }
 
     #[test]
-    fn chunking_works() {
-        let mut db = open_empty();
-        db.append(&[1, 2, 3, 4, 5, 6]).unwrap();
+    fn chunking_works() -> Result<()> {
+        let mut db = open_empty()?;
+        db.append(&[1, 2, 3, 4, 5, 6])?;
 
-        let num_hits = db
-            .each_chunk(2, |chunk| {
-                let mut cursor = io::Cursor::new(&chunk);
-                assert_eq!(cursor.read_u8()? + 1, cursor.read_u8()?);
-                Ok(())
-            })
-            .unwrap();
+        let num_hits = db.each_chunk(2, |chunk| {
+            let mut cursor = io::Cursor::new(&chunk);
+            assert_eq!(cursor.read_u8()? + 1, cursor.read_u8()?);
+            Ok(())
+        })?;
 
         assert_eq!(3, num_hits);
+        Ok(())
     }
 }

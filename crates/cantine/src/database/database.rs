@@ -26,6 +26,8 @@ impl BincodeDatabase {
         let mut index = HashMap::new();
         let mut max_offset = 0;
 
+        // TODO flock() {log,data}.bin
+
         let log = AppendOnlyMappedFile::new(&base_dir.join("log.bin"))?;
         log.each_chunk(16, |chunk| {
             let mut cursor = io::Cursor::new(&chunk);
@@ -119,24 +121,25 @@ mod tests {
         }
     }
 
-    fn open_empty<'a>() -> Box<impl Database<Recipe>> {
+    fn open_empty<'a>() -> Result<Box<impl Database<Recipe>>> {
         let tmpdir = tempfile::TempDir::new().unwrap();
-        BincodeDatabase::new::<Recipe>(&tmpdir.path()).unwrap()
+        BincodeDatabase::new::<Recipe>(&tmpdir.path())
     }
 
     #[test]
     fn can_open_empty_db() {
-        open_empty();
+        open_empty().unwrap();
     }
 
     #[test]
-    fn get_on_empty_works() {
-        assert_eq!(None, open_empty().get(10).unwrap());
+    fn get_on_empty_works() -> Result<()> {
+        assert_eq!(None, open_empty()?.get(10)?);
+        Ok(())
     }
 
     #[test]
     fn can_add_and_get() -> Result<()> {
-        let mut db = open_empty();
+        let mut db = open_empty()?;
 
         let one = Recipe::new(1);
         let two = Recipe::new(2);
@@ -154,19 +157,21 @@ mod tests {
     }
 
     #[test]
-    fn can_load_existing_database() {
-        let tmpdir = tempfile::TempDir::new().unwrap();
+    fn can_load_existing_database() -> Result<()> {
+        let tmpdir = tempfile::TempDir::new()?;
         let db_path = tmpdir.path();
 
-        let mut db = BincodeDatabase::new::<Recipe>(&db_path).unwrap();
+        let mut db = BincodeDatabase::new::<Recipe>(&db_path)?;
 
         {
-            db.add(1, &Recipe::new(1)).unwrap();
-            db.add(2, &Recipe::new(2)).unwrap();
+            db.add(1, &Recipe::new(1))?;
+            db.add(2, &Recipe::new(2))?;
         }
 
-        let existing_db = BincodeDatabase::new::<Recipe>(&db_path).unwrap();
-        assert_eq!(Some(Recipe::new(1)), existing_db.get(1).unwrap());
-        assert_eq!(Some(Recipe::new(2)), existing_db.get(2).unwrap());
+        let existing_db = BincodeDatabase::new::<Recipe>(&db_path)?;
+        assert_eq!(Some(Recipe::new(1)), existing_db.get(1)?);
+        assert_eq!(Some(Recipe::new(2)), existing_db.get(2)?);
+
+        Ok(())
     }
 }
