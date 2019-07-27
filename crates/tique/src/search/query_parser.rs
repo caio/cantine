@@ -161,7 +161,7 @@ mod tests {
                 .downcast_ref::<BooleanQuery>()
                 .expect("Must be a boolean query");
 
-            let clauses = dbg!(query.clauses());
+            let clauses = query.clauses();
 
             assert_eq!(2, clauses.len());
             // XXX First clause is the wrapped {Term,Phrase}Query
