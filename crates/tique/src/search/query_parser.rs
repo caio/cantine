@@ -11,7 +11,7 @@ use tantivy::{
 // TODO stop using tantivy's Result
 type Result<T> = super::Result<T>;
 
-struct QueryParser {
+pub struct QueryParser {
     field: Field,
     tokenizer: Box<BoxedTokenizer>,
 }
