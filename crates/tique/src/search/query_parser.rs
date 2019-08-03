@@ -4,7 +4,7 @@ use tantivy::{
     self,
     query::{AllQuery, BooleanQuery, Occur, PhraseQuery, Query, TermQuery},
     schema::{Field, IndexRecordOption},
-    tokenizer::{BoxedTokenizer, TokenizerManager},
+    tokenizer::BoxedTokenizer,
     Term,
 };
 
@@ -13,16 +13,14 @@ type Result<T> = super::Result<T>;
 
 pub struct QueryParser {
     field: Field,
-    tokenizer: Box<BoxedTokenizer>,
+    tokenizer: Box<dyn BoxedTokenizer>,
 }
 
 impl QueryParser {
-    pub fn new(field: Field) -> QueryParser {
+    pub fn new(field: Field, tokenizer: Box<dyn BoxedTokenizer>) -> QueryParser {
         QueryParser {
             field: field,
-            tokenizer: TokenizerManager::default()
-                .get("en_stem")
-                .expect("cannot happen!"),
+            tokenizer: tokenizer,
         }
     }
 
@@ -112,11 +110,12 @@ mod tests {
     use super::*;
 
     use tantivy::schema::{SchemaBuilder, TEXT};
+    use tantivy::tokenizer::TokenizerManager;
 
     fn test_parser() -> QueryParser {
         let mut schema_builder = SchemaBuilder::new();
         let field = schema_builder.add_text_field("text", TEXT);
-        QueryParser::new(field)
+        QueryParser::new(field, TokenizerManager::default().get("default").unwrap())
     }
 
     fn parsed(input: &str) -> Box<Query> {
