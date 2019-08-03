@@ -3,16 +3,18 @@ use std::path::Path;
 use tantivy::{
     collector::TopDocs,
     directory::MmapDirectory,
-    query::{AllQuery, Query},
+    query::{AllQuery, BooleanQuery, Occur, Query},
     schema::{
-        Field, IndexRecordOption, Schema, SchemaBuilder, TextFieldIndexing, TextOptions, FAST,
-        STORED, TEXT,
+        Field, IndexRecordOption, SchemaBuilder, TextFieldIndexing, TextOptions, FAST, STORED,
     },
     tokenizer::TokenizerManager,
     Document, Index, IndexReader, IndexWriter, ReloadPolicy,
 };
 
+use serde::{self, Deserialize, Serialize};
+
 use super::query_parser::QueryParser;
+use super::SearchQuery;
 
 use super::Result;
 
@@ -21,13 +23,19 @@ pub struct RecipeIndex {
     reader: IndexReader,
     writer: IndexWriter,
     query_parser: QueryParser,
+    fields: Fields,
+}
+
+struct Fields {
+    id: Field,
+    name: Field,
 }
 
 impl RecipeIndex {
     pub fn new(index_path: &Path) -> Result<RecipeIndex> {
         let mut builder = SchemaBuilder::new();
 
-        builder.add_u64_field("id", FAST | STORED);
+        let id_field = builder.add_u64_field("id", FAST | STORED);
 
         let indexing = TextFieldIndexing::default()
             .set_tokenizer("en_stem")
@@ -54,39 +62,53 @@ impl RecipeIndex {
             writer: writer,
             reader: reader,
             query_parser: parser,
+            fields: Fields {
+                id: id_field,
+                name: name_field,
+            },
         })
+    }
+
+    fn interpret_query(&self, query: &SearchQuery) -> Result<Box<dyn Query>> {
+        let mut clauses: Vec<(Occur, Box<dyn Query>)> = Vec::new();
+
+        if let Some(fulltext) = &query.fulltext {
+            let parsed = self.query_parser.parse(fulltext.as_ref())?;
+
+            parsed.map(|r| clauses.push((Occur::Must, r)));
+        }
+
+        if clauses.len() == 1 {
+            Ok(Box::new(AllQuery))
+        } else {
+            let bq: BooleanQuery = clauses.into();
+            Ok(Box::new(bq))
+        }
     }
 
     pub fn add(&mut self, id: u64, name: &str) {
         let mut doc = Document::default();
 
-        doc.add_u64(self.index.schema().get_field("id").expect("impossible"), id);
-        doc.add_text(
-            self.index.schema().get_field("name").expect("impossible"),
-            name,
-        );
+        doc.add_u64(self.fields.id, id);
+        doc.add_text(self.fields.name, name);
 
         self.writer.add_document(doc);
     }
 
-    pub fn search(&self, query: &str) -> Result<(Vec<u64>)> {
-        // Empty query => Match All Docs
-        let query = self
-            .query_parser
-            .parse(query)?
-            .unwrap_or_else(|| Box::new(AllQuery));
+    pub fn search(&self, query: &SearchQuery) -> Result<Vec<u64>> {
+        let interpreted = self.interpret_query(query)?;
+
         let searcher = self.reader.searcher();
 
-        let id_field = self.index.schema().get_field("id").expect("impossible");
-        let hits = searcher.search(&query, &TopDocs::with_limit(10))?;
+        let hits = searcher.search(&interpreted, &TopDocs::with_limit(10))?;
 
         let mut ids = Vec::with_capacity(hits.len());
         for (_score, addr) in hits {
             ids.push(
                 searcher
                     .doc(addr)?
-                    .get_first(id_field)
-                    .expect("impossible")
+                    .get_first(self.fields.id)
+                    .expect("Found document without an id field")
                     .u64_value(),
             );
         }
@@ -152,7 +174,7 @@ mod tests {
         let tmpdir = tempfile::TempDir::new()?;
         let searcher = RecipeIndex::new(tmpdir.path())?;
 
-        assert_eq!(searcher.search("term")?, &[0u64; 0]);
+        assert_eq!(searcher.search(&SearchQuery::default())?, &[0u64; 0]);
         Ok(())
     }
 
@@ -161,7 +183,11 @@ mod tests {
     // (used in a few tests) lead to matching all docs with a
     // score of 1f, making results ordering unstable
     fn contains_all(searcher: &RecipeIndex, q: &str, needed: &[u64]) -> Result<()> {
-        let result = searcher.search(q)?;
+        let query = SearchQuery {
+            fulltext: Some(q.to_string()),
+            ..Default::default()
+        };
+        let result = searcher.search(&query)?;
         for element in needed {
             assert!(result.contains(element));
         }
