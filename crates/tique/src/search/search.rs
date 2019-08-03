@@ -3,8 +3,12 @@ use std::path::Path;
 use tantivy::{
     collector::TopDocs,
     directory::MmapDirectory,
-    query::AllQuery,
-    schema::{SchemaBuilder, FAST, STORED, TEXT},
+    query::{AllQuery, Query},
+    schema::{
+        Field, IndexRecordOption, Schema, SchemaBuilder, TextFieldIndexing, TextOptions, FAST,
+        STORED, TEXT,
+    },
+    tokenizer::TokenizerManager,
     Document, Index, IndexReader, IndexWriter, ReloadPolicy,
 };
 
@@ -24,8 +28,13 @@ impl RecipeIndex {
         let mut builder = SchemaBuilder::new();
 
         builder.add_u64_field("id", FAST | STORED);
-        // FIXME tokenizers
-        let name_field = builder.add_text_field("name", TEXT);
+
+        let indexing = TextFieldIndexing::default()
+            .set_tokenizer("en_stem")
+            .set_index_option(IndexRecordOption::WithFreqsAndPositions);
+        let text_field_options = TextOptions::default().set_indexing_options(indexing);
+
+        let name_field = builder.add_text_field("name", text_field_options);
 
         let index = Index::open_or_create(MmapDirectory::open(index_path)?, builder.build())?;
         let writer = index.writer(10_000_000)?;
@@ -34,7 +43,11 @@ impl RecipeIndex {
             .reload_policy(ReloadPolicy::OnCommit)
             .try_into()?;
 
-        let parser = QueryParser::new(name_field);
+        let tokenizer = TokenizerManager::default()
+            .get("en_stem")
+            .ok_or_else(|| tantivy::TantivyError::SystemError("Tokenizer not found".to_owned()))?;
+
+        let parser = QueryParser::new(name_field, tokenizer);
 
         Ok(RecipeIndex {
             index: index,
