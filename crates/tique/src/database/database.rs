@@ -3,12 +3,26 @@ use std::io;
 use std::path::Path;
 
 use bincode;
-use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+use byteorder::LittleEndian;
 use serde::{de::DeserializeOwned, Serialize};
+use zerocopy::{AsBytes, FromBytes, LayoutVerified, U64};
 
 use super::mapped_file::AppendOnlyMappedFile;
 
 type Result<T> = super::Result<T>;
+
+#[derive(FromBytes, AsBytes)]
+#[repr(C)]
+struct LogEntry {
+    id: U64<LittleEndian>,
+    offset: U64<LittleEndian>,
+}
+
+struct LogEntrySlice<'a> {
+    entry: LayoutVerified<&'a [u8], LogEntry>,
+    #[allow(dead_code)]
+    body: &'a [u8],
+}
 
 pub trait Database<T> {
     fn add(&mut self, id: u64, obj: &T) -> Result<()>;
@@ -30,14 +44,15 @@ impl BincodeDatabase {
 
         let log = AppendOnlyMappedFile::new(&base_dir.join("log.bin"))?;
         log.each_chunk(16, |chunk| {
-            let mut cursor = io::Cursor::new(&chunk);
-            let id = cursor.read_u64::<LittleEndian>()?;
+            let (entry, body) =
+                LayoutVerified::new_from_prefix(chunk).expect("Failure reading log. Corrupted?");
+
+            let slice = LogEntrySlice { entry, body };
 
             // No removals, the offsets are always increasing
-            max_offset = cursor.read_u64::<LittleEndian>()?;
-
-            // So, when a id is already known it gets replaced
-            index.insert(id, max_offset as usize);
+            max_offset = slice.entry.offset.get();
+            // Updates are simply same id, larger offset
+            index.insert(slice.entry.id.get(), max_offset as usize);
             Ok(())
         })?;
 
@@ -72,30 +87,28 @@ where
         let cur_offset = self.data.len();
         self.data.append(data.as_slice())?;
 
-        // XXX Awkward
-        let mut buf = Vec::with_capacity(16);
-        buf.write_u64::<LittleEndian>(id)?;
-        buf.write_u64::<LittleEndian>(cur_offset as u64)?;
+        let entry = LogEntry {
+            id: U64::new(id),
+            offset: U64::new(cur_offset as u64),
+        };
+        self.log.append(&entry.as_bytes())?;
 
-        self.log.append(buf.as_mut_slice())?;
         self.index.insert(id, cur_offset);
         Ok(())
     }
+
     fn get(&self, id: u64) -> Result<Option<T>> {
         match self.index.get(&id) {
             None => Ok(None),
 
             Some(&offset) => {
                 let found = self.data.from_offset(offset)?;
-                Ok(Some(deserialize_local(found)?))
+                Ok(Some(bincode::deserialize(found).map_err(|_| {
+                    io::Error::new(io::ErrorKind::InvalidData, "Failed to deserialize")
+                })?))
             }
         }
     }
-}
-
-fn deserialize_local<'a, T: Serialize + DeserializeOwned>(bytes: &'a [u8]) -> Result<T> {
-    bincode::deserialize(bytes)
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Failed to deserialize"))
 }
 
 #[cfg(test)]
