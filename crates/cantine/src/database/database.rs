@@ -35,6 +35,8 @@ pub struct BincodeDatabase {
     index: HashMap<u64, usize>,
 }
 
+const CHUNK_SIZE: usize = 16;
+
 impl BincodeDatabase {
     pub fn new<T: Serialize + DeserializeOwned>(base_dir: &Path) -> Result<Box<impl Database<T>>> {
         let mut index = HashMap::new();
@@ -43,18 +45,28 @@ impl BincodeDatabase {
         // TODO flock() {log,data}.bin
 
         let log = AppendOnlyMappedFile::new(&base_dir.join("log.bin"))?;
-        log.each_chunk(16, |chunk| {
-            let (entry, body) =
-                LayoutVerified::new_from_prefix(chunk).expect("Failure reading log. Corrupted?");
+        let mut data_read = 0;
+        log.each_chunk(CHUNK_SIZE, |chunk| {
+            if let Some((entry, body)) = LayoutVerified::new_from_prefix(chunk) {
+                let slice = LogEntrySlice { entry, body };
+                // No removals, the offsets are always increasing
+                max_offset = slice.entry.offset.get();
+                // Updates are simply same id, larger offset
+                index.insert(slice.entry.id.get(), max_offset as usize);
 
-            let slice = LogEntrySlice { entry, body };
-
-            // No removals, the offsets are always increasing
-            max_offset = slice.entry.offset.get();
-            // Updates are simply same id, larger offset
-            index.insert(slice.entry.id.get(), max_offset as usize);
-            Ok(())
+                data_read += CHUNK_SIZE;
+                Ok(true)
+            } else {
+                Ok(false)
+            }
         })?;
+
+        if data_read != log.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Log corrupted! Aborted at offset {}", data_read),
+            ));
+        }
 
         let data = AppendOnlyMappedFile::new(&base_dir.join("data.bin"))?;
         // TODO more checks
