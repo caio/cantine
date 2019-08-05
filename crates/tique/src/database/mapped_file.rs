@@ -73,19 +73,19 @@ impl AppendOnlyMappedFile {
         }
     }
 
-    pub fn each_chunk<F>(&self, chunk_size: usize, mut mapper: F) -> Result<usize>
+    pub fn each_chunk<F>(&self, chunk_size: usize, mut mapper: F) -> Result<()>
     where
-        F: FnMut(&[u8]) -> Result<()>,
+        F: FnMut(&[u8]) -> Result<(bool)>,
     {
         match self.mmap.as_ref().map(|m| m.chunks(chunk_size)) {
-            None => Ok(0),
+            None => Ok(()),
             Some(mut iter) => {
-                let mut num_hits = 0;
                 while let Some(chunk) = iter.next() {
-                    mapper(chunk)?;
-                    num_hits += 1;
+                    if !mapper(chunk)? {
+                        break;
+                    };
                 }
-                Ok(num_hits)
+                Ok(())
             }
         }
     }
@@ -183,7 +183,14 @@ mod tests {
 
     #[test]
     fn can_use_chunks_on_empty() -> Result<()> {
-        assert_eq!(0, open_empty()?.each_chunk(1, |_| { Ok(()) })?);
+        let mut tick = 0;
+
+        open_empty()?.each_chunk(1, |_| {
+            tick += 1;
+            Ok(true)
+        })?;
+
+        assert_eq!(0, tick);
         Ok(())
     }
 
@@ -192,13 +199,27 @@ mod tests {
         let mut db = open_empty()?;
         db.append(&[1, 2, 3, 4, 5, 6])?;
 
-        let num_hits = db.each_chunk(2, |chunk| {
+        db.each_chunk(2, |chunk| {
             let mut cursor = io::Cursor::new(&chunk);
             assert_eq!(cursor.read_u8()? + 1, cursor.read_u8()?);
-            Ok(())
+            Ok(true)
         })?;
 
-        assert_eq!(3, num_hits);
+        Ok(())
+    }
+
+    #[test]
+    fn can_stop_chunking() -> Result<()> {
+        let mut db = open_empty()?;
+        db.append(&[1, 2, 3, 4, 5, 6])?;
+
+        let mut tick = 0;
+        db.each_chunk(1, |chunk| {
+            tick += 1;
+            Ok(chunk[0] < 5)
+        })?;
+
+        assert_eq!(5, tick);
         Ok(())
     }
 }
