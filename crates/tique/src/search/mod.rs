@@ -1,5 +1,6 @@
 use tantivy;
 
+mod collector;
 mod features;
 mod model;
 mod parser;
