@@ -78,7 +78,7 @@ impl RecipeIndex {
             parsed.map(|r| clauses.push((Occur::Must, r)));
         }
 
-        if clauses.len() == 1 {
+        if clauses.len() == 0 {
             Ok(Box::new(AllQuery))
         } else {
             let bq: BooleanQuery = clauses.into();
@@ -191,6 +191,7 @@ mod tests {
         for element in needed {
             assert!(result.contains(element));
         }
+        assert_eq!(needed.len(), result.len());
         Ok(())
     }
 
