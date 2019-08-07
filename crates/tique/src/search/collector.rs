@@ -5,7 +5,7 @@ use tantivy::{
     Result, SegmentReader,
 };
 
-use super::features::{BytesVector, Feature, FeatureVector, NUM_FEATURES};
+use super::features::{Feature, FeatureVector, EMPTY_BUFFER, NUM_FEATURES};
 
 #[derive(Debug)]
 pub struct FeatureRanges(Vec<Option<RangeVec>>);
@@ -174,10 +174,8 @@ impl SegmentCollector for FeatureSegmentCollector {
     type Fruit = FeatureRanges;
 
     fn collect(&mut self, doc: u32, _score: f32) {
-        let mut data = self.reader.get_bytes(doc).to_owned();
-
-        // XXX Am I holding this right?
-        let (doc_features, _rest) = BytesVector::parse(&mut data).unwrap();
+        let mut data = self.reader.get_bytes(doc);
+        let doc_features = FeatureVector::parse(data).unwrap();
 
         for (feat, ranges) in &self.wanted {
             let opt = doc_features.get(&feat);
@@ -344,21 +342,24 @@ mod tests {
 
         // And we populate it with a couple of docs where
         // the bytes field is a features::FeatureVector
-        let mut doc_feature_a_buf = BytesVector::new_buf();
-        let (mut doc_a, _) = BytesVector::parse(&mut doc_feature_a_buf).unwrap();
-        let mut doc_feature_b_buf = BytesVector::new_buf();
-        let (mut doc_b, _) = BytesVector::parse(&mut doc_feature_b_buf).unwrap();
 
-        // Doc{ A: 5, B: 10, C: nil}
-        doc_a.set(A, 5);
-        doc_a.set(B, 10);
+        {
+            // Doc{ A: 5, B: 10}
+            let mut buf = EMPTY_BUFFER.to_vec();
+            let mut fv = FeatureVector::parse(buf.as_mut_slice()).unwrap();
+            fv.set(A, 5);
+            fv.set(B, 10);
+            add_doc(fv);
+        }
 
-        // Doc{ A: 7, B: nil, C: 2}
-        doc_b.set(A, 7);
-        doc_b.set(C, 2);
-
-        add_doc(doc_a);
-        add_doc(doc_b);
+        {
+            // Doc{ A: 7, C: 2}
+            let mut buf = EMPTY_BUFFER.to_vec();
+            let mut fv = FeatureVector::parse(buf.as_mut_slice()).unwrap();
+            fv.set(A, 7);
+            fv.set(C, 2);
+            add_doc(fv);
+        }
 
         writer.commit()?;
 

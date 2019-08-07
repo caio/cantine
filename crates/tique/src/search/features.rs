@@ -1,12 +1,12 @@
 use byteorder::LittleEndian;
 use serde::{Deserialize, Serialize};
-use zerocopy::{AsBytes, ByteSliceMut, LayoutVerified, U16};
+use zerocopy::{AsBytes, ByteSlice, ByteSliceMut, LayoutVerified, U16};
 
 // FIXME Feature::values().length if this were Java. Macro this out?
 pub const NUM_FEATURES: usize = 8;
-pub const BYTE_SIZE: usize = NUM_FEATURES * 16;
-
 const UNSET_FEATURE: u16 = std::u16::MAX;
+
+pub const EMPTY_BUFFER: [u8; NUM_FEATURES * 2] = [std::u8::MAX; NUM_FEATURES * 2];
 
 type FeatureValue = U16<LittleEndian>;
 type Features = [FeatureValue; NUM_FEATURES];
@@ -45,31 +45,14 @@ impl std::fmt::Display for Feature {
 }
 
 #[derive(Debug)]
-pub struct FeatureVector<B: ByteSliceMut>(LayoutVerified<B, Features>);
+pub struct FeatureVector<B: ByteSlice>(LayoutVerified<B, Features>);
 
-pub struct BytesVector;
-pub type BytesFeatureVector<'a> = FeatureVector<&'a mut [u8]>;
-type ParseOption<'a> = Option<(BytesFeatureVector<'a>, &'a [u8])>;
-
-impl<'a> BytesVector {
-    pub fn parse(src: &'a mut Vec<u8>) -> ParseOption {
-        let (inner, rest) = LayoutVerified::new_from_prefix(src.as_mut_slice())?;
-
-        Some((FeatureVector(inner), rest))
+impl<B: ByteSlice> FeatureVector<B> {
+    pub fn parse(src: B) -> Option<FeatureVector<B>> {
+        let (inner, _) = LayoutVerified::new_from_prefix(src)?;
+        Some(FeatureVector(inner))
     }
 
-    pub fn init(bfv: &'a mut BytesFeatureVector) {
-        for b in bfv.0.iter_mut() {
-            *b = FeatureValue::new(UNSET_FEATURE);
-        }
-    }
-
-    pub fn new_buf() -> Vec<u8> {
-        vec![std::u8::MAX; NUM_FEATURES * 2]
-    }
-}
-
-impl<B: ByteSliceMut> FeatureVector<B> {
     pub fn get(&self, feature: &Feature) -> Option<FeatureValue> {
         let idx = *feature as usize;
         assert!(idx < NUM_FEATURES);
@@ -84,17 +67,19 @@ impl<B: ByteSliceMut> FeatureVector<B> {
         }
     }
 
+    pub fn as_bytes(&self) -> &[u8] {
+        let FeatureVector(inner) = self;
+        inner.as_bytes()
+    }
+}
+
+impl<B: ByteSliceMut> FeatureVector<B> {
     pub fn set(&mut self, feature: &Feature, value: u16) {
         let idx = *feature as usize;
         assert!(idx < NUM_FEATURES);
         let FeatureVector(inner) = self;
 
         inner[idx] = FeatureValue::new(value);
-    }
-
-    pub fn as_bytes(&self) -> &[u8] {
-        let FeatureVector(inner) = self;
-        inner.as_bytes()
     }
 }
 
@@ -105,9 +90,9 @@ mod tests {
 
     #[test]
     fn example_usage() {
-        let mut buf = BytesVector::new_buf();
+        let mut buf = EMPTY_BUFFER.to_vec();
 
-        let (mut features, _rest) = BytesVector::parse(&mut buf).unwrap();
+        let mut features = FeatureVector::parse(buf.as_mut_slice()).unwrap();
 
         // Just to minimize typing
         let A = &Feature::NumIngredients;
@@ -124,14 +109,14 @@ mod tests {
         let mut bytes = features.as_bytes();
         assert_eq!(NUM_FEATURES * 2, bytes.len());
 
-        let mut from_bytes_buf = BytesVector::new_buf();
+        let mut from_bytes_buf = EMPTY_BUFFER.to_vec();
         from_bytes_buf.copy_from_slice(&bytes[..]);
 
-        let opt = BytesVector::parse(&mut from_bytes_buf);
+        let opt = FeatureVector::parse(from_bytes_buf.as_slice());
 
         assert!(opt.is_some());
 
-        let (mut from_bytes, _rest) = opt.unwrap();
+        let from_bytes = opt.unwrap();
 
         assert_eq!(bytes, from_bytes.as_bytes());
     }
