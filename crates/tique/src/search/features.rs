@@ -2,14 +2,7 @@ use byteorder::LittleEndian;
 use serde::{Deserialize, Serialize};
 use zerocopy::{AsBytes, ByteSlice, ByteSliceMut, LayoutVerified, U16};
 
-// FIXME Feature::values().length if this were Java. Macro this out?
-pub const NUM_FEATURES: usize = 8;
-const UNSET_FEATURE: u16 = std::u16::MAX;
-
-pub const EMPTY_BUFFER: [u8; NUM_FEATURES * 2] = [std::u8::MAX; NUM_FEATURES * 2];
-
 type FeatureValue = U16<LittleEndian>;
-type Features = [FeatureValue; NUM_FEATURES];
 
 #[derive(Serialize, Deserialize, Debug, Hash, Eq, PartialEq, Clone, Copy)]
 pub enum Feature {
@@ -23,7 +16,25 @@ pub enum Feature {
     CookTime,
     PrepTime,
     TotalTime,
-    // Remember to update NUM_FEATURES
+}
+
+impl Feature {
+    pub const LENGTH: usize = 8;
+
+    pub const VALUES: [Feature; Feature::LENGTH] = [
+        Feature::NumIngredients,
+        Feature::Calories,
+        Feature::FatContent,
+        Feature::ProteinContent,
+        Feature::CarbContent,
+        Feature::CookTime,
+        Feature::PrepTime,
+        Feature::TotalTime,
+    ];
+
+    pub const UNSET_FEATURE: u16 = std::u16::MAX;
+
+    pub const EMPTY_BUFFER: [u8; Feature::LENGTH * 2] = [std::u8::MAX; Feature::LENGTH * 2];
 }
 
 // FIXME Learn yourself some macros already
@@ -45,7 +56,7 @@ impl std::fmt::Display for Feature {
 }
 
 #[derive(Debug)]
-pub struct FeatureVector<B: ByteSlice>(LayoutVerified<B, Features>);
+pub struct FeatureVector<B: ByteSlice>(LayoutVerified<B, [FeatureValue; Feature::LENGTH]>);
 
 impl<B: ByteSlice> FeatureVector<B> {
     pub fn parse(src: B) -> Option<FeatureVector<B>> {
@@ -55,12 +66,12 @@ impl<B: ByteSlice> FeatureVector<B> {
 
     pub fn get(&self, feature: &Feature) -> Option<FeatureValue> {
         let idx = *feature as usize;
-        assert!(idx < NUM_FEATURES);
+        assert!(idx < Feature::LENGTH);
 
         let FeatureVector(inner) = self;
 
         let value = inner[idx];
-        if value == FeatureValue::new(UNSET_FEATURE) {
+        if value == FeatureValue::new(Feature::UNSET_FEATURE) {
             None
         } else {
             Some(value)
@@ -76,7 +87,7 @@ impl<B: ByteSlice> FeatureVector<B> {
 impl<B: ByteSliceMut> FeatureVector<B> {
     pub fn set(&mut self, feature: &Feature, value: u16) {
         let idx = *feature as usize;
-        assert!(idx < NUM_FEATURES);
+        assert!(idx < Feature::LENGTH);
         let FeatureVector(inner) = self;
 
         inner[idx] = FeatureValue::new(value);
@@ -89,8 +100,29 @@ mod tests {
     use super::*;
 
     #[test]
+    fn init_ok() {
+        let mut buf = Feature::EMPTY_BUFFER.to_vec();
+        let vector = FeatureVector::parse(buf.as_mut_slice()).unwrap();
+
+        Feature::VALUES
+            .iter()
+            .map(|feat| assert_eq!(None, vector.get(feat)));
+    }
+
+    #[test]
+    fn get_set() {
+        let mut buf = Feature::EMPTY_BUFFER.to_vec();
+        let mut vector = FeatureVector::parse(buf.as_mut_slice()).unwrap();
+
+        Feature::VALUES.iter().map(|feat| {
+            vector.set(feat, *feat as u16);
+            assert_eq!(Some(*feat as u16), vector.get(feat).map(|v| v.get()));
+        });
+    }
+
+    #[test]
     fn example_usage() {
-        let mut buf = EMPTY_BUFFER.to_vec();
+        let mut buf = Feature::EMPTY_BUFFER.to_vec();
 
         let mut features = FeatureVector::parse(buf.as_mut_slice()).unwrap();
 
@@ -107,9 +139,9 @@ mod tests {
         assert_eq!(None, features.get(C));
 
         let mut bytes = features.as_bytes();
-        assert_eq!(NUM_FEATURES * 2, bytes.len());
+        assert_eq!(Feature::EMPTY_BUFFER.len(), bytes.len());
 
-        let mut from_bytes_buf = EMPTY_BUFFER.to_vec();
+        let mut from_bytes_buf = Feature::EMPTY_BUFFER.to_vec();
         from_bytes_buf.copy_from_slice(&bytes[..]);
 
         let opt = FeatureVector::parse(from_bytes_buf.as_slice());

@@ -5,7 +5,7 @@ use tantivy::{
     Result, SegmentReader,
 };
 
-use super::features::{Feature, FeatureVector, EMPTY_BUFFER, NUM_FEATURES};
+use super::features::{Feature, FeatureVector};
 
 #[derive(Debug)]
 pub struct FeatureRanges(Vec<Option<RangeVec>>);
@@ -128,7 +128,7 @@ impl FeatureCollector {
     pub fn for_field(field: Field, wanted: AggregationSpec) -> FeatureCollector {
         FeatureCollector {
             field,
-            agg: FeatureRanges::new(NUM_FEATURES),
+            agg: FeatureRanges::new(Feature::LENGTH),
             wanted: wanted,
         }
     }
@@ -144,7 +144,7 @@ impl Collector for FeatureCollector {
         segment_reader: &SegmentReader,
     ) -> Result<FeatureSegmentCollector> {
         Ok(FeatureSegmentCollector {
-            agg: FeatureRanges::new(NUM_FEATURES),
+            agg: FeatureRanges::new(Feature::LENGTH),
             wanted: self.wanted.clone(),
             reader: segment_reader
                 .fast_fields()
@@ -158,7 +158,7 @@ impl Collector for FeatureCollector {
     }
 
     fn merge_fruits(&self, children: Vec<FeatureRanges>) -> Result<FeatureRanges> {
-        let mut merged = FeatureRanges::new(NUM_FEATURES);
+        let mut merged = FeatureRanges::new(Feature::LENGTH);
 
         merged.merge(&self.agg)?;
 
@@ -345,7 +345,7 @@ mod tests {
 
         {
             // Doc{ A: 5, B: 10}
-            let mut buf = EMPTY_BUFFER.to_vec();
+            let mut buf = Feature::EMPTY_BUFFER.to_vec();
             let mut fv = FeatureVector::parse(buf.as_mut_slice()).unwrap();
             fv.set(A, 5);
             fv.set(B, 10);
@@ -354,7 +354,7 @@ mod tests {
 
         {
             // Doc{ A: 7, C: 2}
-            let mut buf = EMPTY_BUFFER.to_vec();
+            let mut buf = Feature::EMPTY_BUFFER.to_vec();
             let mut fv = FeatureVector::parse(buf.as_mut_slice()).unwrap();
             fv.set(A, 7);
             fv.set(C, 2);
