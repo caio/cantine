@@ -16,10 +16,16 @@ pub enum Feature {
     CookTime,
     PrepTime,
     TotalTime,
+
+    DietKeto,
+    DietLowCarb,
+    DietVegan,
+    DietVegetarian,
+    DietPaleo,
 }
 
 impl Feature {
-    pub const LENGTH: usize = 8;
+    pub const LENGTH: usize = 13;
 
     pub const VALUES: [Feature; Feature::LENGTH] = [
         Feature::NumIngredients,
@@ -30,6 +36,11 @@ impl Feature {
         Feature::CookTime,
         Feature::PrepTime,
         Feature::TotalTime,
+        Feature::DietKeto,
+        Feature::DietLowCarb,
+        Feature::DietVegan,
+        Feature::DietVegetarian,
+        Feature::DietPaleo,
     ];
 
     pub const UNSET_FEATURE: u16 = std::u16::MAX;
@@ -51,6 +62,12 @@ impl std::fmt::Display for Feature {
             Feature::CookTime => "cook_time",
             Feature::PrepTime => "prep_time",
             Feature::TotalTime => "total_time",
+
+            Feature::DietKeto => "keto",
+            Feature::DietLowCarb => "lowcarb",
+            Feature::DietVegan => "vegan",
+            Feature::DietVegetarian => "vegetarian",
+            Feature::DietPaleo => "paleo",
         })
     }
 }
