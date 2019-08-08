@@ -13,7 +13,7 @@ use tantivy::{
 };
 
 use super::features::{Feature, FeatureVector};
-use super::model::{IntRange, SearchQuery};
+use super::model::{Range, SearchQuery};
 use super::query_parser::QueryParser;
 
 use super::Result;
@@ -352,7 +352,7 @@ mod tests {
         index.commit()?;
         index.reload_searchers()?;
 
-        let do_search = |feats: Vec<(Feature, IntRange)>| -> Result<Vec<u64>> {
+        let do_search = |feats: Vec<(Feature, Range)>| -> Result<Vec<u64>> {
             let query = SearchQuery {
                 metadata: Some(feats),
                 ..Default::default()
@@ -362,19 +362,25 @@ mod tests {
             Ok(result)
         };
 
-        let fr =
-            |feat: Feature, r: std::ops::Range<u16>| -> (Feature, IntRange) { (feat, r.into()) };
-
         // Searching on A ranges
-        assert_eq!(vec![1, 2, 3], do_search(vec![fr(A, 1..100)])?);
-        assert_eq!(vec![1, 2], do_search(vec![fr(A, 0..11)])?);
-        assert_eq!(vec![1], do_search(vec![fr(A, 1..1)])?);
-        assert_eq!(0, do_search(vec![fr(A, 0..0)])?.len());
+        assert_eq!(vec![1, 2, 3], do_search(vec![(A, (1, 100).into())])?);
+        assert_eq!(vec![1, 2], do_search(vec![(A, (0, 11).into())])?);
+        assert_eq!(vec![1], do_search(vec![(A, (1, 1).into())])?);
+        assert_eq!(0, do_search(vec![(A, (0, 0).into())])?.len());
 
         // Matches on A always pass, B varies:
-        assert_eq!(vec![2, 3], do_search(vec![fr(A, 1..100), fr(B, 1..100)])?);
-        assert_eq!(vec![3], do_search(vec![fr(A, 1..100), fr(B, 5..10)])?);
-        assert_eq!(0, do_search(vec![fr(A, 1..100), fr(B, 100..101)])?.len());
+        assert_eq!(
+            vec![2, 3],
+            do_search(vec![(A, (1, 100).into()), (B, (1, 100).into())])?
+        );
+        assert_eq!(
+            vec![3],
+            do_search(vec![(A, (1, 100).into()), (B, (5, 100).into())])?
+        );
+        assert_eq!(
+            0,
+            do_search(vec![(A, (1, 100).into()), (B, (100, 101).into())])?.len()
+        );
 
         Ok(())
     }

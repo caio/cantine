@@ -6,6 +6,7 @@ use tantivy::{
 };
 
 use super::features::{Feature, FeatureVector};
+use super::model::{AggregationSpec, Range};
 
 #[derive(Debug)]
 pub struct FeatureRanges(Vec<Option<RangeVec>>);
@@ -99,18 +100,6 @@ impl RangeVec {
         storage[idx] += 1;
     }
 }
-
-#[derive(Debug, Clone)]
-pub struct Range(u16, u16);
-
-impl Range {
-    pub fn contains(&self, item: u16) -> bool {
-        let Range(start, end) = self;
-        item >= *start && item <= *end
-    }
-}
-
-pub type AggregationSpec = Vec<(Feature, Vec<Range>)>;
 
 pub struct FeatureCollector {
     field: Field,
@@ -366,12 +355,12 @@ mod tests {
         let reader = index.reader()?;
         let searcher = reader.searcher();
 
-        let wanted = vec![
+        let wanted: AggregationSpec = vec![
             // feature A between ranges 2-10 and 0-5
-            (*A, vec![Range(2, 10), Range(0, 5)]),
+            (*A, vec![(2, 10).into(), (0, 5).into()]),
             // and so on...
-            (*B, vec![Range(9, 100), Range(420, 710)]),
-            (*C, vec![Range(2, 2)]),
+            (*B, vec![(9, 100).into(), (420, 710).into()]),
+            (*C, vec![(2, 2).into()]),
             (*D, vec![]),
         ];
 
