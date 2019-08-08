@@ -6,7 +6,7 @@ use tantivy::{
 };
 
 use super::features::{Feature, FeatureVector};
-use super::model::{AggregationSpec, Range};
+use super::model::AggregationSpec;
 
 #[derive(Debug)]
 pub struct FeatureRanges(Vec<Option<RangeVec>>);
@@ -163,7 +163,7 @@ impl SegmentCollector for FeatureSegmentCollector {
     type Fruit = FeatureRanges;
 
     fn collect(&mut self, doc: u32, _score: f32) {
-        let mut data = self.reader.get_bytes(doc);
+        let data = self.reader.get_bytes(doc);
         let doc_features = FeatureVector::parse(data).unwrap();
 
         for (feat, ranges) in &self.wanted {
@@ -338,7 +338,7 @@ mod tests {
             let mut fv = FeatureVector::parse(buf.as_mut_slice()).unwrap();
             fv.set(A, 5);
             fv.set(B, 10);
-            add_doc(fv);
+            add_doc(fv)?;
         }
 
         {
@@ -347,7 +347,7 @@ mod tests {
             let mut fv = FeatureVector::parse(buf.as_mut_slice()).unwrap();
             fv.set(A, 7);
             fv.set(C, 2);
-            add_doc(fv);
+            add_doc(fv)?;
         }
 
         writer.commit()?;

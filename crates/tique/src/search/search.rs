@@ -5,13 +5,14 @@ use tantivy::{
     directory::MmapDirectory,
     query::{AllQuery, BooleanQuery, Occur, Query, RangeQuery},
     schema::{
-        Field, IndexRecordOption, SchemaBuilder, TextFieldIndexing, TextOptions, Value, FAST,
-        INDEXED, STORED,
+        Field, IndexRecordOption, SchemaBuilder, TextFieldIndexing, TextOptions, FAST, INDEXED,
+        STORED,
     },
     tokenizer::TokenizerManager,
     Document, Index, IndexReader, IndexWriter, ReloadPolicy,
 };
 
+use super::collector::FeatureCollector;
 use super::features::{Feature, FeatureVector};
 use super::model::{Range, SearchQuery};
 use super::query_parser::QueryParser;

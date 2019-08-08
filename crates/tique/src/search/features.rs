@@ -121,9 +121,9 @@ mod tests {
         let mut buf = Feature::EMPTY_BUFFER.to_vec();
         let vector = FeatureVector::parse(buf.as_mut_slice()).unwrap();
 
-        Feature::VALUES
-            .iter()
-            .map(|feat| assert_eq!(None, vector.get(feat)));
+        for feat in Feature::VALUES.iter() {
+            assert_eq!(None, vector.get(feat));
+        }
     }
 
     #[test]
@@ -131,10 +131,10 @@ mod tests {
         let mut buf = Feature::EMPTY_BUFFER.to_vec();
         let mut vector = FeatureVector::parse(buf.as_mut_slice()).unwrap();
 
-        Feature::VALUES.iter().map(|feat| {
+        for feat in Feature::VALUES.iter() {
             vector.set(feat, *feat as u16);
             assert_eq!(Some(*feat as u16), vector.get(feat).map(|v| v.get()));
-        });
+        }
     }
 
     #[test]
@@ -144,18 +144,18 @@ mod tests {
         let mut features = FeatureVector::parse(buf.as_mut_slice()).unwrap();
 
         // Just to minimize typing
-        let A = &Feature::NumIngredients;
-        let B = &Feature::FatContent;
-        let C = &Feature::PrepTime;
+        let a = &Feature::NumIngredients;
+        let b = &Feature::FatContent;
+        let c = &Feature::PrepTime;
 
-        features.set(A, 10);
-        features.set(B, 60);
+        features.set(a, 10);
+        features.set(b, 60);
 
-        assert_eq!(Some(FeatureValue::new(10)), features.get(A));
-        assert_eq!(Some(FeatureValue::new(60)), features.get(B));
-        assert_eq!(None, features.get(C));
+        assert_eq!(Some(FeatureValue::new(10)), features.get(a));
+        assert_eq!(Some(FeatureValue::new(60)), features.get(b));
+        assert_eq!(None, features.get(c));
 
-        let mut bytes = features.as_bytes();
+        let bytes = features.as_bytes();
         assert_eq!(Feature::EMPTY_BUFFER.len(), bytes.len());
 
         let mut from_bytes_buf = Feature::EMPTY_BUFFER.to_vec();
