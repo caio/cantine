@@ -164,7 +164,7 @@ impl RecipeIndex {
         Ok(ids)
     }
 
-    // For testing
+    #[cfg(test)]
     fn reload_searchers(&self) -> Result<()> {
         self.reader.reload()
     }
