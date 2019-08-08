@@ -115,7 +115,7 @@ mod tests {
     fn test_parser() -> QueryParser {
         let mut schema_builder = SchemaBuilder::new();
         let field = schema_builder.add_text_field("text", TEXT);
-        QueryParser::new(field, TokenizerManager::default().get("default").unwrap())
+        QueryParser::new(field, TokenizerManager::default().get("en_stem").unwrap())
     }
 
     fn parsed(input: &str) -> Box<Query> {

@@ -1,16 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Debug)]
-pub enum Diet {
-    LowCarb,
-    Vegetarian,
-    Vegan,
-    Keto,
-    Paleo,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct DietChoice(Diet, f32);
+pub use super::features::Feature;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum Sort {
@@ -26,14 +16,24 @@ pub enum Sort {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct IntRange(u64, u64);
+pub struct IntRange(u16, u16);
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct FloatRange(f64, f64);
+impl From<std::ops::Range<u16>> for IntRange {
+    fn from(src: std::ops::Range<u16>) -> Self {
+        IntRange(src.start, src.end)
+    }
+}
+
+impl Into<std::ops::Range<u64>> for &IntRange {
+    fn into(self) -> std::ops::Range<u64> {
+        let IntRange(start, end) = self;
+        // NOTE (start, end+1) because std::ops::Range is half-open
+        (*start as u64)..(*end as u64 + 1)
+    }
+}
 
 #[derive(Serialize, Deserialize, Debug, Default)]
 pub struct SearchQuery {
-    // Shirley, there's a better way!
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fulltext: Option<String>,
 
@@ -41,31 +41,7 @@ pub struct SearchQuery {
     pub sort: Option<Sort>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub diet: Option<DietChoice>,
-
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub num_ingredients: Option<IntRange>,
-
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub total_time: Option<IntRange>,
-
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cook_time: Option<IntRange>,
-
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub prep_time: Option<IntRange>,
-
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub kcal_content: Option<IntRange>,
-
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub fat_content: Option<FloatRange>,
-
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub carb_content: Option<FloatRange>,
-
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub protein_content: Option<FloatRange>,
+    pub metadata: Option<Vec<(Feature, IntRange)>>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub page_number: Option<u32>,
