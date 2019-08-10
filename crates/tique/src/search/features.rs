@@ -48,30 +48,6 @@ impl Feature {
     pub const EMPTY_BUFFER: [u8; Feature::LENGTH * 2] = [std::u8::MAX; Feature::LENGTH * 2];
 }
 
-// FIXME Learn yourself some macros already
-impl std::fmt::Display for Feature {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(match self {
-            Feature::NumIngredients => "num_ingredients",
-
-            Feature::Calories => "calories",
-            Feature::FatContent => "fat",
-            Feature::ProteinContent => "protein",
-            Feature::CarbContent => "carb",
-
-            Feature::CookTime => "cook_time",
-            Feature::PrepTime => "prep_time",
-            Feature::TotalTime => "total_time",
-
-            Feature::DietKeto => "keto",
-            Feature::DietLowCarb => "lowcarb",
-            Feature::DietVegan => "vegan",
-            Feature::DietVegetarian => "vegetarian",
-            Feature::DietPaleo => "paleo",
-        })
-    }
-}
-
 #[derive(Debug)]
 pub struct FeatureVector<B: ByteSlice>(LayoutVerified<B, [FeatureValue; Feature::LENGTH]>);
 
