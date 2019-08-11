@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tantivy::{
     collector::TopDocs,
     directory::MmapDirectory,
@@ -29,10 +29,10 @@ pub struct RecipeIndex {
 }
 
 #[derive(Clone)]
-struct FeatureIndexFields(Vec<Field>);
+pub struct FeatureIndexFields(Vec<Field>);
 
 impl FeatureIndexFields {
-    fn new() -> (Schema, FeatureIndexFields) {
+    pub fn new() -> (Schema, FeatureIndexFields) {
         let mut builder = SchemaBuilder::new();
         let mut fields = Vec::with_capacity(3 + Feature::LENGTH);
 
@@ -77,6 +77,7 @@ impl FeatureIndexFields {
         self.must_get(3 + feat as usize)
     }
 
+    // FIXME test
     fn interpret_query(
         &self,
         query: &SearchQuery,
@@ -110,21 +111,8 @@ impl FeatureIndexFields {
             Ok(Box::new(bq))
         }
     }
-}
 
-pub struct FeatureDocument(Document);
-
-pub trait FeatureDocumentFactory {
-    fn make_document(
-        &self,
-        id: u64,
-        fulltext: String,
-        features: Option<Vec<(Feature, u16)>>,
-    ) -> FeatureDocument;
-}
-
-impl FeatureDocumentFactory for FeatureIndexFields {
-    fn make_document(
+    pub fn make_document(
         &self,
         id: u64,
         fulltext: String,
@@ -148,14 +136,22 @@ impl FeatureDocumentFactory for FeatureIndexFields {
 
         FeatureDocument(doc)
     }
+
+    pub fn add_document(writer: &IndexWriter, fd: FeatureDocument) {
+        let FeatureDocument(doc) = fd;
+        writer.add_document(doc);
+    }
 }
+
+pub struct FeatureDocument(Document);
 
 impl RecipeIndex {
     pub fn new(index_path: &Path) -> Result<RecipeIndex> {
         let (schema, fields) = FeatureIndexFields::new();
 
         let index = Index::open_or_create(MmapDirectory::open(index_path)?, schema)?;
-        let writer = index.writer(10_000_000)?;
+
+        let writer = index.writer(40_000_000)?;
         let reader = index
             .reader_builder()
             .reload_policy(ReloadPolicy::OnCommit)
@@ -176,13 +172,12 @@ impl RecipeIndex {
         })
     }
 
-    pub fn doc_factory(&self) -> impl FeatureDocumentFactory {
+    pub fn doc_factory(&self) -> FeatureIndexFields {
         self.fields.clone()
     }
 
     pub fn add(&self, feature_document: FeatureDocument) {
-        let FeatureDocument(doc) = feature_document;
-        self.writer.add_document(doc);
+        FeatureIndexFields::add_document(&self.writer, feature_document);
     }
 
     pub fn search(&self, query: &SearchQuery) -> Result<Vec<u64>> {
