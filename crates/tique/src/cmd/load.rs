@@ -4,7 +4,7 @@ use std::sync::mpsc::channel;
 use std::thread::spawn;
 use std::time::Instant;
 
-use super::{
+use crate::{
     database::BincodeDatabase,
     search::{Feature, FeatureIndexFields},
     CerberusRecipeModel,

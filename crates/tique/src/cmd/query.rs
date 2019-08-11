@@ -1,7 +1,6 @@
-use std::io;
-use std::path::Path;
+use std::{io, path::Path};
 
-use super::{
+use crate::{
     database::BincodeDatabase,
     search::{Feature, FeatureIndexFields, QueryParser, SearchQuery},
     CerberusRecipeModel,

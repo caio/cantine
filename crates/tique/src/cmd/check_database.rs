@@ -3,7 +3,7 @@ use std::path::Path;
 use std::sync::mpsc::channel;
 use std::thread::spawn;
 
-use super::{database::BincodeDatabase, CerberusRecipeModel};
+use crate::{database::BincodeDatabase, CerberusRecipeModel};
 
 use clap::ArgMatches;
 use serde::{Deserialize, Serialize};

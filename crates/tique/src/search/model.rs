@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-pub use super::features::Feature;
+use crate::search::Feature;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum Sort {

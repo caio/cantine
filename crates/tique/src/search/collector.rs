@@ -5,8 +5,7 @@ use tantivy::{
     Result, SegmentReader,
 };
 
-use super::features::{Feature, FeatureVector};
-use super::model::AggregationSpec;
+use crate::search::{model::AggregationSpec, Feature, FeatureVector};
 
 #[derive(Debug)]
 pub struct FeatureRanges(Vec<Option<RangeVec>>);

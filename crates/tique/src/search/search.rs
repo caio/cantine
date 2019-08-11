@@ -12,12 +12,10 @@ use tantivy::{
     Document, Index, IndexReader, IndexWriter, ReloadPolicy,
 };
 
-use super::collector::FeatureCollector;
-use super::features::{Feature, FeatureVector};
-use super::model::{Range, SearchQuery};
-use super::query_parser::QueryParser;
-
-use super::Result;
+use crate::search::{
+    collector::FeatureCollector, model::Range, Feature, FeatureVector, QueryParser, Result,
+    SearchQuery,
+};
 
 pub struct RecipeIndex {
     index: Index,

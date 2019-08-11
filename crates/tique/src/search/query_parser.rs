@@ -1,4 +1,4 @@
-use super::parser::{parse_query, Token};
+use crate::search::parser::{parse_query, Token};
 
 use tantivy::{
     self,
