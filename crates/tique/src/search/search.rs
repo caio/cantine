@@ -1,13 +1,12 @@
 use std::path::Path;
 
-use serde::Serialize;
 use tantivy::{
     collector::TopDocs,
     directory::MmapDirectory,
     query::{AllQuery, BooleanQuery, Occur, Query, RangeQuery},
     schema::{
-        Field, FieldType, IndexRecordOption, Schema, SchemaBuilder, TextFieldIndexing, TextOptions,
-        Value, FAST, INDEXED, STORED,
+        Field, IndexRecordOption, Schema, SchemaBuilder, TextFieldIndexing, TextOptions, Value,
+        FAST, INDEXED, STORED,
     },
     tokenizer::TokenizerManager,
     Document, Index, IndexReader, IndexWriter, ReloadPolicy,
