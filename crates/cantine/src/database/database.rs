@@ -5,7 +5,7 @@ use byteorder::LittleEndian;
 use serde::{de::DeserializeOwned, Serialize};
 use zerocopy::{AsBytes, ByteSlice, FromBytes, LayoutVerified, U64};
 
-use super::mapped_file::AppendOnlyMappedFile;
+use crate::database::mapped_file::AppendOnlyMappedFile;
 
 type Result<T> = super::Result<T>;
 
