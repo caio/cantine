@@ -60,6 +60,24 @@ fn main() -> io::Result<()> {
                 ),
         )
         .subcommand(
+            SubCommand::with_name("query")
+                .about("Search for recipes, from the command line!")
+                .arg(
+                    Arg::with_name("base_dir")
+                        .short("b")
+                        .long("base-dir")
+                        .takes_value(true)
+                        .required(true)
+                        .help("Path to the data built by `load`"),
+                )
+                .arg(
+                    Arg::with_name("query")
+                        .index(1)
+                        .required(true)
+                        .help("Plain text query to submit"),
+                ),
+        )
+        .subcommand(
             SubCommand::with_name("load")
                 .about("Loads data from STDIN into the search index")
                 .arg(
@@ -92,6 +110,8 @@ fn main() -> io::Result<()> {
         cmd::load(load_matches)?;
     } else if let Some(dbm) = matches.subcommand_matches("check_database") {
         cmd::check_database(dbm)?;
+    } else if let Some(sm) = matches.subcommand_matches("query") {
+        cmd::query(sm)?;
     }
 
     Ok(())

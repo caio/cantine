@@ -60,24 +60,24 @@ impl FeatureIndexFields {
         *inner.get(idx).expect("every get works")
     }
 
-    fn id(&self) -> Field {
+    pub fn id(&self) -> Field {
         self.must_get(0)
     }
 
-    fn fulltext(&self) -> Field {
+    pub fn fulltext(&self) -> Field {
         self.must_get(1)
     }
 
-    fn feature_vector(&self) -> Field {
+    pub fn feature_vector(&self) -> Field {
         self.must_get(2)
     }
 
-    fn feature(&self, feat: Feature) -> Field {
+    pub fn feature(&self, feat: Feature) -> Field {
         self.must_get(3 + feat as usize)
     }
 
     // FIXME test
-    fn interpret_query(
+    pub fn interpret_query(
         &self,
         query: &SearchQuery,
         query_parser: &QueryParser,

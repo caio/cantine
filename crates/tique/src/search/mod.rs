@@ -11,4 +11,5 @@ type Result<T> = tantivy::Result<T>;
 
 pub use features::{Feature, FeatureVector};
 pub use model::SearchQuery;
+pub use query_parser::QueryParser;
 pub use search::{FeatureIndexFields, RecipeIndex};
