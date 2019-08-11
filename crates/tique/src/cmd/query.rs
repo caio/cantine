@@ -1,11 +1,8 @@
-use std::io::{self, BufRead};
+use std::io;
 use std::path::Path;
-use std::sync::mpsc::channel;
-use std::thread::spawn;
-use std::time::Instant;
 
 use super::{
-    database::{BincodeDatabase, Database},
+    database::BincodeDatabase,
     search::{Feature, FeatureIndexFields, QueryParser, SearchQuery},
     CerberusRecipeModel,
 };
@@ -30,8 +27,7 @@ pub fn query(matches: &ArgMatches) -> io::Result<()> {
     let base_path = Path::new(matches.value_of("base_dir").unwrap());
 
     let db_path = base_path.join("database");
-    // FIXME this BincodeDatabase is a bit backwards no?
-    let database = BincodeDatabase::new::<CerberusRecipeModel>(&db_path).unwrap();
+    let database = BincodeDatabase::new(&db_path).unwrap();
 
     let index_path = base_path.join("tantivy");
     let (schema, fields) = FeatureIndexFields::new();
@@ -69,7 +65,8 @@ pub fn query(matches: &ArgMatches) -> io::Result<()> {
     }
 
     for (i, id) in ids.iter().enumerate() {
-        let recipe = database.get(*id)?.expect("Found recipe should exist on db");
+        let recipe: CerberusRecipeModel =
+            database.get(*id)?.expect("Found recipe should exist on db");
         println!("{}. {}: {}", i, recipe.recipe_id, recipe.name);
     }
 

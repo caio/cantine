@@ -5,7 +5,7 @@ use std::thread::spawn;
 use std::time::Instant;
 
 use super::{
-    database::{BincodeDatabase, Database},
+    database::BincodeDatabase,
     search::{Feature, FeatureIndexFields},
     CerberusRecipeModel,
 };
@@ -61,7 +61,7 @@ pub fn load(matches: &ArgMatches) -> io::Result<()> {
 
     spawn(move || {
         println!("FeatureDocuments: started!");
-        let mut database = BincodeDatabase::new::<CerberusRecipeModel>(&db_path).unwrap();
+        let mut database = BincodeDatabase::new(&db_path).unwrap();
 
         for line in lines {
             let recipe: CerberusRecipeModel = serde_json::from_str(line.as_str()).unwrap();

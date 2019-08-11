@@ -3,10 +3,7 @@ use std::path::Path;
 use std::sync::mpsc::channel;
 use std::thread::spawn;
 
-use super::{
-    database::{BincodeDatabase, Database},
-    CerberusRecipeModel,
-};
+use super::{database::BincodeDatabase, CerberusRecipeModel};
 
 use clap::ArgMatches;
 use serde::{Deserialize, Serialize};
@@ -21,7 +18,7 @@ pub fn check_database(matches: &ArgMatches) -> io::Result<()> {
     }
 
     // XXX maybe split into open/new ?
-    let db = BincodeDatabase::new::<CerberusRecipeModel>(&db_path)?;
+    let db: BincodeDatabase<CerberusRecipeModel> = BincodeDatabase::new(&db_path)?;
 
     let (line_sender, lines) = channel();
     spawn(move || {
