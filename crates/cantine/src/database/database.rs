@@ -1,6 +1,4 @@
-use std::collections::HashMap;
-use std::io;
-use std::path::Path;
+use std::{collections::HashMap, io, marker::PhantomData, path::Path};
 
 use bincode;
 use byteorder::LittleEndian;
@@ -24,21 +22,20 @@ struct LogEntrySlice<'a> {
     body: &'a [u8],
 }
 
-pub trait Database<T> {
-    fn add(&mut self, id: u64, obj: &T) -> Result<()>;
-    fn get(&self, id: u64) -> Result<Option<T>>;
-}
-
-pub struct BincodeDatabase {
+pub struct BincodeDatabase<T> {
     log: AppendOnlyMappedFile,
     data: AppendOnlyMappedFile,
     index: HashMap<u64, usize>,
+    _marker: PhantomData<T>,
 }
 
 const CHUNK_SIZE: usize = 16;
 
-impl BincodeDatabase {
-    pub fn new<T: Serialize + DeserializeOwned>(base_dir: &Path) -> Result<Box<impl Database<T>>> {
+impl<T> BincodeDatabase<T>
+where
+    T: Serialize + DeserializeOwned,
+{
+    pub fn new(base_dir: &Path) -> Result<Self> {
         let mut index = HashMap::new();
         let mut max_offset = 0;
 
@@ -79,20 +76,16 @@ impl BincodeDatabase {
                 "index points at unreachable",
             ))
         } else {
-            Ok(Box::new(BincodeDatabase {
+            Ok(BincodeDatabase {
                 index: index,
                 log: log,
                 data: data,
-            }))
+                _marker: PhantomData,
+            })
         }
     }
-}
 
-impl<T> Database<T> for BincodeDatabase
-where
-    T: Serialize + DeserializeOwned,
-{
-    fn add(&mut self, id: u64, obj: &T) -> Result<()> {
+    pub fn add(&mut self, id: u64, obj: &T) -> Result<()> {
         let data = bincode::serialize(obj)
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Failed to serialize"))?;
 
@@ -109,7 +102,7 @@ where
         Ok(())
     }
 
-    fn get(&self, id: u64) -> Result<Option<T>> {
+    pub fn get(&self, id: u64) -> Result<Option<T>> {
         match self.index.get(&id) {
             None => Ok(None),
 
@@ -146,9 +139,9 @@ mod tests {
         }
     }
 
-    fn open_empty<'a>() -> Result<Box<impl Database<Recipe>>> {
+    fn open_empty() -> Result<BincodeDatabase<Recipe>> {
         let tmpdir = tempfile::TempDir::new().unwrap();
-        BincodeDatabase::new::<Recipe>(&tmpdir.path())
+        BincodeDatabase::new(&tmpdir.path())
     }
 
     #[test]
@@ -186,14 +179,14 @@ mod tests {
         let tmpdir = tempfile::TempDir::new()?;
         let db_path = tmpdir.path();
 
-        let mut db = BincodeDatabase::new::<Recipe>(&db_path)?;
+        let mut db = BincodeDatabase::new(&db_path)?;
 
         {
             db.add(1, &Recipe::new(1))?;
             db.add(2, &Recipe::new(2))?;
         }
 
-        let existing_db = BincodeDatabase::new::<Recipe>(&db_path)?;
+        let existing_db = BincodeDatabase::new(&db_path)?;
         assert_eq!(Some(Recipe::new(1)), existing_db.get(1)?);
         assert_eq!(Some(Recipe::new(2)), existing_db.get(2)?);
 
