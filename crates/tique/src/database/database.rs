@@ -3,7 +3,7 @@ use std::{collections::HashMap, io, marker::PhantomData, path::Path};
 use bincode;
 use byteorder::LittleEndian;
 use serde::{de::DeserializeOwned, Serialize};
-use zerocopy::{AsBytes, FromBytes, LayoutVerified, U64};
+use zerocopy::{AsBytes, ByteSlice, FromBytes, LayoutVerified, U64};
 
 use super::mapped_file::AppendOnlyMappedFile;
 
@@ -16,11 +16,7 @@ struct LogEntry {
     offset: U64<LittleEndian>,
 }
 
-struct LogEntrySlice<'a> {
-    entry: LayoutVerified<&'a [u8], LogEntry>,
-    #[allow(dead_code)]
-    body: &'a [u8],
-}
+struct LogEntrySlice<B: ByteSlice>(LayoutVerified<B, LogEntry>);
 
 pub struct BincodeDatabase<T> {
     log: AppendOnlyMappedFile,
@@ -44,12 +40,12 @@ where
         let log = AppendOnlyMappedFile::new(&base_dir.join("log.bin"))?;
         let mut data_read = 0;
         log.each_chunk(CHUNK_SIZE, |chunk| {
-            if let Some((entry, body)) = LayoutVerified::new_from_prefix(chunk) {
-                let slice = LogEntrySlice { entry, body };
+            if let Some((entry, _rest)) = LayoutVerified::new_from_prefix(chunk) {
+                let slice = LogEntrySlice(entry);
                 // No removals, the offsets are always increasing
-                max_offset = slice.entry.offset.get();
+                max_offset = slice.0.offset.get();
                 // Updates are simply same id, larger offset
-                index.insert(slice.entry.id.get(), max_offset as usize);
+                index.insert(slice.0.id.get(), max_offset as usize);
 
                 data_read += CHUNK_SIZE;
                 Ok(true)
