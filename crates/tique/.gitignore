@@ -1,5 +1,5 @@
 .vscode/
-**/*_generated.rs
-
 /target/
 **/*.rs.bk
+flamegraph.svg
+perf.data*
