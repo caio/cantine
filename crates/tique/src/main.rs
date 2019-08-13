@@ -74,7 +74,7 @@ fn main() -> io::Result<()> {
                     Arg::with_name("query")
                         .index(1)
                         .required(true)
-                        .help("Plain text query to submit"),
+                        .help("SearchRequest as json"),
                 ),
         )
         .subcommand(
