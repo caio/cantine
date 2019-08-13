@@ -5,7 +5,7 @@ use tantivy::{
     Result, SegmentReader,
 };
 
-use crate::search::{model::AggregationSpec, Feature, FeatureVector};
+use crate::search::{AggregationRequest, Feature, FeatureVector};
 
 #[derive(Debug)]
 pub struct FeatureRanges(Vec<Option<RangeVec>>);
@@ -103,17 +103,17 @@ impl RangeVec {
 pub struct FeatureCollector {
     field: Field,
     agg: FeatureRanges,
-    wanted: AggregationSpec,
+    wanted: AggregationRequest,
 }
 
 pub struct FeatureSegmentCollector {
     agg: FeatureRanges,
     reader: BytesFastFieldReader,
-    wanted: AggregationSpec,
+    wanted: AggregationRequest,
 }
 
 impl FeatureCollector {
-    pub fn for_field(field: Field, wanted: AggregationSpec) -> FeatureCollector {
+    pub fn for_field(field: Field, wanted: AggregationRequest) -> FeatureCollector {
         FeatureCollector {
             field,
             agg: FeatureRanges::new(Feature::LENGTH),
@@ -177,7 +177,8 @@ impl SegmentCollector for FeatureSegmentCollector {
 
             // Index/Count ranges in the order they were requested
             for (idx, range) in ranges.iter().enumerate() {
-                if range.contains(val.get()) {
+                let value = val.get();
+                if value >= range[0] && value <= range[1] {
                     self.agg
                         .get_mut(*feat as usize)
                         .get_or_insert_with(|| RangeVec::new(ranges.len()))
@@ -354,12 +355,12 @@ mod tests {
         let reader = index.reader()?;
         let searcher = reader.searcher();
 
-        let wanted: AggregationSpec = vec![
+        let wanted: AggregationRequest = vec![
             // feature A between ranges 2-10 and 0-5
-            (*A, vec![(2, 10).into(), (0, 5).into()]),
+            (*A, vec![[2, 10], [0, 5]]),
             // and so on...
-            (*B, vec![(9, 100).into(), (420, 710).into()]),
-            (*C, vec![(2, 2).into()]),
+            (*B, vec![[9, 100], [420, 710]]),
+            (*C, vec![[2, 2]]),
             (*D, vec![]),
         ];
 
@@ -370,7 +371,7 @@ mod tests {
         assert_eq!(&Some(RangeVec(vec![2, 1])), feature_ranges.get(*A as usize));
         // { B => { "9-100": 1, "420-710": 0 } }
         assert_eq!(&Some(RangeVec(vec![1, 0])), feature_ranges.get(*B as usize));
-        // { "2" =>  1 }
+        // { C => { "2" => 1 } }
         assert_eq!(&Some(RangeVec(vec![1])), feature_ranges.get(*C as usize));
         // Asking to count a feature but providing no ranges should no-op
         assert_eq!(&None, feature_ranges.get(*D as usize));

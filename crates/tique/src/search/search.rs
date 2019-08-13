@@ -1,5 +1,7 @@
 use std::path::Path;
 
+use serde::{Deserialize, Serialize};
+
 use tantivy::{
     collector::TopDocs,
     directory::MmapDirectory,
@@ -12,10 +14,7 @@ use tantivy::{
     Document, Index, IndexReader, IndexWriter, ReloadPolicy,
 };
 
-use crate::search::{
-    collector::FeatureCollector, model::Range, Feature, FeatureVector, QueryParser, Result,
-    SearchQuery,
-};
+use crate::search::{collector::FeatureCollector, Feature, FeatureVector, QueryParser, Result};
 
 pub struct RecipeIndex {
     index: Index,
@@ -29,6 +28,7 @@ pub struct RecipeIndex {
 pub struct FeatureIndexFields(Vec<Field>);
 
 impl FeatureIndexFields {
+    // TODO explore the new(num_features: usize) path
     pub fn new() -> (Schema, FeatureIndexFields) {
         let mut builder = SchemaBuilder::new();
         let mut fields = Vec::with_capacity(3 + Feature::LENGTH);
@@ -74,24 +74,27 @@ impl FeatureIndexFields {
         self.must_get(3 + feat as usize)
     }
 
-    // FIXME test
-    pub fn interpret_query(
+    pub fn interpret_request(
         &self,
-        query: &SearchQuery,
+        req: &SearchRequest,
         query_parser: &QueryParser,
     ) -> Result<Box<dyn Query>> {
         let mut clauses: Vec<(Occur, Box<dyn Query>)> = Vec::new();
 
-        if let Some(metadata) = &query.metadata {
-            for (feat, range) in metadata {
+        if let Some(filters) = &req.filter {
+            for spec in filters {
                 clauses.push((
                     Occur::Must,
-                    Box::new(RangeQuery::new_u64(self.feature(*feat), range.into())),
+                    Box::new(RangeQuery::new_u64(
+                        self.feature(spec.0),
+                        // inclusive range
+                        spec.1..(spec.2 + 1),
+                    )),
                 ));
             }
         }
 
-        if let Some(fulltext) = &query.fulltext {
+        if let Some(fulltext) = &req.query {
             if let Some(boxed_query) = query_parser.parse(fulltext.as_ref())? {
                 if clauses.len() == 0 {
                     return Ok(boxed_query);
@@ -139,6 +142,19 @@ impl FeatureIndexFields {
         writer.add_document(doc);
     }
 }
+#[derive(Serialize, Deserialize, Default, Debug)]
+pub struct SearchRequest {
+    pub query: Option<String>,
+    // default 1, non zero
+    pub page: Option<u16>,
+    // default 20, non zero also
+    pub page_size: Option<u8>,
+    pub filter: Option<Vec<FilterRequest>>,
+    pub agg: Option<AggregationRequest>,
+}
+
+pub type FilterRequest = (Feature, u64, u64);
+pub type AggregationRequest = Vec<(Feature, Vec<[u16; 2]>)>;
 
 pub struct FeatureDocument(Document);
 
@@ -177,9 +193,9 @@ impl RecipeIndex {
         FeatureIndexFields::add_document(&self.writer, feature_document);
     }
 
-    pub fn search(&self, query: &SearchQuery) -> Result<Vec<u64>> {
+    pub fn search(&self, req: &SearchRequest) -> Result<Vec<u64>> {
         let searcher = self.reader.searcher();
-        let iquery = self.fields.interpret_query(query, &self.query_parser)?;
+        let iquery = self.fields.interpret_request(req, &self.query_parser)?;
 
         let hits = searcher.search(&iquery, &TopDocs::with_limit(10))?;
         let mut ids = Vec::with_capacity(hits.len());
@@ -254,7 +270,7 @@ mod tests {
         let tmpdir = tempfile::TempDir::new()?;
         let searcher = RecipeIndex::new(tmpdir.path())?;
 
-        assert_eq!(searcher.search(&SearchQuery::default())?, &[0u64; 0]);
+        assert_eq!(searcher.search(&SearchRequest::default())?, &[0u64; 0]);
         Ok(())
     }
 
@@ -270,8 +286,8 @@ mod tests {
 
         assert_eq!(
             vec![1],
-            index.search(&SearchQuery {
-                fulltext: Some("".to_owned()),
+            index.search(&SearchRequest {
+                query: Some("".to_owned()),
                 ..Default::default()
             })?
         );
@@ -291,8 +307,8 @@ mod tests {
 
         assert_eq!(
             vec![1],
-            index.search(&SearchQuery {
-                fulltext: Some("one".to_owned()),
+            index.search(&SearchRequest {
+                query: Some("one".to_owned()),
                 ..Default::default()
             })?
         );
@@ -313,8 +329,8 @@ mod tests {
         index.reload_searchers()?;
 
         let do_search = |term: &str| -> Result<Vec<u64>> {
-            let query = SearchQuery {
-                fulltext: Some(term.to_owned()),
+            let query = SearchRequest {
+                query: Some(term.to_owned()),
                 ..Default::default()
             };
             let mut result = index.search(&query)?;
@@ -362,9 +378,9 @@ mod tests {
         index.commit()?;
         index.reload_searchers()?;
 
-        let do_search = |feats: Vec<(Feature, Range)>| -> Result<Vec<u64>> {
-            let query = SearchQuery {
-                metadata: Some(feats),
+        let do_search = |feats: Vec<FilterRequest>| -> Result<Vec<u64>> {
+            let query = SearchRequest {
+                filter: Some(feats),
                 ..Default::default()
             };
             let mut result = index.search(&query)?;
@@ -373,23 +389,23 @@ mod tests {
         };
 
         // Searching on A ranges
-        assert_eq!(vec![1, 2, 3], do_search(vec![(A, (1, 100).into())])?);
-        assert_eq!(vec![1, 2], do_search(vec![(A, (0, 11).into())])?);
-        assert_eq!(vec![1], do_search(vec![(A, (1, 1).into())])?);
-        assert_eq!(0, do_search(vec![(A, (0, 0).into())])?.len());
+        assert_eq!(vec![1, 2, 3], do_search(vec![(A, 1, 100)])?);
+        assert_eq!(vec![1, 2], do_search(vec![(A, 0, 11)])?);
+        assert_eq!(vec![1], do_search(vec![(A, 1, 1)])?);
+        assert_eq!(0, do_search(vec![(A, 0, 0)])?.len());
 
         // Matches on A always pass, B varies:
         assert_eq!(
             vec![2, 3],
-            do_search(vec![(A, (1, 100).into()), (B, (1, 100).into())])?
+            do_search(vec![(A, 1, 100).into(), (B, 1, 100).into()])?
         );
         assert_eq!(
             vec![3],
-            do_search(vec![(A, (1, 100).into()), (B, (5, 100).into())])?
+            do_search(vec![(A, 1, 100).into(), (B, 5, 100).into()])?
         );
         assert_eq!(
             0,
-            do_search(vec![(A, (1, 100).into()), (B, (100, 101).into())])?.len()
+            do_search(vec![(A, 1, 100).into(), (B, 100, 101).into()])?.len()
         );
 
         Ok(())

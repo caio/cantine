@@ -41,6 +41,7 @@ impl Feature {
         Feature::DietVegan,
         Feature::DietVegetarian,
         Feature::DietPaleo,
+        // TODO Feature::InstructionsLength
     ];
 
     pub const UNSET_FEATURE: u16 = std::u16::MAX;
