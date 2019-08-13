@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{collections::HashMap, path::Path};
 
 use serde::{Deserialize, Serialize};
 
@@ -149,11 +149,11 @@ pub struct SearchRequest {
     pub page: Option<u16>,
     // default 20, non zero also
     pub page_size: Option<u8>,
-    pub filter: Option<Vec<FilterRequest>>,
+    pub filter: Option<FilterRequest>,
     pub agg: Option<AggregationRequest>,
 }
 
-pub type FilterRequest = (Feature, u64, u64);
+pub type FilterRequest = Vec<(Feature, u64, u64)>;
 pub type AggregationRequest = Vec<(Feature, Vec<[u16; 2]>)>;
 
 pub struct FeatureDocument(Document);
@@ -378,7 +378,7 @@ mod tests {
         index.commit()?;
         index.reload_searchers()?;
 
-        let do_search = |feats: Vec<FilterRequest>| -> Result<Vec<u64>> {
+        let do_search = |feats: FilterRequest| -> Result<Vec<u64>> {
             let query = SearchRequest {
                 filter: Some(feats),
                 ..Default::default()

@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use tantivy::{
     collector::{Collector, SegmentCollector},
     fastfield::BytesFastFieldReader,
@@ -55,6 +57,20 @@ impl FeatureRanges {
         inner
             .get_mut(idx)
             .expect("Invariant: get_mut should always work")
+    }
+}
+
+impl Into<HashMap<Feature, Vec<u16>>> for FeatureRanges {
+    fn into(self) -> HashMap<Feature, Vec<u16>> {
+        let mut res = HashMap::new();
+        for feat in Feature::VALUES.iter() {
+            if let Some(counts) = self.get(*feat as usize) {
+                let RangeVec(inner) = counts;
+                res.insert(*feat, inner.clone());
+            }
+        }
+
+        res
     }
 }
 
@@ -377,5 +393,30 @@ mod tests {
         assert_eq!(&None, feature_ranges.get(*D as usize));
 
         Ok(())
+    }
+
+    #[test]
+    fn empty_feature_ranges_becomes_empty_map() {
+        assert_eq!(HashMap::new(), FeatureRanges::new(Feature::LENGTH).into());
+    }
+
+    #[test]
+    fn feature_ranges_into_hashmap() {
+        let mut fr = FeatureRanges::new(Feature::LENGTH);
+
+        fr.get_mut(*A as usize).replace(RangeVec(vec![1, 2]));
+        fr.get_mut(*B as usize).replace(RangeVec(vec![3]));
+        fr.get_mut(*C as usize).replace(RangeVec(vec![4, 5, 6]));
+
+        let as_map: HashMap<Feature, Vec<u16>> = fr.into();
+
+        for feat in Feature::VALUES.iter() {
+            match feat {
+                A => assert_eq!(&vec![1, 2], as_map.get(A).unwrap()),
+                B => assert_eq!(&vec![3], as_map.get(B).unwrap()),
+                C => assert_eq!(&vec![4, 5, 6], as_map.get(C).unwrap()),
+                _ => assert_eq!(false, as_map.contains_key(feat)),
+            }
+        }
     }
 }

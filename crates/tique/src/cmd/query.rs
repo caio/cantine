@@ -39,7 +39,8 @@ struct SearchResponse {
     num_hits: usize,
     page: usize,
     num_pages: usize,
-    // TODO agg output
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    agg: HashMap<Feature, Vec<u16>>,
 }
 
 pub fn query(matches: &ArgMatches) -> io::Result<()> {
@@ -93,6 +94,7 @@ pub fn query(matches: &ArgMatches) -> io::Result<()> {
             database.get(id)?.expect("Found recipe should exist on db");
 
         found.push(ResultRecipe {
+            // TODO all straight from db
             id: recipe.recipe_id.to_string(),
             name: recipe.name,
             info_url: recipe.crawl_url,
@@ -107,6 +109,7 @@ pub fn query(matches: &ArgMatches) -> io::Result<()> {
         page: 1,
         // FIXME
         num_pages: 0,
+        agg: agg.into(),
     };
 
     println!("{}", serde_json::to_string_pretty(&response).unwrap());
