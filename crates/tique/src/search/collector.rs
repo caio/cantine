@@ -115,20 +115,20 @@ impl RangeVec {
 pub struct FeatureCollector {
     field: Field,
     agg: FeatureRanges,
-    wanted: AggregationRequest,
+    wanted: AggregationRequest<Feature>,
 }
 
 pub struct FeatureSegmentCollector {
     agg: FeatureRanges,
     reader: BytesFastFieldReader,
-    wanted: AggregationRequest,
+    wanted: AggregationRequest<Feature>,
 }
 
 impl FeatureCollector {
     pub fn for_field(
         field: Field,
         num_features: usize,
-        wanted: AggregationRequest,
+        wanted: AggregationRequest<Feature>,
     ) -> FeatureCollector {
         FeatureCollector {
             field,
@@ -179,17 +179,17 @@ impl SegmentCollector for FeatureSegmentCollector {
 
     fn collect(&mut self, doc: u32, _score: f32) {
         let data = self.reader.get_bytes(doc);
-        let doc_features = FeatureVector::parse(data).unwrap();
+        let doc_features = FeatureVector::parse(self.agg.len(), data).unwrap();
 
         for (feat, ranges) in &self.wanted {
-            let opt = doc_features.get(&feat);
+            let opt = doc_features.get(*feat);
 
             // Document doesn't have this feature: Nothing to do
             if opt.is_none() {
                 continue;
             }
 
-            let val = opt.unwrap();
+            let value = opt.unwrap();
 
             // Wanted contains a feature that goes beyond num_features
             if *feat as usize > self.agg.len() {
@@ -199,7 +199,6 @@ impl SegmentCollector for FeatureSegmentCollector {
 
             // Index/Count ranges in the order they were requested
             for (idx, range) in ranges.iter().enumerate() {
-                let value = val.get();
                 if value >= range[0] && value <= range[1] {
                     self.agg
                         .get_mut(*feat as usize)
@@ -346,7 +345,7 @@ mod tests {
         let index = Index::create_in_ram(schema);
         let mut writer = index.writer_with_num_threads(1, 10_000_000)?;
 
-        let add_doc = |fv: FeatureVector<&mut [u8]>| -> Result<()> {
+        let add_doc = |fv: FeatureVector<&mut [u8], Feature>| -> Result<()> {
             let mut doc = Document::default();
             doc.add_bytes(field, fv.as_bytes().to_owned());
             writer.add_document(doc);
@@ -359,18 +358,18 @@ mod tests {
         {
             // Doc{ A: 5, B: 10}
             let mut buf = Feature::EMPTY_BUFFER.to_vec();
-            let mut fv = FeatureVector::parse(buf.as_mut_slice()).unwrap();
-            fv.set(A, 5);
-            fv.set(B, 10);
+            let mut fv = FeatureVector::parse(Feature::LENGTH, buf.as_mut_slice()).unwrap();
+            fv.set(*A, 5).unwrap();
+            fv.set(*B, 10).unwrap();
             add_doc(fv)?;
         }
 
         {
             // Doc{ A: 7, C: 2}
             let mut buf = Feature::EMPTY_BUFFER.to_vec();
-            let mut fv = FeatureVector::parse(buf.as_mut_slice()).unwrap();
-            fv.set(A, 7);
-            fv.set(C, 2);
+            let mut fv = FeatureVector::parse(Feature::LENGTH, buf.as_mut_slice()).unwrap();
+            fv.set(*A, 7).unwrap();
+            fv.set(*C, 2).unwrap();
             add_doc(fv)?;
         }
 
@@ -379,7 +378,7 @@ mod tests {
         let reader = index.reader()?;
         let searcher = reader.searcher();
 
-        let wanted: AggregationRequest = vec![
+        let wanted: AggregationRequest<Feature> = vec![
             // feature A between ranges 2-10 and 0-5
             (*A, vec![[2, 10], [0, 5]]),
             // and so on...

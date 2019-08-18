@@ -118,7 +118,7 @@ mod tests {
         QueryParser::new(field, TokenizerManager::default().get("en_stem").unwrap())
     }
 
-    fn parsed(input: &str) -> Box<Query> {
+    fn parsed(input: &str) -> Box<dyn Query> {
         test_parser()
             .parse(input)
             .unwrap()

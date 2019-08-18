@@ -17,20 +17,19 @@ use tantivy::{
         Field, FieldType, IndexRecordOption, Schema, SchemaBuilder, TextFieldIndexing, TextOptions,
         Value, FAST, INDEXED, STORED,
     },
-    tokenizer::TokenizerManager,
+    tokenizer::{
+        Language, LowerCaser, RemoveLongFilter, SimpleTokenizer, Stemmer, Tokenizer,
+        TokenizerManager,
+    },
     Document, Index, IndexReader, IndexWriter, ReloadPolicy,
 };
 
 #[derive(Serialize, Deserialize)]
 struct ResultRecipe {
-    // FIXME should be @sitename-@slug-@id
-    // XXX is this really a good idea? how do I make it generic
-    //     wrt the input data type? A Key type parameter?
-    id: String,
+    id: u64,
     name: String,
     info_url: String,
     features: HashMap<String, u16>,
-    // XXX This model is finished, i think
 }
 
 #[derive(Serialize, Deserialize)]
@@ -47,13 +46,13 @@ pub fn query(matches: &ArgMatches) -> io::Result<()> {
     let base_path = Path::new(matches.value_of("base_dir").unwrap());
 
     let json_query = matches.value_of("query").unwrap();
-    let request: SearchRequest = serde_json::from_str(json_query).unwrap();
+    let request: SearchRequest<Feature> = serde_json::from_str(json_query).unwrap();
 
     let db_path = base_path.join("database");
     let database = BincodeDatabase::new(&db_path).unwrap();
 
     let index_path = base_path.join("tantivy");
-    let (schema, fields) = FeatureIndexFields::new();
+    let (schema, fields) = FeatureIndexFields::new(Feature::LENGTH);
     let index = Index::open_or_create(MmapDirectory::open(&index_path).unwrap(), schema).unwrap();
 
     let tokenizer = TokenizerManager::default()
@@ -75,6 +74,7 @@ pub fn query(matches: &ArgMatches) -> io::Result<()> {
                 TopDocs::with_limit(request.page_size.unwrap_or(10) as usize),
                 FeatureCollector::for_field(
                     fields.feature_vector(),
+                    Feature::LENGTH,
                     request.agg.unwrap_or(Vec::new()),
                 ),
             ),
@@ -95,7 +95,7 @@ pub fn query(matches: &ArgMatches) -> io::Result<()> {
 
         found.push(ResultRecipe {
             // TODO all straight from db
-            id: recipe.recipe_id.to_string(),
+            id: recipe.recipe_id,
             name: recipe.name,
             info_url: recipe.crawl_url,
             features: HashMap::new(),

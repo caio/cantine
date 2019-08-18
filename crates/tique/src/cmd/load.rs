@@ -49,7 +49,7 @@ pub fn load(matches: &ArgMatches) -> io::Result<()> {
         println!("StdinLines: finished!!");
     });
 
-    let (schema, fields) = FeatureIndexFields::new();
+    let (schema, fields) = FeatureIndexFields::new(Feature::LENGTH);
     let index = Index::open_or_create(MmapDirectory::open(&index_path).unwrap(), schema).unwrap();
 
     let mut writer = index.writer(buf_size * 1_000_000).unwrap();
@@ -57,7 +57,7 @@ pub fn load(matches: &ArgMatches) -> io::Result<()> {
 
     let (doc_sender, docs) = channel();
 
-    let doc_factory = fields;
+    let doc_factory = fields.clone();
 
     spawn(move || {
         println!("FeatureDocuments: started!");
@@ -131,7 +131,7 @@ pub fn load(matches: &ArgMatches) -> io::Result<()> {
     let mut cur = Instant::now();
 
     for doc in docs {
-        FeatureIndexFields::add_document(&mut writer, doc);
+        fields.add_document(&mut writer, doc);
         docs_added += 1;
 
         if docs_added % commit_every == 0 {

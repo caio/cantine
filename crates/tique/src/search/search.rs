@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::Path};
+use std::{marker::PhantomData, path::Path};
 
 use serde::{Deserialize, Serialize};
 
@@ -11,7 +11,7 @@ use tantivy::{
         FAST, INDEXED, STORED,
     },
     tokenizer::TokenizerManager,
-    Document, Index, IndexReader, IndexWriter, ReloadPolicy,
+    Document, Index, IndexReader, IndexWriter, ReloadPolicy, TantivyError,
 };
 
 use crate::search::{collector::FeatureCollector, Feature, FeatureVector, QueryParser, Result};
@@ -21,17 +21,19 @@ pub struct RecipeIndex {
     reader: IndexReader,
     writer: IndexWriter,
     query_parser: QueryParser,
-    fields: FeatureIndexFields,
+    fields: FeatureIndexFields<Feature>,
 }
 
 #[derive(Clone)]
-pub struct FeatureIndexFields(Vec<Field>);
+pub struct FeatureIndexFields<T>(Vec<Field>, PhantomData<T>);
 
-impl FeatureIndexFields {
-    // TODO explore the new(num_features: usize) path
-    pub fn new() -> (Schema, FeatureIndexFields) {
+impl<T> FeatureIndexFields<T>
+where
+    T: Into<usize> + Copy,
+{
+    pub fn new(num_features: usize) -> (Schema, FeatureIndexFields<T>) {
         let mut builder = SchemaBuilder::new();
-        let mut fields = Vec::with_capacity(3 + Feature::LENGTH);
+        let mut fields = Vec::with_capacity(3 + num_features);
 
         let indexing = TextFieldIndexing::default()
             .set_tokenizer("en_stem")
@@ -43,40 +45,42 @@ impl FeatureIndexFields {
         fields.push(builder.add_text_field("ft", text_field_options));
         fields.push(builder.add_bytes_field("fv"));
 
-        // Feature::LENGTH extra ones, for filtering
-        for feat in Feature::VALUES.iter() {
-            fields.push(
-                builder.add_u64_field(format!("feature_{}", (*feat as usize)).as_str(), INDEXED),
-            );
+        // one for each feature, for filtering
+        for i in 0..num_features {
+            fields.push(builder.add_u64_field(format!("feature_{}", i).as_str(), INDEXED));
         }
 
-        (builder.build(), FeatureIndexFields(fields))
-    }
-
-    fn must_get(&self, idx: usize) -> Field {
-        let FeatureIndexFields(inner) = self;
-        *inner.get(idx).expect("every get works")
+        (builder.build(), FeatureIndexFields(fields, PhantomData))
     }
 
     pub fn id(&self) -> Field {
-        self.must_get(0)
+        self.0[0]
     }
 
     pub fn fulltext(&self) -> Field {
-        self.must_get(1)
+        self.0[1]
     }
 
     pub fn feature_vector(&self) -> Field {
-        self.must_get(2)
+        self.0[2]
     }
 
-    pub fn feature(&self, feat: Feature) -> Field {
-        self.must_get(3 + feat as usize)
+    pub fn num_features(&self) -> usize {
+        self.0.len() - 3
+    }
+
+    pub fn feature(&self, feat: T) -> Option<Field> {
+        let featno: usize = feat.into();
+        if featno < self.num_features() {
+            Some(self.0[3 + featno])
+        } else {
+            None
+        }
     }
 
     pub fn interpret_request(
         &self,
-        req: &SearchRequest,
+        req: &SearchRequest<T>,
         query_parser: &QueryParser,
     ) -> Result<Box<dyn Query>> {
         let mut clauses: Vec<(Occur, Box<dyn Query>)> = Vec::new();
@@ -86,9 +90,11 @@ impl FeatureIndexFields {
                 clauses.push((
                     Occur::Must,
                     Box::new(RangeQuery::new_u64(
-                        self.feature(spec.0),
+                        self.feature(spec.0).ok_or_else(|| {
+                            TantivyError::SystemError("Unknown feature in filters".to_owned())
+                        })?,
                         // inclusive range
-                        spec.1..(spec.2 + 1),
+                        (spec.1 as u64)..((spec.2 + 1) as u64),
                     )),
                 ));
             }
@@ -116,20 +122,26 @@ impl FeatureIndexFields {
         &self,
         id: u64,
         fulltext: String,
-        features: Option<Vec<(Feature, u16)>>,
+        features: Option<Vec<(T, u16)>>,
     ) -> FeatureDocument {
         let mut doc = Document::default();
 
         doc.add_u64(self.id(), id);
         doc.add_text(self.fulltext(), fulltext.as_str());
 
-        features.map(|feats| {
-            let mut buf = Feature::EMPTY_BUFFER.to_vec();
-            let mut fv = FeatureVector::parse(buf.as_mut_slice()).unwrap();
-            for (feat, value) in feats {
-                fv.set(&feat, value);
+        let num_features = self.num_features();
+        let buf_size = 2 * self.num_features();
 
-                doc.add_u64(self.feature(feat), value as u64);
+        features.map(|feats| {
+            // XXX I could get rid of magic numbers with a bitset
+            let mut buf = vec![std::u8::MAX; buf_size];
+            let mut fv = FeatureVector::parse(num_features, buf.as_mut_slice()).unwrap();
+            for (feat, value) in feats {
+                fv.set(feat, value).unwrap();
+                // XXX Blindly ignoring. Log? Error? Config?
+                if let Some(feature) = self.feature(feat) {
+                    doc.add_u64(feature, value as u64);
+                }
             }
             doc.add_bytes(self.feature_vector(), fv.as_bytes().into());
         });
@@ -137,30 +149,43 @@ impl FeatureIndexFields {
         FeatureDocument(doc)
     }
 
-    pub fn add_document(writer: &IndexWriter, fd: FeatureDocument) {
+    pub fn add_document(&self, writer: &IndexWriter, fd: FeatureDocument) {
         let FeatureDocument(doc) = fd;
         writer.add_document(doc);
     }
 }
-#[derive(Serialize, Deserialize, Default, Debug)]
-pub struct SearchRequest {
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct SearchRequest<T> {
     pub query: Option<String>,
     // default 1, non zero
     pub page: Option<u16>,
     // default 20, non zero also
     pub page_size: Option<u8>,
-    pub filter: Option<FilterRequest>,
-    pub agg: Option<AggregationRequest>,
+    pub filter: Option<FilterRequest<T>>,
+    pub agg: Option<AggregationRequest<T>>,
 }
 
-pub type FilterRequest = Vec<(Feature, u64, u64)>;
-pub type AggregationRequest = Vec<(Feature, Vec<[u16; 2]>)>;
+impl Default for SearchRequest<Feature> {
+    fn default() -> Self {
+        Self {
+            query: None,
+            page: None,
+            page_size: None,
+            filter: None,
+            agg: None,
+        }
+    }
+}
+
+pub type FilterRequest<T> = Vec<(T, u16, u16)>;
+pub type AggregationRequest<T> = Vec<(T, Vec<[u16; 2]>)>;
 
 pub struct FeatureDocument(Document);
 
 impl RecipeIndex {
     pub fn new(index_path: &Path) -> Result<RecipeIndex> {
-        let (schema, fields) = FeatureIndexFields::new();
+        let (schema, fields) = FeatureIndexFields::new(Feature::LENGTH);
 
         let index = Index::open_or_create(MmapDirectory::open(index_path)?, schema)?;
 
@@ -185,15 +210,15 @@ impl RecipeIndex {
         })
     }
 
-    pub fn doc_factory(&self) -> FeatureIndexFields {
+    pub fn doc_factory(&self) -> FeatureIndexFields<Feature> {
         self.fields.clone()
     }
 
     pub fn add(&self, feature_document: FeatureDocument) {
-        FeatureIndexFields::add_document(&self.writer, feature_document);
+        self.fields.add_document(&self.writer, feature_document);
     }
 
-    pub fn search(&self, req: &SearchRequest) -> Result<Vec<u64>> {
+    pub fn search(&self, req: &SearchRequest<Feature>) -> Result<Vec<u64>> {
         let searcher = self.reader.searcher();
         let iquery = self.fields.interpret_request(req, &self.query_parser)?;
 
@@ -270,7 +295,9 @@ mod tests {
         let tmpdir = tempfile::TempDir::new()?;
         let searcher = RecipeIndex::new(tmpdir.path())?;
 
-        assert_eq!(searcher.search(&SearchRequest::default())?, &[0u64; 0]);
+        let def: SearchRequest<Feature> = SearchRequest::default();
+
+        assert_eq!(searcher.search(&def)?, &[0u64; 0]);
         Ok(())
     }
 
@@ -378,7 +405,7 @@ mod tests {
         index.commit()?;
         index.reload_searchers()?;
 
-        let do_search = |feats: FilterRequest| -> Result<Vec<u64>> {
+        let do_search = |feats: FilterRequest<Feature>| -> Result<Vec<u64>> {
             let query = SearchRequest {
                 filter: Some(feats),
                 ..Default::default()
@@ -412,9 +439,19 @@ mod tests {
     }
 
     #[test]
-    fn index_fields_structure() {
-        let (schema, fields) = FeatureIndexFields::new();
+    fn can_get_a_field_for_every_known_feature() {
+        let num_features = 100;
+        let (_schema, fields) = FeatureIndexFields::new(num_features);
 
+        for feat in 0..num_features {
+            assert!(fields.feature(feat).is_some())
+        }
+    }
+
+    #[test]
+    fn index_fields_structure() {
+        let num_features = 10;
+        let (schema, fields) = FeatureIndexFields::new(num_features);
         let mut iter = schema.fields().iter();
 
         // expected fields in order
@@ -429,10 +466,10 @@ mod tests {
         );
 
         // Now come feature fields
-        for feat in Feature::VALUES.iter() {
+        for feat in 0..num_features {
             assert_eq!(
                 iter.next().unwrap(),
-                schema.get_field_entry(fields.feature(*feat))
+                schema.get_field_entry(fields.feature(feat).unwrap())
             );
         }
 
@@ -455,7 +492,7 @@ mod tests {
             None
         };
 
-        let (_schema, fields) = FeatureIndexFields::new();
+        let (_schema, fields) = FeatureIndexFields::new(Feature::LENGTH);
         let FeatureDocument(doc) = fields.make_document(id, fulltext.clone(), opt_feats);
 
         assert_eq!(expected_len, doc.len());
@@ -475,11 +512,11 @@ mod tests {
         if num_features > 0 {
             if let Value::Bytes(bytes) = doc.get_first(fields.feature_vector()).unwrap() {
                 let mut buf = Feature::EMPTY_BUFFER.to_vec();
-                let mut fv = FeatureVector::parse(buf.as_mut_slice()).unwrap();
+                let mut fv = FeatureVector::parse(Feature::LENGTH, buf.as_mut_slice()).unwrap();
 
                 // One for the serialized feature vector
                 for (feat, value) in features {
-                    fv.set(&feat, value);
+                    fv.set(feat, value).unwrap();
                     // And one for every set feature
                 }
 
