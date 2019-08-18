@@ -36,8 +36,7 @@ impl FeatureRanges {
     }
 
     fn len(&self) -> usize {
-        let FeatureRanges(inner) = self;
-        inner.len()
+        self.0.len()
     }
 
     fn new(size: usize) -> Self {
@@ -47,22 +46,19 @@ impl FeatureRanges {
 
     fn get(&self, idx: usize) -> &Option<RangeVec> {
         assert!(idx < self.len());
-        let FeatureRanges(inner) = self;
-        &inner[idx]
+        &self.0[idx]
     }
 
-    fn get_mut(&mut self, idx: usize) -> &mut Option<RangeVec> {
-        assert!(idx < self.len());
-        let FeatureRanges(inner) = self;
-        inner
-            .get_mut(idx)
-            .expect("Invariant: get_mut should always work")
+    fn get_mut(&mut self, idx: usize) -> Option<&mut Option<RangeVec>> {
+        self.0.get_mut(idx)
     }
 }
 
 impl Into<HashMap<Feature, Vec<u16>>> for FeatureRanges {
     fn into(self) -> HashMap<Feature, Vec<u16>> {
         let mut res = HashMap::new();
+        // FIXME Disconnect from Feature::. Should be easy but requires
+        //       getting rid of this into thinger
         for feat in Feature::VALUES.iter() {
             if let Some(counts) = self.get(*feat as usize) {
                 let RangeVec(inner) = counts;
@@ -129,11 +125,15 @@ pub struct FeatureSegmentCollector {
 }
 
 impl FeatureCollector {
-    pub fn for_field(field: Field, wanted: AggregationRequest) -> FeatureCollector {
+    pub fn for_field(
+        field: Field,
+        num_features: usize,
+        wanted: AggregationRequest,
+    ) -> FeatureCollector {
         FeatureCollector {
             field,
-            agg: FeatureRanges::new(Feature::LENGTH),
-            wanted: wanted,
+            wanted,
+            agg: FeatureRanges::new(num_features),
         }
     }
 }
@@ -148,7 +148,7 @@ impl Collector for FeatureCollector {
         segment_reader: &SegmentReader,
     ) -> Result<FeatureSegmentCollector> {
         Ok(FeatureSegmentCollector {
-            agg: FeatureRanges::new(Feature::LENGTH),
+            agg: FeatureRanges::new(self.agg.len()),
             wanted: self.wanted.clone(),
             reader: segment_reader
                 .fast_fields()
@@ -162,7 +162,7 @@ impl Collector for FeatureCollector {
     }
 
     fn merge_fruits(&self, children: Vec<FeatureRanges>) -> Result<FeatureRanges> {
-        let mut merged = FeatureRanges::new(Feature::LENGTH);
+        let mut merged = FeatureRanges::new(self.agg.len());
 
         merged.merge(&self.agg)?;
 
@@ -191,12 +191,20 @@ impl SegmentCollector for FeatureSegmentCollector {
 
             let val = opt.unwrap();
 
+            // Wanted contains a feature that goes beyond num_features
+            if *feat as usize > self.agg.len() {
+                // XXX Add visibility to when this happens
+                continue;
+            }
+
             // Index/Count ranges in the order they were requested
             for (idx, range) in ranges.iter().enumerate() {
                 let value = val.get();
                 if value >= range[0] && value <= range[1] {
                     self.agg
                         .get_mut(*feat as usize)
+                        // Guaranteed by the len() check above
+                        .unwrap()
                         .get_or_insert_with(|| RangeVec::new(ranges.len()))
                         .inc(idx);
                 }
@@ -380,8 +388,10 @@ mod tests {
             (*D, vec![]),
         ];
 
-        let feature_ranges =
-            searcher.search(&AllQuery, &FeatureCollector::for_field(field, wanted))?;
+        let feature_ranges = searcher.search(
+            &AllQuery,
+            &FeatureCollector::for_field(field, Feature::LENGTH, wanted),
+        )?;
 
         // { A => { "2-10": 2, "0-5": 1 } }
         assert_eq!(&Some(RangeVec(vec![2, 1])), feature_ranges.get(*A as usize));
@@ -404,9 +414,13 @@ mod tests {
     fn feature_ranges_into_hashmap() {
         let mut fr = FeatureRanges::new(Feature::LENGTH);
 
-        fr.get_mut(*A as usize).replace(RangeVec(vec![1, 2]));
-        fr.get_mut(*B as usize).replace(RangeVec(vec![3]));
-        fr.get_mut(*C as usize).replace(RangeVec(vec![4, 5, 6]));
+        fr.get_mut(*A as usize)
+            .unwrap()
+            .replace(RangeVec(vec![1, 2]));
+        fr.get_mut(*B as usize).unwrap().replace(RangeVec(vec![3]));
+        fr.get_mut(*C as usize)
+            .unwrap()
+            .replace(RangeVec(vec![4, 5, 6]));
 
         let as_map: HashMap<Feature, Vec<u16>> = fr.into();
 
