@@ -1,5 +1,7 @@
+.idea/
 .vscode/
 /target/
 **/*.rs.bk
 flamegraph.svg
 perf.data*
+tags
