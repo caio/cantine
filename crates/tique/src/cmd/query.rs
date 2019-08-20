@@ -45,6 +45,7 @@ struct SearchResponse {
 pub fn query(matches: &ArgMatches) -> io::Result<()> {
     let base_path = Path::new(matches.value_of("base_dir").unwrap());
 
+    // TODO read lines from stdin instead
     let json_query = matches.value_of("query").unwrap();
     let request: SearchRequest<Feature> = serde_json::from_str(json_query).unwrap();
 
@@ -67,16 +68,20 @@ pub fn query(matches: &ArgMatches) -> io::Result<()> {
     let reader = index.reader_builder().try_into().unwrap();
     let searcher = reader.searcher();
 
+    // TODO change the search request to u16-only too
+    let mut wanted = Vec::new();
+    if let Some(agg) = request.agg {
+        for (feat, ranges) in agg {
+            wanted.push((feat as u16, ranges));
+        }
+    }
+
     let (hits, agg) = searcher
         .search(
             &iquery,
             &(
                 TopDocs::with_limit(request.page_size.unwrap_or(10) as usize),
-                FeatureCollector::for_field(
-                    fields.feature_vector(),
-                    Feature::LENGTH,
-                    request.agg.unwrap_or(Vec::new()),
-                ),
+                FeatureCollector::for_field(fields.feature_vector(), Feature::LENGTH, wanted),
             ),
         )
         .unwrap();
@@ -109,7 +114,8 @@ pub fn query(matches: &ArgMatches) -> io::Result<()> {
         page: 1,
         // FIXME
         num_pages: 0,
-        agg: agg.into(),
+        // FIXME agg: agg.into(),
+        agg: HashMap::new(),
     };
 
     println!("{}", serde_json::to_string_pretty(&response).unwrap());

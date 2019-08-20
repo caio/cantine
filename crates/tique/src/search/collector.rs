@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use tantivy::{
     collector::{Collector, SegmentCollector},
     fastfield::BytesFastFieldReader,
@@ -7,7 +5,7 @@ use tantivy::{
     Result, SegmentReader,
 };
 
-use crate::search::{AggregationRequest, Feature, FeatureVector};
+use crate::search::{AggregationRequest, FeatureVector};
 
 #[derive(Debug)]
 pub struct FeatureRanges(Vec<Option<RangeVec>>);
@@ -51,22 +49,6 @@ impl FeatureRanges {
 
     fn get_mut(&mut self, idx: usize) -> Option<&mut Option<RangeVec>> {
         self.0.get_mut(idx)
-    }
-}
-
-impl Into<HashMap<Feature, Vec<u16>>> for FeatureRanges {
-    fn into(self) -> HashMap<Feature, Vec<u16>> {
-        let mut res = HashMap::new();
-        // FIXME Disconnect from Feature::. Should be easy but requires
-        //       getting rid of this into thinger
-        for feat in Feature::VALUES.iter() {
-            if let Some(counts) = self.get(*feat as usize) {
-                let RangeVec(inner) = counts;
-                res.insert(*feat, inner.clone());
-            }
-        }
-
-        res
     }
 }
 
@@ -115,20 +97,20 @@ impl RangeVec {
 pub struct FeatureCollector {
     field: Field,
     agg: FeatureRanges,
-    wanted: AggregationRequest<Feature>,
+    wanted: AggregationRequest<u16>,
 }
 
 pub struct FeatureSegmentCollector {
     agg: FeatureRanges,
     reader: BytesFastFieldReader,
-    wanted: AggregationRequest<Feature>,
+    wanted: AggregationRequest<u16>,
 }
 
 impl FeatureCollector {
     pub fn for_field(
         field: Field,
         num_features: usize,
-        wanted: AggregationRequest<Feature>,
+        wanted: AggregationRequest<u16>,
     ) -> FeatureCollector {
         FeatureCollector {
             field,
@@ -228,10 +210,10 @@ mod tests {
         Index,
     };
 
-    const A: &Feature = &Feature::NumIngredients;
-    const B: &Feature = &Feature::FatContent;
-    const C: &Feature = &Feature::PrepTime;
-    const D: &Feature = &Feature::TotalTime;
+    const A: u16 = 0;
+    const B: u16 = 1;
+    const C: u16 = 2;
+    const D: u16 = 3;
 
     #[test]
     fn cannot_merge_different_sized_range_vecs() {
@@ -343,9 +325,9 @@ mod tests {
         let schema = sb.build();
 
         let index = Index::create_in_ram(schema);
-        let mut writer = index.writer_with_num_threads(1, 10_000_000)?;
+        let mut writer = index.writer_with_num_threads(1, 40_000_000)?;
 
-        let add_doc = |fv: FeatureVector<&mut [u8], Feature>| -> Result<()> {
+        let add_doc = |fv: FeatureVector<&mut [u8], u16>| -> Result<()> {
             let mut doc = Document::default();
             doc.add_bytes(field, fv.as_bytes().to_owned());
             writer.add_document(doc);
@@ -354,22 +336,24 @@ mod tests {
 
         // And we populate it with a couple of docs where
         // the bytes field is a features::FeatureVector
+        let num_features = 4;
+        let empty_buffer = vec![std::u8::MAX; 4 * 2];
 
         {
             // Doc{ A: 5, B: 10}
-            let mut buf = Feature::EMPTY_BUFFER.to_vec();
-            let mut fv = FeatureVector::parse(Feature::LENGTH, buf.as_mut_slice()).unwrap();
-            fv.set(*A, 5).unwrap();
-            fv.set(*B, 10).unwrap();
+            let mut buf = empty_buffer.clone();
+            let mut fv = FeatureVector::parse(num_features, buf.as_mut_slice()).unwrap();
+            fv.set(A, 5).unwrap();
+            fv.set(B, 10).unwrap();
             add_doc(fv)?;
         }
 
         {
             // Doc{ A: 7, C: 2}
-            let mut buf = Feature::EMPTY_BUFFER.to_vec();
-            let mut fv = FeatureVector::parse(Feature::LENGTH, buf.as_mut_slice()).unwrap();
-            fv.set(*A, 7).unwrap();
-            fv.set(*C, 2).unwrap();
+            let mut buf = empty_buffer.clone();
+            let mut fv = FeatureVector::parse(num_features, buf.as_mut_slice()).unwrap();
+            fv.set(A, 7).unwrap();
+            fv.set(C, 2).unwrap();
             add_doc(fv)?;
         }
 
@@ -378,58 +362,29 @@ mod tests {
         let reader = index.reader()?;
         let searcher = reader.searcher();
 
-        let wanted: AggregationRequest<Feature> = vec![
+        let wanted: AggregationRequest<u16> = vec![
             // feature A between ranges 2-10 and 0-5
-            (*A, vec![[2, 10], [0, 5]]),
+            (A, vec![[2, 10], [0, 5]]),
             // and so on...
-            (*B, vec![[9, 100], [420, 710]]),
-            (*C, vec![[2, 2]]),
-            (*D, vec![]),
+            (B, vec![[9, 100], [420, 710]]),
+            (C, vec![[2, 2]]),
+            (D, vec![]),
         ];
 
         let feature_ranges = searcher.search(
             &AllQuery,
-            &FeatureCollector::for_field(field, Feature::LENGTH, wanted),
+            &FeatureCollector::for_field(field, num_features, wanted),
         )?;
 
         // { A => { "2-10": 2, "0-5": 1 } }
-        assert_eq!(&Some(RangeVec(vec![2, 1])), feature_ranges.get(*A as usize));
+        assert_eq!(&Some(RangeVec(vec![2, 1])), feature_ranges.get(A as usize));
         // { B => { "9-100": 1, "420-710": 0 } }
-        assert_eq!(&Some(RangeVec(vec![1, 0])), feature_ranges.get(*B as usize));
+        assert_eq!(&Some(RangeVec(vec![1, 0])), feature_ranges.get(B as usize));
         // { C => { "2" => 1 } }
-        assert_eq!(&Some(RangeVec(vec![1])), feature_ranges.get(*C as usize));
+        assert_eq!(&Some(RangeVec(vec![1])), feature_ranges.get(C as usize));
         // Asking to count a feature but providing no ranges should no-op
-        assert_eq!(&None, feature_ranges.get(*D as usize));
+        assert_eq!(&None, feature_ranges.get(D as usize));
 
         Ok(())
-    }
-
-    #[test]
-    fn empty_feature_ranges_becomes_empty_map() {
-        assert_eq!(HashMap::new(), FeatureRanges::new(Feature::LENGTH).into());
-    }
-
-    #[test]
-    fn feature_ranges_into_hashmap() {
-        let mut fr = FeatureRanges::new(Feature::LENGTH);
-
-        fr.get_mut(*A as usize)
-            .unwrap()
-            .replace(RangeVec(vec![1, 2]));
-        fr.get_mut(*B as usize).unwrap().replace(RangeVec(vec![3]));
-        fr.get_mut(*C as usize)
-            .unwrap()
-            .replace(RangeVec(vec![4, 5, 6]));
-
-        let as_map: HashMap<Feature, Vec<u16>> = fr.into();
-
-        for feat in Feature::VALUES.iter() {
-            match feat {
-                A => assert_eq!(&vec![1, 2], as_map.get(A).unwrap()),
-                B => assert_eq!(&vec![3], as_map.get(B).unwrap()),
-                C => assert_eq!(&vec![4, 5, 6], as_map.get(C).unwrap()),
-                _ => assert_eq!(false, as_map.contains_key(feat)),
-            }
-        }
     }
 }

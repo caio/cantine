@@ -1,4 +1,7 @@
-use std::{marker::PhantomData, path::Path};
+use std::{
+    marker::PhantomData,
+    path::{Path, PathBuf},
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -78,6 +81,42 @@ where
         }
     }
 
+    pub fn search(
+        &self,
+        request: &SearchRequest<T>,
+        query_parser: &QueryParser,
+        searcher: &tantivy::Searcher,
+    ) -> Result<(Vec<u64>, usize)> {
+        let iquery = self.interpret_request(&request, &query_parser).unwrap();
+
+        // let (hits, agg) = searcher
+        // FeatureCollector::for_field(
+        //     self.feature_vector(),
+        //     self.num_features(),
+        //     request.agg.unwrap_or(Vec::new()),
+        // ),
+        let hits = searcher
+            .search(
+                &iquery,
+                &TopDocs::with_limit(request.page_size.unwrap_or(10) as usize),
+            )
+            .unwrap();
+        let mut ids = Vec::new();
+
+        for (_score, addr) in hits {
+            ids.push(
+                searcher
+                    .doc(addr)
+                    .unwrap()
+                    .get_first(self.id())
+                    .expect("Found document without an id field")
+                    .u64_value(),
+            );
+        }
+
+        Ok((ids, 0))
+    }
+
     pub fn interpret_request(
         &self,
         req: &SearchRequest<T>,
@@ -153,6 +192,22 @@ where
         let FeatureDocument(doc) = fd;
         writer.add_document(doc);
     }
+
+    pub fn open_or_create(
+        num_features: usize,
+        base_dir: Option<PathBuf>,
+    ) -> Result<(Index, FeatureIndexFields<T>)> {
+        let (schema, fields): (Schema, FeatureIndexFields<T>) =
+            FeatureIndexFields::new(num_features);
+
+        let index = if let Some(path) = base_dir {
+            Index::open_or_create(MmapDirectory::open(&path).unwrap(), schema)?
+        } else {
+            Index::create_in_ram(schema)
+        };
+
+        Ok((index, fields))
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -164,6 +219,18 @@ pub struct SearchRequest<T> {
     pub page_size: Option<u8>,
     pub filter: Option<FilterRequest<T>>,
     pub agg: Option<AggregationRequest<T>>,
+}
+
+impl Default for SearchRequest<usize> {
+    fn default() -> Self {
+        Self {
+            query: None,
+            page: None,
+            page_size: None,
+            filter: None,
+            agg: None,
+        }
+    }
 }
 
 impl Default for SearchRequest<Feature> {
@@ -259,130 +326,82 @@ mod tests {
     use super::*;
     use tempfile;
 
-    #[test]
-    fn can_create_ok() -> Result<()> {
-        let tmpdir = tempfile::TempDir::new()?;
-        RecipeIndex::new(tmpdir.path())?;
-        Ok(())
+    mod feat {
+        pub const A: usize = 0;
+        pub const B: usize = 1;
+        pub const C: usize = 2;
+        pub const D: usize = 3;
     }
 
     #[test]
-    fn can_commit_after_create() -> Result<()> {
-        let tmpdir = tempfile::TempDir::new()?;
-        let mut searcher = RecipeIndex::new(tmpdir.path())?;
-        searcher.commit()?;
-        Ok(())
+    fn can_open_in_ram() {
+        let (_index, fields) = FeatureIndexFields::<u8>::open_or_create(1, None).unwrap();
+        assert_eq!(1, fields.num_features());
     }
 
     #[test]
-    fn num_docs_increases() -> Result<()> {
-        let tmpdir = tempfile::TempDir::new()?;
-        let mut index = RecipeIndex::new(tmpdir.path())?;
-
-        assert_eq!(0, index.num_docs());
-
-        index.add(index.doc_factory().make_document(1, "one".to_owned(), None));
-
-        index.commit()?;
-        index.reload_searchers()?;
-
-        assert_eq!(1, index.num_docs());
-        Ok(())
+    fn can_create_ok() {
+        let tmpdir = tempfile::TempDir::new().unwrap();
+        let (_index, fields) =
+            FeatureIndexFields::<u16>::open_or_create(2, Some(tmpdir.into_path())).unwrap();
+        assert_eq!(2, fields.num_features());
     }
 
     #[test]
-    fn search_on_empty_works() -> Result<()> {
-        let tmpdir = tempfile::TempDir::new()?;
-        let searcher = RecipeIndex::new(tmpdir.path())?;
+    fn fulltext_search() {
+        let (index, fields) = FeatureIndexFields::<usize>::open_or_create(1, None).unwrap();
 
-        let def: SearchRequest<Feature> = SearchRequest::default();
+        let mut writer = index.writer_with_num_threads(1, 40_000_000).unwrap();
 
-        assert_eq!(searcher.search(&def)?, &[0u64; 0]);
-        Ok(())
-    }
-
-    #[test]
-    fn empty_query_is_all_docs() -> Result<()> {
-        let tmpdir = tempfile::TempDir::new()?;
-        let mut index = RecipeIndex::new(tmpdir.path())?;
-
-        index.add(index.doc_factory().make_document(1, "one".to_owned(), None));
-
-        index.commit()?;
-        index.reload_searchers()?;
-
-        assert_eq!(
-            vec![1],
-            index.search(&SearchRequest {
-                query: Some("".to_owned()),
-                ..Default::default()
-            })?
+        fields.add_document(&mut writer, fields.make_document(1, "one".to_owned(), None));
+        fields.add_document(
+            &mut writer,
+            fields.make_document(2, "one two".to_owned(), None),
+        );
+        fields.add_document(
+            &mut writer,
+            fields.make_document(3, "one two three".to_owned(), None),
         );
 
-        Ok(())
-    }
+        writer.commit().unwrap();
 
-    #[test]
-    fn can_find_after_add() -> Result<()> {
-        let tmpdir = tempfile::TempDir::new()?;
-        let mut index = RecipeIndex::new(tmpdir.path())?;
+        let tokenizer = TokenizerManager::default()
+            .get("en_stem")
+            .ok_or_else(|| tantivy::TantivyError::SystemError("Tokenizer not found".to_owned()))
+            .unwrap();
 
-        index.add(index.doc_factory().make_document(1, "one".to_owned(), None));
+        let query_parser = QueryParser::new(fields.fulltext(), tokenizer);
 
-        index.commit()?;
-        index.reload_searchers()?;
-
-        assert_eq!(
-            vec![1],
-            index.search(&SearchRequest {
-                query: Some("one".to_owned()),
-                ..Default::default()
-            })?
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn basic_search() -> Result<()> {
-        let tmpdir = tempfile::TempDir::new()?;
-        let mut index = RecipeIndex::new(tmpdir.path())?;
-
-        let factory = index.doc_factory();
-        index.add(factory.make_document(1, "one".to_owned(), None));
-        index.add(factory.make_document(2, "one two".to_owned(), None));
-        index.add(factory.make_document(3, "one two three".to_owned(), None));
-
-        index.commit()?;
-        index.reload_searchers()?;
+        let reader = index.reader().unwrap();
+        let searcher = reader.searcher();
 
         let do_search = |term: &str| -> Result<Vec<u64>> {
-            let query = SearchRequest {
+            let query: SearchRequest<usize> = SearchRequest {
                 query: Some(term.to_owned()),
                 ..Default::default()
             };
-            let mut result = index.search(&query)?;
+            let interpreted = fields.interpret_request(&query, &query_parser).unwrap();
+            let (mut result, _agg) = fields.search(&query, &query_parser, &searcher).unwrap();
             result.sort();
             Ok(result)
         };
 
-        assert_eq!(vec![1, 2, 3], do_search("one")?);
-        assert_eq!(vec![2, 3], do_search("two")?);
-        assert_eq!(vec![3], do_search("three")?);
+        assert_eq!(vec![1, 2, 3], do_search("one").unwrap());
+        assert_eq!(vec![2, 3], do_search("two").unwrap());
+        assert_eq!(vec![3], do_search("three").unwrap());
 
-        assert_eq!(0, do_search("-one")?.len());
-        assert_eq!(vec![1], do_search("-two")?);
-        assert_eq!(vec![1, 2], do_search("-three")?);
+        assert_eq!(0, do_search("-one").unwrap().len());
+        assert_eq!(vec![1], do_search("-two").unwrap());
+        assert_eq!(vec![1, 2], do_search("-three").unwrap());
 
-        assert_eq!(0, do_search("four")?.len());
-        assert_eq!(vec![1, 2, 3], do_search("-four")?);
+        assert_eq!(0, do_search("four").unwrap().len());
+        assert_eq!(vec![1, 2, 3], do_search("-four").unwrap());
 
-        assert_eq!(vec![2, 3], do_search(" \"one two\" ")?);
-        assert_eq!(vec![3], do_search(" \"two three\" ")?);
+        assert_eq!(vec![2, 3], do_search(" \"one two\" ").unwrap());
+        assert_eq!(vec![3], do_search(" \"two three\" ").unwrap());
 
-        assert_eq!(vec![1], do_search(" -\"one two\" ")?);
-        assert_eq!(vec![1, 2], do_search(" -\"two three\" ")?);
-
-        Ok(())
+        assert_eq!(vec![1], do_search(" -\"one two\" ").unwrap());
+        assert_eq!(vec![1, 2], do_search(" -\"two three\" ").unwrap());
     }
 
     #[test]
