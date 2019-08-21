@@ -2,8 +2,8 @@ use std::{collections::HashMap, io, path::Path};
 
 use crate::{
     database::BincodeDatabase,
-    search::{Feature, FeatureCollector, FeatureIndexFields, QueryParser, SearchRequest},
-    CerberusRecipeModel,
+    search::{FeatureCollector, FeatureIndexFields, QueryParser, SearchRequest},
+    CerberusRecipeModel, Feature,
 };
 
 use clap::{value_t, ArgMatches};

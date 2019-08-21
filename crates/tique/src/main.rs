@@ -9,6 +9,67 @@ mod search;
 use clap::{App, Arg, SubCommand};
 use serde::{Deserialize, Serialize};
 
+#[derive(Serialize, Deserialize, Debug, Hash, Eq, PartialEq, Clone, Copy)]
+pub enum Feature {
+    NumIngredients = 0,
+
+    Calories,
+    FatContent,
+    ProteinContent,
+    CarbContent,
+
+    CookTime,
+    PrepTime,
+    TotalTime,
+
+    DietKeto,
+    DietLowCarb,
+    DietVegan,
+    DietVegetarian,
+    DietPaleo,
+}
+
+impl Feature {
+    pub const LENGTH: usize = 13;
+
+    pub const EMPTY_BUFFER: [u8; Self::LENGTH * 2] = [std::u8::MAX; Self::LENGTH * 2];
+
+    pub const VALUES: [Feature; Feature::LENGTH] = [
+        Feature::NumIngredients,
+        Feature::Calories,
+        Feature::FatContent,
+        Feature::ProteinContent,
+        Feature::CarbContent,
+        Feature::CookTime,
+        Feature::PrepTime,
+        Feature::TotalTime,
+        Feature::DietKeto,
+        Feature::DietLowCarb,
+        Feature::DietVegan,
+        Feature::DietVegetarian,
+        Feature::DietPaleo,
+        // TODO Feature::InstructionsLength
+    ];
+}
+
+impl Into<usize> for Feature {
+    fn into(self) -> usize {
+        self as usize
+    }
+}
+
+impl Into<usize> for &Feature {
+    fn into(self) -> usize {
+        *self as usize
+    }
+}
+
+impl search::IsUnset<u16> for Feature {
+    fn is_unset(val: u16) -> bool {
+        val == std::u16::MAX
+    }
+}
+
 #[derive(Deserialize, Serialize, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct CerberusRecipeModel {

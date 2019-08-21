@@ -17,7 +17,8 @@ use tantivy::{
     Document, Index, IndexReader, IndexWriter, ReloadPolicy, TantivyError,
 };
 
-use crate::search::{collector::FeatureCollector, Feature, FeatureVector, QueryParser, Result};
+use crate::search::{collector::FeatureCollector, FeatureVector, IsUnset, QueryParser, Result};
+use crate::Feature;
 
 pub struct RecipeIndex {
     index: Index,
@@ -32,7 +33,7 @@ pub struct FeatureIndexFields<T>(Vec<Field>, PhantomData<T>);
 
 impl<T> FeatureIndexFields<T>
 where
-    T: Into<usize> + Copy,
+    T: Into<usize> + IsUnset<u16> + Copy,
 {
     pub fn new(num_features: usize) -> (Schema, FeatureIndexFields<T>) {
         let mut builder = SchemaBuilder::new();
@@ -333,6 +334,13 @@ mod tests {
         pub const D: usize = 3;
     }
 
+    // So I can use u8 as a feature
+    impl IsUnset<u16> for u8 {
+        fn is_unset(val: u16) -> bool {
+            val == std::u8::MAX as u16
+        }
+    }
+
     #[test]
     fn can_open_in_ram() {
         let (_index, fields) = FeatureIndexFields::<u8>::open_or_create(1, None).unwrap();
@@ -343,7 +351,7 @@ mod tests {
     fn can_create_ok() {
         let tmpdir = tempfile::TempDir::new().unwrap();
         let (_index, fields) =
-            FeatureIndexFields::<u16>::open_or_create(2, Some(tmpdir.into_path())).unwrap();
+            FeatureIndexFields::<u8>::open_or_create(2, Some(tmpdir.into_path())).unwrap();
         assert_eq!(2, fields.num_features());
     }
 

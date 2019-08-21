@@ -4,11 +4,7 @@ use std::sync::mpsc::channel;
 use std::thread::spawn;
 use std::time::Instant;
 
-use crate::{
-    database::BincodeDatabase,
-    search::{Feature, FeatureIndexFields},
-    CerberusRecipeModel,
-};
+use crate::{database::BincodeDatabase, search::FeatureIndexFields, CerberusRecipeModel, Feature};
 
 use clap::{value_t, ArgMatches};
 use serde::{Deserialize, Serialize};
