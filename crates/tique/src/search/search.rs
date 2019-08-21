@@ -15,17 +15,16 @@ use tantivy::{
 };
 
 use crate::search::{
-    collector::FeatureCollector, FeatureValue, FeatureVector, IsUnset, QueryParser, Result,
+    collector::FeatureCollector, FeatureValue, FeatureVector, QueryParser, Result,
 };
 
 #[derive(Clone)]
-pub struct FeatureIndexFields<T>(Vec<Field>, PhantomData<T>);
+pub struct FeatureIndexFields(Vec<Field>);
 
-impl<T> FeatureIndexFields<T>
-where
-    T: Into<usize> + IsUnset<FeatureValue> + Copy,
-{
-    pub fn new(num_features: usize) -> (Schema, FeatureIndexFields<T>) {
+impl FeatureIndexFields where {
+    pub fn new(num_features: usize) -> (Schema, FeatureIndexFields) {
+        assert!(num_features > 0);
+
         let mut builder = SchemaBuilder::new();
         let mut fields = Vec::with_capacity(3 + num_features);
 
@@ -44,7 +43,7 @@ where
             fields.push(builder.add_u64_field(format!("feature_{}", i).as_str(), INDEXED));
         }
 
-        (builder.build(), FeatureIndexFields(fields, PhantomData))
+        (builder.build(), FeatureIndexFields(fields))
     }
 
     pub fn id(&self) -> Field {
@@ -63,10 +62,9 @@ where
         self.0.len() - 3
     }
 
-    pub fn feature(&self, feat: T) -> Option<Field> {
-        let featno: usize = feat.into();
-        if featno < self.num_features() {
-            Some(self.0[3 + featno])
+    pub fn feature(&self, feat: usize) -> Option<Field> {
+        if feat < self.num_features() {
+            Some(self.0[3 + feat])
         } else {
             None
         }
@@ -74,22 +72,23 @@ where
 
     pub fn search(
         &self,
-        request: &SearchRequest<T>,
+        request: &SearchRequest,
         query_parser: &QueryParser,
         searcher: &tantivy::Searcher,
     ) -> Result<(Vec<u64>, usize)> {
         let iquery = self.interpret_request(&request, &query_parser).unwrap();
 
-        // let (hits, agg) = searcher
-        // FeatureCollector::for_field(
-        //     self.feature_vector(),
-        //     self.num_features(),
-        //     request.agg.unwrap_or(Vec::new()),
-        // ),
-        let hits = searcher
+        let (hits, _agg) = searcher
             .search(
                 &iquery,
-                &TopDocs::with_limit(request.page_size.unwrap_or(10) as usize),
+                &(
+                    TopDocs::with_limit(request.page_size.unwrap_or(10) as usize),
+                    FeatureCollector::for_field(
+                        self.feature_vector(),
+                        self.num_features(),
+                        &request.agg.as_ref().unwrap_or(&Vec::new()),
+                    ),
+                ),
             )
             .unwrap();
         let mut ids = Vec::new();
@@ -110,7 +109,7 @@ where
 
     pub fn interpret_request(
         &self,
-        req: &SearchRequest<T>,
+        req: &SearchRequest,
         query_parser: &QueryParser,
     ) -> Result<Box<dyn Query>> {
         let mut clauses: Vec<(Occur, Box<dyn Query>)> = Vec::new();
@@ -152,7 +151,7 @@ where
         &self,
         id: u64,
         fulltext: String,
-        features: Option<Vec<(T, FeatureValue)>>,
+        features: Option<Vec<(usize, FeatureValue)>>,
     ) -> FeatureDocument {
         let mut doc = Document::default();
 
@@ -162,20 +161,19 @@ where
         let num_features = self.num_features();
         let buf_size = 2 * self.num_features();
 
+        let mut buf = vec![std::u8::MAX; buf_size];
+        let mut fv = FeatureVector::parse(num_features, buf.as_mut_slice()).unwrap();
+
         features.map(|feats| {
-            // XXX I could get rid of magic numbers with a bitset
-            let mut buf = vec![std::u8::MAX; buf_size];
-            let mut fv = FeatureVector::parse(num_features, buf.as_mut_slice()).unwrap();
             for (feat, value) in feats {
                 fv.set(feat, value).unwrap();
-                // XXX Blindly ignoring. Log? Error? Config?
                 if let Some(feature) = self.feature(feat) {
                     doc.add_u64(feature, value as u64);
                 }
             }
-            doc.add_bytes(self.feature_vector(), fv.as_bytes().into());
         });
 
+        doc.add_bytes(self.feature_vector(), fv.as_bytes().into());
         FeatureDocument(doc)
     }
 
@@ -187,9 +185,8 @@ where
     pub fn open_or_create(
         num_features: usize,
         base_dir: Option<PathBuf>,
-    ) -> Result<(Index, FeatureIndexFields<T>)> {
-        let (schema, fields): (Schema, FeatureIndexFields<T>) =
-            FeatureIndexFields::new(num_features);
+    ) -> Result<(Index, FeatureIndexFields)> {
+        let (schema, fields) = FeatureIndexFields::new(num_features);
 
         let index = if let Some(path) = base_dir {
             Index::open_or_create(MmapDirectory::open(&path).unwrap(), schema)?
@@ -201,31 +198,19 @@ where
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct SearchRequest<T> {
+#[derive(Serialize, Deserialize, Debug, Default)]
+pub struct SearchRequest {
     pub query: Option<String>,
     // default 1, non zero
     pub page: Option<u16>,
     // default 20, non zero also
     pub page_size: Option<u8>,
-    pub filter: Option<FilterRequest<T>>,
-    pub agg: Option<AggregationRequest<T>>,
+    pub filter: Option<FilterRequest>,
+    pub agg: Option<AggregationRequest>,
 }
 
-impl Default for SearchRequest<usize> {
-    fn default() -> Self {
-        Self {
-            query: None,
-            page: None,
-            page_size: None,
-            filter: None,
-            agg: None,
-        }
-    }
-}
-
-pub type FilterRequest<T> = Vec<(T, FeatureValue, FeatureValue)>;
-pub type AggregationRequest<T> = Vec<(T, Vec<[FeatureValue; 2]>)>;
+pub type FilterRequest = Vec<(usize, FeatureValue, FeatureValue)>;
+pub type AggregationRequest = Vec<(usize, Vec<[FeatureValue; 2]>)>;
 
 pub struct FeatureDocument(Document);
 
@@ -235,16 +220,9 @@ mod tests {
     use super::*;
     use tempfile;
 
-    // So I can use u8 as a feature
-    impl IsUnset<FeatureValue> for u8 {
-        fn is_unset(val: FeatureValue) -> bool {
-            val == std::u8::MAX as FeatureValue
-        }
-    }
-
     #[test]
     fn can_open_in_ram() {
-        let (_index, fields) = FeatureIndexFields::<u8>::open_or_create(1, None).unwrap();
+        let (_index, fields) = FeatureIndexFields::open_or_create(1, None).unwrap();
         assert_eq!(1, fields.num_features());
     }
 
@@ -252,13 +230,13 @@ mod tests {
     fn can_create_ok() {
         let tmpdir = tempfile::TempDir::new().unwrap();
         let (_index, fields) =
-            FeatureIndexFields::<u8>::open_or_create(2, Some(tmpdir.into_path())).unwrap();
+            FeatureIndexFields::open_or_create(2, Some(tmpdir.into_path())).unwrap();
         assert_eq!(2, fields.num_features());
     }
 
     #[test]
     fn fulltext_search() {
-        let (index, fields) = FeatureIndexFields::<usize>::open_or_create(1, None).unwrap();
+        let (index, fields) = FeatureIndexFields::open_or_create(1, None).unwrap();
 
         let mut writer = index.writer_with_num_threads(1, 40_000_000).unwrap();
 
@@ -285,7 +263,7 @@ mod tests {
         let searcher = reader.searcher();
 
         let do_search = |term: &str| -> Result<Vec<u64>> {
-            let query: SearchRequest<usize> = SearchRequest {
+            let query: SearchRequest = SearchRequest {
                 query: Some(term.to_owned()),
                 ..Default::default()
             };
@@ -314,7 +292,7 @@ mod tests {
 
     #[test]
     fn feature_search() -> Result<()> {
-        let (index, fields) = FeatureIndexFields::<usize>::open_or_create(2, None).unwrap();
+        let (index, fields) = FeatureIndexFields::open_or_create(2, None).unwrap();
 
         const A: usize = 0;
         const B: usize = 1;
@@ -340,7 +318,7 @@ mod tests {
 
         let parser = QueryParser::new(fields.fulltext(), tokenizer);
 
-        let do_search = |feats: FilterRequest<usize>| -> Result<Vec<u64>> {
+        let do_search = |feats: FilterRequest| -> Result<Vec<u64>> {
             let query = SearchRequest {
                 filter: Some(feats),
                 ..Default::default()
@@ -415,11 +393,10 @@ mod tests {
     fn check_doc(id: u64, fulltext: String, features: Vec<(usize, FeatureValue)>) {
         let num_features = features.len();
         let expected_len: usize =
-            // Id + Fulltext
-            1 + 1
-            // When a feature is set we add a field for the FeatureVector
-            // and one for each set feature
-            + (if num_features > 0 { num_features + 1 } else {0 });
+            // Id + Fulltext + FeatureVector
+            3
+            // Plus one for each set feature
+            + num_features;
 
         let opt_feats = if num_features > 0 {
             Some(features.clone())

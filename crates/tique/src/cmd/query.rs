@@ -34,14 +34,14 @@ pub fn query(matches: &ArgMatches) -> io::Result<()> {
 
     // TODO read lines from stdin instead
     let json_query = matches.value_of("query").unwrap();
-    let request: SearchRequest<Feature> = serde_json::from_str(json_query).unwrap();
+    let request: SearchRequest = serde_json::from_str(json_query).unwrap();
 
     let db_path = base_path.join("database");
     let database = BincodeDatabase::new(&db_path).unwrap();
 
     let index_path = base_path.join("tantivy");
-    let (schema, fields) = FeatureIndexFields::new(Feature::LENGTH);
-    let index = Index::open_or_create(MmapDirectory::open(&index_path).unwrap(), schema).unwrap();
+    let (index, fields) =
+        FeatureIndexFields::open_or_create(Feature::LENGTH, Some(index_path)).unwrap();
 
     let tokenizer = TokenizerManager::default()
         .get("en_stem")

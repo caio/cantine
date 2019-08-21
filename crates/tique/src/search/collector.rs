@@ -5,7 +5,7 @@ use tantivy::{
     Result, SegmentReader,
 };
 
-use crate::search::{AggregationRequest, FeatureVector};
+use crate::search::{AggregationRequest, FeatureValue, FeatureVector};
 
 #[derive(Debug)]
 pub struct FeatureRanges(Vec<Option<RangeVec>>);
@@ -53,7 +53,7 @@ impl FeatureRanges {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct RangeVec(Vec<u16>);
+pub struct RangeVec(Vec<FeatureValue>);
 
 impl RangeVec {
     fn new(size: usize) -> Self {
@@ -81,7 +81,7 @@ impl RangeVec {
         storage.len()
     }
 
-    fn get(&self, idx: usize) -> u16 {
+    fn get(&self, idx: usize) -> FeatureValue {
         assert!(idx < self.len());
         let RangeVec(storage) = self;
         storage[idx]
@@ -97,24 +97,24 @@ impl RangeVec {
 pub struct FeatureCollector {
     field: Field,
     agg: FeatureRanges,
-    wanted: AggregationRequest<u16>,
+    wanted: AggregationRequest,
 }
 
 pub struct FeatureSegmentCollector {
     agg: FeatureRanges,
     reader: BytesFastFieldReader,
-    wanted: AggregationRequest<u16>,
+    wanted: AggregationRequest,
 }
 
 impl FeatureCollector {
     pub fn for_field(
         field: Field,
         num_features: usize,
-        wanted: AggregationRequest<u16>,
+        wanted: &AggregationRequest,
     ) -> FeatureCollector {
         FeatureCollector {
             field,
-            wanted,
+            wanted: wanted.clone(),
             agg: FeatureRanges::new(num_features),
         }
     }
@@ -210,10 +210,10 @@ mod tests {
         Index,
     };
 
-    const A: u16 = 0;
-    const B: u16 = 1;
-    const C: u16 = 2;
-    const D: u16 = 3;
+    const A: usize = 0;
+    const B: usize = 1;
+    const C: usize = 2;
+    const D: usize = 3;
 
     #[test]
     fn cannot_merge_different_sized_range_vecs() {
@@ -327,7 +327,7 @@ mod tests {
         let index = Index::create_in_ram(schema);
         let mut writer = index.writer_with_num_threads(1, 40_000_000)?;
 
-        let add_doc = |fv: FeatureVector<&mut [u8], u16>| -> Result<()> {
+        let add_doc = |fv: FeatureVector<&mut [u8], usize>| -> Result<()> {
             let mut doc = Document::default();
             doc.add_bytes(field, fv.as_bytes().to_owned());
             writer.add_document(doc);
@@ -362,7 +362,7 @@ mod tests {
         let reader = index.reader()?;
         let searcher = reader.searcher();
 
-        let wanted: AggregationRequest<u16> = vec![
+        let wanted: AggregationRequest = vec![
             // feature A between ranges 2-10 and 0-5
             (A, vec![[2, 10], [0, 5]]),
             // and so on...
@@ -373,7 +373,7 @@ mod tests {
 
         let feature_ranges = searcher.search(
             &AllQuery,
-            &FeatureCollector::for_field(field, num_features, wanted),
+            &FeatureCollector::for_field(field, num_features, &wanted),
         )?;
 
         // { A => { "2-10": 2, "0-5": 1 } }

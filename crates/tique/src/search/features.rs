@@ -6,7 +6,7 @@ pub trait IsUnset<T> {
     fn is_unset(value: T) -> bool;
 }
 
-impl IsUnset<FeatureValue> for FeatureValue {
+impl IsUnset<FeatureValue> for usize {
     fn is_unset(value: FeatureValue) -> bool {
         value == UNSET_FEATURE
     }
@@ -78,13 +78,6 @@ mod tests {
     const LENGTH: usize = 4;
 
     const EMPTY_BUFFER: [u8; 8] = [std::u8::MAX; LENGTH * 2];
-
-    // Using usize as a feature
-    impl IsUnset<FeatureValue> for usize {
-        fn is_unset(val: FeatureValue) -> bool {
-            val == UNSET_FEATURE
-        }
-    }
 
     #[test]
     fn init_ok() {

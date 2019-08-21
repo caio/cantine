@@ -115,8 +115,18 @@ pub fn load(matches: &ArgMatches) -> io::Result<()> {
                 }
             }
 
+            // FIXME huh
+            let mut ufeats = Vec::new();
+            for (feat, val) in feats {
+                ufeats.push((feat as usize, val));
+            }
+
             doc_sender
-                .send(doc_factory.make_document(recipe.recipe_id, fulltext.join("\n"), Some(feats)))
+                .send(doc_factory.make_document(
+                    recipe.recipe_id,
+                    fulltext.join("\n"),
+                    Some(ufeats),
+                ))
                 .unwrap();
         }
 
