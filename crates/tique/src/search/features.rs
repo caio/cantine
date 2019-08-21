@@ -6,19 +6,22 @@ pub trait IsUnset<T> {
     fn is_unset(value: T) -> bool;
 }
 
-impl IsUnset<u16> for u16 {
-    fn is_unset(value: u16) -> bool {
-        value == std::u16::MAX
+impl IsUnset<FeatureValue> for FeatureValue {
+    fn is_unset(value: FeatureValue) -> bool {
+        value == UNSET_FEATURE
     }
 }
 
 #[derive(Debug)]
 pub struct FeatureVector<B: ByteSlice, T>(usize, B, PhantomData<T>);
 
+pub type FeatureValue = u16;
+const UNSET_FEATURE: FeatureValue = std::u16::MAX;
+
 impl<B, T> FeatureVector<B, T>
 where
     B: ByteSlice,
-    T: Into<usize> + IsUnset<u16>,
+    T: Into<usize> + IsUnset<FeatureValue>,
 {
     pub fn parse(num_features: usize, src: B) -> Option<FeatureVector<B, T>> {
         if num_features == 0 || src.len() < num_features * 2 {
@@ -28,11 +31,11 @@ where
         }
     }
 
-    pub fn read_value(&self, buf: &[u8]) -> u16 {
+    fn read_value(&self, buf: &[u8]) -> FeatureValue {
         LittleEndian::read_u16(buf)
     }
 
-    pub fn get(&self, feature: T) -> Option<u16> {
+    pub fn get(&self, feature: T) -> Option<FeatureValue> {
         let idx: usize = feature.into();
 
         if idx < self.0 {
@@ -56,7 +59,7 @@ impl<B: ByteSliceMut, T> FeatureVector<B, T>
 where
     T: Into<usize>,
 {
-    pub fn set(&mut self, feature: T, value: u16) -> Result<(), &'static str> {
+    pub fn set(&mut self, feature: T, value: FeatureValue) -> Result<(), &'static str> {
         let idx = feature.into();
         if idx < self.0 {
             self.1[idx * 2..idx * 2 + 2].copy_from_slice(value.as_bytes());
@@ -77,9 +80,9 @@ mod tests {
     const EMPTY_BUFFER: [u8; 8] = [std::u8::MAX; LENGTH * 2];
 
     // Using usize as a feature
-    impl IsUnset<u16> for usize {
-        fn is_unset(val: u16) -> bool {
-            val == std::u16::MAX
+    impl IsUnset<FeatureValue> for usize {
+        fn is_unset(val: FeatureValue) -> bool {
+            val == UNSET_FEATURE
         }
     }
 
@@ -99,8 +102,8 @@ mod tests {
         let mut vector = FeatureVector::parse(LENGTH, buf.as_mut_slice()).unwrap();
 
         for feat in 0..LENGTH {
-            vector.set(feat, feat as u16).unwrap();
-            assert_eq!(Some(feat as u16), vector.get(feat));
+            vector.set(feat, feat as FeatureValue).unwrap();
+            assert_eq!(Some(feat as FeatureValue), vector.get(feat));
         }
     }
 

@@ -1,7 +1,4 @@
-use std::{
-    marker::PhantomData,
-    path::{Path, PathBuf},
-};
+use std::{marker::PhantomData, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -14,17 +11,19 @@ use tantivy::{
         FAST, INDEXED, STORED,
     },
     tokenizer::TokenizerManager,
-    Document, Index, IndexReader, IndexWriter, ReloadPolicy, TantivyError,
+    Document, Index, IndexWriter, TantivyError,
 };
 
-use crate::search::{collector::FeatureCollector, FeatureVector, IsUnset, QueryParser, Result};
+use crate::search::{
+    collector::FeatureCollector, FeatureValue, FeatureVector, IsUnset, QueryParser, Result,
+};
 
 #[derive(Clone)]
 pub struct FeatureIndexFields<T>(Vec<Field>, PhantomData<T>);
 
 impl<T> FeatureIndexFields<T>
 where
-    T: Into<usize> + IsUnset<u16> + Copy,
+    T: Into<usize> + IsUnset<FeatureValue> + Copy,
 {
     pub fn new(num_features: usize) -> (Schema, FeatureIndexFields<T>) {
         let mut builder = SchemaBuilder::new();
@@ -153,7 +152,7 @@ where
         &self,
         id: u64,
         fulltext: String,
-        features: Option<Vec<(T, u16)>>,
+        features: Option<Vec<(T, FeatureValue)>>,
     ) -> FeatureDocument {
         let mut doc = Document::default();
 
@@ -225,8 +224,8 @@ impl Default for SearchRequest<usize> {
     }
 }
 
-pub type FilterRequest<T> = Vec<(T, u16, u16)>;
-pub type AggregationRequest<T> = Vec<(T, Vec<[u16; 2]>)>;
+pub type FilterRequest<T> = Vec<(T, FeatureValue, FeatureValue)>;
+pub type AggregationRequest<T> = Vec<(T, Vec<[FeatureValue; 2]>)>;
 
 pub struct FeatureDocument(Document);
 
@@ -236,17 +235,10 @@ mod tests {
     use super::*;
     use tempfile;
 
-    mod feat {
-        pub const A: usize = 0;
-        pub const B: usize = 1;
-        pub const C: usize = 2;
-        pub const D: usize = 3;
-    }
-
     // So I can use u8 as a feature
-    impl IsUnset<u16> for u8 {
-        fn is_unset(val: u16) -> bool {
-            val == std::u8::MAX as u16
+    impl IsUnset<FeatureValue> for u8 {
+        fn is_unset(val: FeatureValue) -> bool {
+            val == std::u8::MAX as FeatureValue
         }
     }
 
@@ -297,7 +289,6 @@ mod tests {
                 query: Some(term.to_owned()),
                 ..Default::default()
             };
-            let interpreted = fields.interpret_request(&query, &query_parser).unwrap();
             let (mut result, _agg) = fields.search(&query, &query_parser, &searcher).unwrap();
             result.sort();
             Ok(result)
@@ -421,7 +412,7 @@ mod tests {
         assert_eq!(None, iter.next());
     }
 
-    fn check_doc(id: u64, fulltext: String, features: Vec<(usize, u16)>) {
+    fn check_doc(id: u64, fulltext: String, features: Vec<(usize, FeatureValue)>) {
         let num_features = features.len();
         let expected_len: usize =
             // Id + Fulltext
