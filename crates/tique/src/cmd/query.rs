@@ -2,27 +2,14 @@ use std::{collections::HashMap, io, path::Path};
 
 use crate::{
     database::BincodeDatabase,
-    search::{FeatureCollector, FeatureIndexFields, QueryParser, SearchRequest},
+    search::{FeatureIndexFields, QueryParser, SearchRequest},
     CerberusRecipeModel, Feature,
 };
 
-use clap::{value_t, ArgMatches};
+use clap::ArgMatches;
 use serde::{Deserialize, Serialize};
 use serde_json;
-use tantivy::{
-    collector::TopDocs,
-    directory::MmapDirectory,
-    query::{AllQuery, BooleanQuery, Occur, Query, RangeQuery},
-    schema::{
-        Field, FieldType, IndexRecordOption, Schema, SchemaBuilder, TextFieldIndexing, TextOptions,
-        Value, FAST, INDEXED, STORED,
-    },
-    tokenizer::{
-        Language, LowerCaser, RemoveLongFilter, SimpleTokenizer, Stemmer, Tokenizer,
-        TokenizerManager,
-    },
-    Document, Index, IndexReader, IndexWriter, ReloadPolicy,
-};
+use tantivy::{directory::MmapDirectory, tokenizer::TokenizerManager, Index};
 
 #[derive(Serialize, Deserialize)]
 struct ResultRecipe {
@@ -62,39 +49,21 @@ pub fn query(matches: &ArgMatches) -> io::Result<()> {
         .unwrap();
 
     let query_parser = QueryParser::new(fields.fulltext(), tokenizer);
-
-    let iquery = fields.interpret_request(&request, &query_parser).unwrap();
-
     let reader = index.reader_builder().try_into().unwrap();
     let searcher = reader.searcher();
 
     // TODO change the search request to u16-only too
     let mut wanted = Vec::new();
-    if let Some(agg) = request.agg {
+    if let Some(agg) = &request.agg {
         for (feat, ranges) in agg {
-            wanted.push((feat as u16, ranges));
+            wanted.push((*feat as u16, ranges));
         }
     }
 
-    let (hits, agg) = searcher
-        .search(
-            &iquery,
-            &(
-                TopDocs::with_limit(request.page_size.unwrap_or(10) as usize),
-                FeatureCollector::for_field(fields.feature_vector(), Feature::LENGTH, wanted),
-            ),
-        )
-        .unwrap();
+    let (ids, _fixme) = fields.search(&request, &query_parser, &searcher).unwrap();
     let mut found = Vec::new();
 
-    for (_score, addr) in hits {
-        let id = searcher
-            .doc(addr)
-            .unwrap()
-            .get_first(fields.id())
-            .expect("Found document without an id field")
-            .u64_value();
-
+    for id in ids {
         let recipe: CerberusRecipeModel =
             database.get(id)?.expect("Found recipe should exist on db");
 
