@@ -1,7 +1,11 @@
-use byteorder::{LittleEndian, ReadBytesExt};
+use byteorder::{ByteOrder, LittleEndian};
 use serde::{Deserialize, Serialize};
-use std::marker::PhantomData;
-use zerocopy::{AsBytes, ByteSlice, ByteSliceMut};
+use std::{
+    borrow::{Cow, ToOwned},
+    cell::Cell,
+    marker::PhantomData,
+};
+use zerocopy::{AsBytes, ByteSlice, ByteSliceMut, FromBytes, LayoutVerified, U16};
 
 #[derive(Serialize, Deserialize, Debug, Hash, Eq, PartialEq, Clone, Copy)]
 pub enum Feature {
@@ -64,6 +68,38 @@ impl Into<usize> for &Feature {
 #[derive(Debug)]
 pub struct FeatureVector<B: ByteSlice, T>(usize, B, PhantomData<T>);
 
+pub struct FV<'a, T: FromBytes + AsBytes + Clone>(&'a [T]);
+
+impl<'a, T> FV<'a, T>
+where
+    T: FromBytes + AsBytes + Clone,
+{
+    pub fn parse(num_features: usize, src: &'a [u8]) -> Option<FV<T>> {
+        if let Some(verified) = LayoutVerified::new_slice(src) {
+            let feature_slice = verified.into_slice();
+            if feature_slice.len() == num_features {
+                Some(FV(feature_slice))
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
+    pub fn get(&self, idx: usize) -> Option<&T> {
+        self.0.get(idx)
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        self.0.as_bytes()
+    }
+
+    pub fn to_vec(&self) -> Vec<T> {
+        self.0.to_vec()
+    }
+}
+
 impl<B, T> FeatureVector<B, T>
 where
     B: ByteSlice,
@@ -77,11 +113,15 @@ where
         }
     }
 
+    pub fn read_value(&self, buf: &[u8]) -> u16 {
+        LittleEndian::read_u16(buf)
+    }
+
     pub fn get(&self, feature: T) -> Option<u16> {
         let idx: usize = feature.into();
 
         if idx < self.0 {
-            let value = (&self.1[idx * 2..]).read_u16::<LittleEndian>().unwrap();
+            let value = self.read_value(&self.1[idx * 2..]);
             // FIXME drop unset_feature somehow
             if value == Feature::UNSET_FEATURE {
                 None
@@ -117,6 +157,47 @@ where
 mod tests {
 
     use super::*;
+
+    #[test]
+    fn fv_parsing() {
+        let src = vec![0u8; 8];
+
+        // u16 is 2 bytes, so we can fit 4 in this buffer
+        let fv: Option<FV<u16>> = FV::parse(4, &src);
+        assert!(fv.is_some());
+
+        // Or 2 32bit features
+        let fv: Option<FV<u32>> = FV::parse(2, &src);
+        assert!(fv.is_some());
+
+        // But trying to read less than the total capacity should fail
+        let fv: Option<FV<u16>> = FV::parse(3, &src);
+        assert!(fv.is_none());
+    }
+
+    #[test]
+    fn fv_usage() {
+        let src = vec![0u8; 8];
+        let fv: FV<u16> = FV::parse(4, &src).unwrap();
+
+        // Buffer was empty, everything is zero
+        for i in 0..4 {
+            assert_eq!(Some(&0), fv.get(i));
+        }
+
+        // Can't read beyond the vector
+        assert_eq!(None, fv.get(5));
+
+        let mut fresh = fv.to_vec();
+        fresh[0] = 420;
+        fresh[3] = 710;
+        let fresh_fv = FV::parse(4, fresh.as_bytes()).unwrap();
+
+        assert_eq!(Some(&420u16), fresh_fv.get(0));
+        assert_eq!(Some(&0), fresh_fv.get(1));
+        assert_eq!(Some(&0), fresh_fv.get(2));
+        assert_eq!(Some(&710), fresh_fv.get(3));
+    }
 
     #[test]
     fn init_ok() {
