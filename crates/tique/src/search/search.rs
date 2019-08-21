@@ -18,15 +18,6 @@ use tantivy::{
 };
 
 use crate::search::{collector::FeatureCollector, FeatureVector, IsUnset, QueryParser, Result};
-use crate::Feature;
-
-pub struct RecipeIndex {
-    index: Index,
-    reader: IndexReader,
-    writer: IndexWriter,
-    query_parser: QueryParser,
-    fields: FeatureIndexFields<Feature>,
-}
 
 #[derive(Clone)]
 pub struct FeatureIndexFields<T>(Vec<Field>, PhantomData<T>);
@@ -234,92 +225,10 @@ impl Default for SearchRequest<usize> {
     }
 }
 
-impl Default for SearchRequest<Feature> {
-    fn default() -> Self {
-        Self {
-            query: None,
-            page: None,
-            page_size: None,
-            filter: None,
-            agg: None,
-        }
-    }
-}
-
 pub type FilterRequest<T> = Vec<(T, u16, u16)>;
 pub type AggregationRequest<T> = Vec<(T, Vec<[u16; 2]>)>;
 
 pub struct FeatureDocument(Document);
-
-impl RecipeIndex {
-    pub fn new(index_path: &Path) -> Result<RecipeIndex> {
-        let (schema, fields) = FeatureIndexFields::new(Feature::LENGTH);
-
-        let index = Index::open_or_create(MmapDirectory::open(index_path)?, schema)?;
-
-        let writer = index.writer(40_000_000)?;
-        let reader = index
-            .reader_builder()
-            .reload_policy(ReloadPolicy::OnCommit)
-            .try_into()?;
-
-        let tokenizer = TokenizerManager::default()
-            .get("en_stem")
-            .ok_or_else(|| tantivy::TantivyError::SystemError("Tokenizer not found".to_owned()))?;
-
-        let query_parser = QueryParser::new(fields.fulltext(), tokenizer);
-
-        Ok(RecipeIndex {
-            index,
-            writer,
-            reader,
-            query_parser,
-            fields,
-        })
-    }
-
-    pub fn doc_factory(&self) -> FeatureIndexFields<Feature> {
-        self.fields.clone()
-    }
-
-    pub fn add(&self, feature_document: FeatureDocument) {
-        self.fields.add_document(&self.writer, feature_document);
-    }
-
-    pub fn search(&self, req: &SearchRequest<Feature>) -> Result<Vec<u64>> {
-        let searcher = self.reader.searcher();
-        let iquery = self.fields.interpret_request(req, &self.query_parser)?;
-
-        let hits = searcher.search(&iquery, &TopDocs::with_limit(10))?;
-        let mut ids = Vec::with_capacity(hits.len());
-
-        for (_score, addr) in hits {
-            ids.push(
-                searcher
-                    .doc(addr)?
-                    .get_first(self.fields.id())
-                    .expect("Found document without an id field")
-                    .u64_value(),
-            );
-        }
-
-        Ok(ids)
-    }
-
-    #[cfg(test)]
-    fn reload_searchers(&self) -> Result<()> {
-        self.reader.reload()
-    }
-
-    pub fn num_docs(&self) -> u64 {
-        self.reader.searcher().num_docs()
-    }
-
-    pub fn commit(&mut self) -> Result<()> {
-        self.writer.commit()?;
-        Ok(())
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -512,7 +421,7 @@ mod tests {
         assert_eq!(None, iter.next());
     }
 
-    fn check_doc(id: u64, fulltext: String, features: Vec<(Feature, u16)>) {
+    fn check_doc(id: u64, fulltext: String, features: Vec<(usize, u16)>) {
         let num_features = features.len();
         let expected_len: usize =
             // Id + Fulltext
@@ -527,7 +436,7 @@ mod tests {
             None
         };
 
-        let (_schema, fields) = FeatureIndexFields::new(Feature::LENGTH);
+        let (_schema, fields) = FeatureIndexFields::new(2);
         let FeatureDocument(doc) = fields.make_document(id, fulltext.clone(), opt_feats);
 
         assert_eq!(expected_len, doc.len());
@@ -546,8 +455,8 @@ mod tests {
 
         if num_features > 0 {
             if let Value::Bytes(bytes) = doc.get_first(fields.feature_vector()).unwrap() {
-                let mut buf = Feature::EMPTY_BUFFER.to_vec();
-                let mut fv = FeatureVector::parse(Feature::LENGTH, buf.as_mut_slice()).unwrap();
+                let mut buf = vec![std::u8::MAX; 4];
+                let mut fv = FeatureVector::parse(2, buf.as_mut_slice()).unwrap();
 
                 // One for the serialized feature vector
                 for (feat, value) in features {
@@ -564,14 +473,13 @@ mod tests {
 
     #[test]
     fn feature_document_is_built_correctly() {
+        const A: usize = 0;
+        const B: usize = 1;
+
         let specs = vec![
             (1, "document one", vec![]),
-            (2, "the second", vec![(Feature::NumIngredients, 10)]),
-            (
-                3,
-                "a third is good too!",
-                vec![(Feature::NumIngredients, 10), (Feature::Calories, 100)],
-            ),
+            (2, "the second", vec![(A, 10)]),
+            (3, "a third is good too!", vec![(A, 10), (B, 100)]),
         ];
 
         for (id, fulltext, features) in specs {
