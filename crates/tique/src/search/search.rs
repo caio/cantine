@@ -414,30 +414,38 @@ mod tests {
 
     #[test]
     fn feature_search() -> Result<()> {
-        let tmpdir = tempfile::TempDir::new()?;
-        let mut index = RecipeIndex::new(tmpdir.path())?;
+        let (index, fields) = FeatureIndexFields::<usize>::open_or_create(2, None).unwrap();
 
-        const A: Feature = Feature::Calories;
-        const B: Feature = Feature::CarbContent;
+        const A: usize = 0;
+        const B: usize = 1;
 
-        let factory = index.doc_factory();
-        let do_add = |id: u64, feats| {
-            index.add(factory.make_document(id, "".to_owned(), Some(feats)));
+        let mut writer = index.writer_with_num_threads(1, 40_000_000).unwrap();
+
+        let mut do_add = |id: u64, feats| {
+            fields.add_document(
+                &mut writer,
+                fields.make_document(id, "".to_owned(), Some(feats)),
+            );
         };
 
         do_add(1, vec![(A, 1)]);
         do_add(2, vec![(A, 10), (B, 1)]);
         do_add(3, vec![(A, 100), (B, 10)]);
 
-        index.commit()?;
-        index.reload_searchers()?;
+        writer.commit()?;
+        let reader = index.reader().unwrap();
+        let searcher = reader.searcher();
 
-        let do_search = |feats: FilterRequest<Feature>| -> Result<Vec<u64>> {
+        let tokenizer = TokenizerManager::default().get("en_stem").unwrap();
+
+        let parser = QueryParser::new(fields.fulltext(), tokenizer);
+
+        let do_search = |feats: FilterRequest<usize>| -> Result<Vec<u64>> {
             let query = SearchRequest {
                 filter: Some(feats),
                 ..Default::default()
             };
-            let mut result = index.search(&query)?;
+            let (mut result, _) = fields.search(&query, &parser, &searcher)?;
             result.sort();
             Ok(result)
         };
