@@ -34,6 +34,8 @@ pub fn query(matches: &ArgMatches) -> io::Result<()> {
 
     // TODO read lines from stdin instead
     let json_query = matches.value_of("query").unwrap();
+    // XXX Ideally I would be able to deserialize mapping
+    //     from Feature to usize already
     let request: SearchRequest = serde_json::from_str(json_query).unwrap();
 
     let db_path = base_path.join("database");
@@ -52,15 +54,7 @@ pub fn query(matches: &ArgMatches) -> io::Result<()> {
     let reader = index.reader_builder().try_into().unwrap();
     let searcher = reader.searcher();
 
-    // TODO change the search request to u16-only too
-    let mut wanted = Vec::new();
-    if let Some(agg) = &request.agg {
-        for (feat, ranges) in agg {
-            wanted.push((*feat as u16, ranges));
-        }
-    }
-
-    let (ids, _fixme) = fields.search(&request, &query_parser, &searcher).unwrap();
+    let (ids, agg) = fields.search(&request, &query_parser, &searcher).unwrap();
     let mut found = Vec::new();
 
     for id in ids {
@@ -76,15 +70,23 @@ pub fn query(matches: &ArgMatches) -> io::Result<()> {
         });
     }
 
+    // XXX Can I have a renderer or smth to make this cheaper?
+    //     Like... custom serializer maybe?
+    let mut cute_agg: HashMap<Feature, Vec<u16>> = HashMap::new();
+    for feat in Feature::VALUES.iter() {
+        let idx = *feat as usize;
+        if let Some(counts) = agg.get(idx) {
+            // i.e.: I want to avoid this clone(). Cow maybe?
+            cute_agg.insert(*feat, counts.inner().clone());
+        }
+    }
+
     let response = SearchResponse {
         hits: found,
-        // FIXME
         num_hits: 0,
         page: 1,
-        // FIXME
         num_pages: 0,
-        // FIXME agg: agg.into(),
-        agg: HashMap::new(),
+        agg: cute_agg,
     };
 
     println!("{}", serde_json::to_string_pretty(&response).unwrap());

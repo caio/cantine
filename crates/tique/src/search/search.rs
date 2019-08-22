@@ -14,7 +14,7 @@ use tantivy::{
 };
 
 use crate::search::{
-    collector::FeatureCollector, FeatureValue, FeatureVector, QueryParser, Result,
+    collector::FeatureCollector, FeatureRanges, FeatureValue, FeatureVector, QueryParser, Result,
 };
 
 #[derive(Clone)]
@@ -74,10 +74,10 @@ impl FeatureIndexFields where {
         request: &SearchRequest,
         query_parser: &QueryParser,
         searcher: &tantivy::Searcher,
-    ) -> Result<(Vec<u64>, usize)> {
+    ) -> Result<(Vec<u64>, FeatureRanges)> {
         let iquery = self.interpret_request(&request, &query_parser).unwrap();
 
-        let (hits, _agg) = searcher
+        let (hits, agg) = searcher
             .search(
                 &iquery,
                 &(
@@ -103,7 +103,7 @@ impl FeatureIndexFields where {
             );
         }
 
-        Ok((ids, 0))
+        Ok((ids, agg))
     }
 
     pub fn interpret_request(
@@ -114,15 +114,15 @@ impl FeatureIndexFields where {
         let mut clauses: Vec<(Occur, Box<dyn Query>)> = Vec::new();
 
         if let Some(filters) = &req.filter {
-            for spec in filters {
+            for (feat, range) in filters {
                 clauses.push((
                     Occur::Must,
                     Box::new(RangeQuery::new_u64(
-                        self.feature(spec.0).ok_or_else(|| {
+                        self.feature(*feat).ok_or_else(|| {
                             TantivyError::SystemError("Unknown feature in filters".to_owned())
                         })?,
-                        // XXX ... can't this be less silly?
-                        *spec.1.start() as u64..(spec.1.end() + 1) as u64,
+                        // XXX can't this be less awkward?
+                        *range.start() as u64..(range.end() + 1) as u64,
                     )),
                 ));
             }

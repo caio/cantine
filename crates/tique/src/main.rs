@@ -58,12 +58,6 @@ impl Into<usize> for Feature {
     }
 }
 
-impl Into<usize> for &Feature {
-    fn into(self) -> usize {
-        *self as usize
-    }
-}
-
 impl search::IsUnset<u16> for Feature {
     fn is_unset(val: u16) -> bool {
         val == std::u16::MAX

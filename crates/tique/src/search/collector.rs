@@ -42,7 +42,7 @@ impl FeatureRanges {
         FeatureRanges(vec![None; size])
     }
 
-    fn get(&self, idx: usize) -> &Option<RangeVec> {
+    pub fn get(&self, idx: usize) -> &Option<RangeVec> {
         assert!(idx < self.len());
         &self.0[idx]
     }
@@ -91,6 +91,10 @@ impl RangeVec {
         assert!(idx < self.len());
         let RangeVec(storage) = self;
         storage[idx] += 1;
+    }
+
+    pub fn inner(&self) -> &Vec<FeatureValue> {
+        &self.0
     }
 }
 
@@ -143,7 +147,7 @@ impl Collector for FeatureCollector {
         false
     }
 
-    fn merge_fruits(&self, children: Vec<FeatureRanges>) -> Result<FeatureRanges> {
+    fn merge_fruits(&self, children: Vec<FeatureRanges>) -> Result<Self::Fruit> {
         let mut merged = FeatureRanges::new(self.agg.len());
 
         merged.merge(&self.agg)?;
