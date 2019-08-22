@@ -9,7 +9,7 @@ use crate::{
 use clap::ArgMatches;
 use serde::{Deserialize, Serialize};
 use serde_json;
-use tantivy::{directory::MmapDirectory, tokenizer::TokenizerManager, Index};
+use tantivy::tokenizer::TokenizerManager;
 
 #[derive(Serialize, Deserialize)]
 struct ResultRecipe {

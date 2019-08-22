@@ -1,4 +1,4 @@
-use std::{marker::PhantomData, ops::RangeInclusive, path::PathBuf};
+use std::{ops::RangeInclusive, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -7,10 +7,9 @@ use tantivy::{
     directory::MmapDirectory,
     query::{AllQuery, BooleanQuery, Occur, Query, RangeQuery},
     schema::{
-        Field, FieldEntry, FieldType, IndexRecordOption, Schema, SchemaBuilder, TextFieldIndexing,
-        TextOptions, Value, FAST, INDEXED, STORED,
+        Field, IndexRecordOption, Schema, SchemaBuilder, TextFieldIndexing, TextOptions, FAST,
+        INDEXED, STORED,
     },
-    tokenizer::TokenizerManager,
     Document, Index, IndexWriter, TantivyError,
 };
 
@@ -220,6 +219,11 @@ mod tests {
 
     use super::*;
     use tempfile;
+
+    use tantivy::{
+        schema::{FieldType, Value},
+        tokenizer::TokenizerManager,
+    };
 
     #[test]
     fn can_open_in_ram() {

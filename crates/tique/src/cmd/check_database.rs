@@ -6,7 +6,6 @@ use std::thread::spawn;
 use crate::{database::BincodeDatabase, CerberusRecipeModel};
 
 use clap::ArgMatches;
-use serde::{Deserialize, Serialize};
 use serde_json;
 
 pub fn check_database(matches: &ArgMatches) -> io::Result<()> {

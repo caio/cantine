@@ -7,19 +7,8 @@ use std::time::Instant;
 use crate::{database::BincodeDatabase, search::FeatureIndexFields, CerberusRecipeModel, Feature};
 
 use clap::{value_t, ArgMatches};
-use serde::{Deserialize, Serialize};
 use serde_json;
-use tantivy::{
-    collector::TopDocs,
-    directory::MmapDirectory,
-    query::{AllQuery, BooleanQuery, Occur, Query, RangeQuery},
-    schema::{
-        Field, FieldType, IndexRecordOption, Schema, SchemaBuilder, TextFieldIndexing, TextOptions,
-        Value, FAST, INDEXED, STORED,
-    },
-    tokenizer::TokenizerManager,
-    Document, Index, IndexReader, IndexWriter, ReloadPolicy,
-};
+use tantivy::{directory::MmapDirectory, tokenizer::TokenizerManager, Index};
 
 pub fn load(matches: &ArgMatches) -> io::Result<()> {
     let output_dir = matches.value_of("output_dir").unwrap();
