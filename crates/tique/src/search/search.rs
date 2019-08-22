@@ -7,8 +7,8 @@ use tantivy::{
     directory::MmapDirectory,
     query::{AllQuery, BooleanQuery, Occur, Query, RangeQuery},
     schema::{
-        Field, IndexRecordOption, Schema, SchemaBuilder, TextFieldIndexing, TextOptions, Value,
-        FAST, INDEXED, STORED,
+        Field, FieldEntry, FieldType, IndexRecordOption, Schema, SchemaBuilder, TextFieldIndexing,
+        TextOptions, Value, FAST, INDEXED, STORED,
     },
     tokenizer::TokenizerManager,
     Document, Index, IndexWriter, TantivyError,
@@ -22,14 +22,14 @@ use crate::search::{
 pub struct FeatureIndexFields(Vec<Field>);
 
 impl FeatureIndexFields where {
-    pub fn new(num_features: usize) -> (Schema, FeatureIndexFields) {
+    pub fn new(num_features: usize, tokenizer: Option<&str>) -> (Schema, FeatureIndexFields) {
         assert!(num_features > 0);
 
         let mut builder = SchemaBuilder::new();
         let mut fields = Vec::with_capacity(3 + num_features);
 
         let indexing = TextFieldIndexing::default()
-            .set_tokenizer("en_stem")
+            .set_tokenizer(tokenizer.unwrap_or("en_stem"))
             .set_index_option(IndexRecordOption::WithFreqsAndPositions);
         let text_field_options = TextOptions::default().set_indexing_options(indexing);
 
@@ -185,8 +185,9 @@ impl FeatureIndexFields where {
     pub fn open_or_create(
         num_features: usize,
         base_dir: Option<PathBuf>,
+        tokenizer: Option<&str>,
     ) -> Result<(Index, FeatureIndexFields)> {
-        let (schema, fields) = FeatureIndexFields::new(num_features);
+        let (schema, fields) = FeatureIndexFields::new(num_features, tokenizer);
 
         let index = if let Some(path) = base_dir {
             Index::open_or_create(MmapDirectory::open(&path).unwrap(), schema)?
@@ -222,7 +223,7 @@ mod tests {
 
     #[test]
     fn can_open_in_ram() {
-        let (_index, fields) = FeatureIndexFields::open_or_create(1, None).unwrap();
+        let (_index, fields) = FeatureIndexFields::open_or_create(1, None, None).unwrap();
         assert_eq!(1, fields.num_features());
     }
 
@@ -230,13 +231,30 @@ mod tests {
     fn can_create_ok() {
         let tmpdir = tempfile::TempDir::new().unwrap();
         let (_index, fields) =
-            FeatureIndexFields::open_or_create(2, Some(tmpdir.into_path())).unwrap();
+            FeatureIndexFields::open_or_create(2, Some(tmpdir.into_path()), None).unwrap();
         assert_eq!(2, fields.num_features());
     }
 
     #[test]
+    fn can_set_tokenizer_name() {
+        let (index, fields) = FeatureIndexFields::open_or_create(2, None, Some("custom")).unwrap();
+
+        let schema = index.schema();
+        let entry = schema.get_field_entry(fields.fulltext());
+
+        if let FieldType::Str(opts) = entry.field_type() {
+            assert_eq!(
+                Some("custom"),
+                opts.get_indexing_options().map(|o| o.tokenizer())
+            )
+        } else {
+            panic!("Fulltext field should be text")
+        }
+    }
+
+    #[test]
     fn fulltext_search() {
-        let (index, fields) = FeatureIndexFields::open_or_create(1, None).unwrap();
+        let (index, fields) = FeatureIndexFields::open_or_create(1, None, None).unwrap();
 
         let mut writer = index.writer_with_num_threads(1, 40_000_000).unwrap();
 
@@ -292,7 +310,7 @@ mod tests {
 
     #[test]
     fn feature_search() -> Result<()> {
-        let (index, fields) = FeatureIndexFields::open_or_create(2, None).unwrap();
+        let (index, fields) = FeatureIndexFields::open_or_create(2, None, None).unwrap();
 
         const A: usize = 0;
         const B: usize = 1;
@@ -345,7 +363,7 @@ mod tests {
     #[test]
     fn can_get_a_field_for_every_known_feature() {
         let num_features = 100;
-        let (_schema, fields) = FeatureIndexFields::new(num_features);
+        let (_schema, fields) = FeatureIndexFields::new(num_features, None);
 
         for feat in 0..num_features {
             assert!(fields.feature(feat).is_some())
@@ -355,7 +373,7 @@ mod tests {
     #[test]
     fn index_fields_structure() {
         let num_features = 10;
-        let (schema, fields) = FeatureIndexFields::new(num_features);
+        let (schema, fields) = FeatureIndexFields::new(num_features, None);
         let mut iter = schema.fields().iter();
 
         // expected fields in order
@@ -395,7 +413,7 @@ mod tests {
             None
         };
 
-        let (_schema, fields) = FeatureIndexFields::new(2);
+        let (_schema, fields) = FeatureIndexFields::new(2, None);
         let FeatureDocument(doc) = fields.make_document(id, fulltext.clone(), opt_feats);
 
         assert_eq!(expected_len, doc.len());

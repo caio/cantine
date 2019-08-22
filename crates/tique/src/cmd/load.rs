@@ -45,7 +45,7 @@ pub fn load(matches: &ArgMatches) -> io::Result<()> {
         println!("StdinLines: finished!!");
     });
 
-    let (schema, fields) = FeatureIndexFields::new(Feature::LENGTH);
+    let (schema, fields) = FeatureIndexFields::new(Feature::LENGTH, None);
     let index = Index::open_or_create(MmapDirectory::open(&index_path).unwrap(), schema).unwrap();
 
     let mut writer = index.writer(buf_size * 1_000_000).unwrap();

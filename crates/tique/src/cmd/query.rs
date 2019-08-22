@@ -41,7 +41,7 @@ pub fn query(matches: &ArgMatches) -> io::Result<()> {
 
     let index_path = base_path.join("tantivy");
     let (index, fields) =
-        FeatureIndexFields::open_or_create(Feature::LENGTH, Some(index_path)).unwrap();
+        FeatureIndexFields::open_or_create(Feature::LENGTH, Some(index_path), None).unwrap();
 
     let tokenizer = TokenizerManager::default()
         .get("en_stem")
