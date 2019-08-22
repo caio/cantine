@@ -1,4 +1,4 @@
-use std::{marker::PhantomData, path::PathBuf};
+use std::{marker::PhantomData, ops::RangeInclusive, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -122,8 +122,8 @@ impl FeatureIndexFields where {
                         self.feature(spec.0).ok_or_else(|| {
                             TantivyError::SystemError("Unknown feature in filters".to_owned())
                         })?,
-                        // inclusive range
-                        (spec.1 as u64)..((spec.2 + 1) as u64),
+                        // XXX ... can't this be less silly?
+                        *spec.1.start() as u64..(spec.1.end() + 1) as u64,
                     )),
                 ));
             }
@@ -209,8 +209,8 @@ pub struct SearchRequest {
     pub agg: Option<AggregationRequest>,
 }
 
-pub type FilterRequest = Vec<(usize, FeatureValue, FeatureValue)>;
-pub type AggregationRequest = Vec<(usize, Vec<[FeatureValue; 2]>)>;
+pub type FilterRequest = Vec<(usize, RangeInclusive<FeatureValue>)>;
+pub type AggregationRequest = Vec<(usize, Vec<RangeInclusive<FeatureValue>>)>;
 
 pub struct FeatureDocument(Document);
 
@@ -329,24 +329,15 @@ mod tests {
         };
 
         // Searching on A ranges
-        assert_eq!(vec![1, 2, 3], do_search(vec![(A, 1, 100)])?);
-        assert_eq!(vec![1, 2], do_search(vec![(A, 0, 11)])?);
-        assert_eq!(vec![1], do_search(vec![(A, 1, 1)])?);
-        assert_eq!(0, do_search(vec![(A, 0, 0)])?.len());
+        assert_eq!(vec![1, 2, 3], do_search(vec![(A, 1..=100)])?);
+        assert_eq!(vec![1, 2], do_search(vec![(A, 0..=11)])?);
+        assert_eq!(vec![1], do_search(vec![(A, 1..=1)])?);
+        assert_eq!(0, do_search(vec![(A, 0..=0)])?.len());
 
         // Matches on A always pass, B varies:
-        assert_eq!(
-            vec![2, 3],
-            do_search(vec![(A, 1, 100).into(), (B, 1, 100).into()])?
-        );
-        assert_eq!(
-            vec![3],
-            do_search(vec![(A, 1, 100).into(), (B, 5, 100).into()])?
-        );
-        assert_eq!(
-            0,
-            do_search(vec![(A, 1, 100).into(), (B, 100, 101).into()])?.len()
-        );
+        assert_eq!(vec![2, 3], do_search(vec![(A, 1..=100), (B, 1..=100)])?);
+        assert_eq!(vec![3], do_search(vec![(A, 1..=100), (B, 5..=100)])?);
+        assert_eq!(0, do_search(vec![(A, 1..=100), (B, 100..=101)])?.len());
 
         Ok(())
     }

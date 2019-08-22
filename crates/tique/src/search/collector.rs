@@ -181,7 +181,7 @@ impl SegmentCollector for FeatureSegmentCollector {
 
             // Index/Count ranges in the order they were requested
             for (idx, range) in ranges.iter().enumerate() {
-                if value >= range[0] && value <= range[1] {
+                if range.contains(&value) {
                     self.agg
                         .get_mut(*feat as usize)
                         // Guaranteed by the len() check above
@@ -364,10 +364,10 @@ mod tests {
 
         let wanted: AggregationRequest = vec![
             // feature A between ranges 2-10 and 0-5
-            (A, vec![[2, 10], [0, 5]]),
+            (A, vec![2..=10, 0..=5]),
             // and so on...
-            (B, vec![[9, 100], [420, 710]]),
-            (C, vec![[2, 2]]),
+            (B, vec![9..=100, 420..=710]),
+            (C, vec![2..=2]),
             (D, vec![]),
         ];
 
