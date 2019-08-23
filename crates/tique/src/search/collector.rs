@@ -21,27 +21,42 @@ impl Zero for FeatureValue {
     }
 }
 
-fn raw_merge_feature_ranges<'a, T>(dest: &'a mut FeatureRanges<T>, src: &'a FeatureRanges<T>)
+fn merge_feature_ranges<'a, T>(
+    dest: &'a mut FeatureRanges<T>,
+    src: &'a FeatureRanges<T>,
+) -> Result<()>
 where
     T: AddAssign<&'a T> + Zero + Clone,
 {
-    debug_assert_eq!(dest.len(), src.len());
-    // All I'm doing here is summing a sparse x dense matrix. Rice?
-    for (i, mine) in dest.iter_mut().enumerate() {
-        if let Some(ranges) = &src[i] {
-            let dest_ranges = mine.get_or_insert_with(|| vec![T::zero(); ranges.len()]);
-            raw_merge_ranges(dest_ranges, &ranges);
+    if dest.len() == src.len() {
+        // All I'm doing here is summing a sparse x dense matrix. Rice?
+        for (i, mine) in dest.iter_mut().enumerate() {
+            if let Some(ranges) = &src[i] {
+                let dest_ranges = mine.get_or_insert_with(|| vec![T::zero(); ranges.len()]);
+                merge_ranges(dest_ranges, &ranges)?;
+            }
         }
+        Ok(())
+    } else {
+        Err(tantivy::TantivyError::SystemError(
+            "Tried to merge uneven feature ranges".to_owned(),
+        ))
     }
 }
 
-fn raw_merge_ranges<'a, T>(dest: &'a mut [T], src: &'a [T])
+fn merge_ranges<'a, T>(dest: &'a mut [T], src: &'a [T]) -> Result<()>
 where
     T: AddAssign<&'a T>,
 {
-    debug_assert_eq!(dest.len(), src.len());
-    for (i, src_item) in src.iter().enumerate() {
-        dest[i] += src_item;
+    if dest.len() == src.len() {
+        for (i, src_item) in src.iter().enumerate() {
+            dest[i] += src_item;
+        }
+        Ok(())
+    } else {
+        Err(tantivy::TantivyError::SystemError(
+            "Tried to merge uneven range vecs".to_owned(),
+        ))
     }
 }
 
@@ -101,10 +116,10 @@ impl Collector for FeatureCollector<FeatureValue> {
         let mut merged = FeatureRanges::with_capacity(self.agg.len());
         merged.resize(self.agg.len(), None);
 
-        raw_merge_feature_ranges(&mut merged, &self.agg);
+        merge_feature_ranges(&mut merged, &self.agg)?;
 
         for child in children {
-            raw_merge_feature_ranges(&mut merged, &child)
+            merge_feature_ranges(&mut merged, &child)?;
         }
 
         Ok(merged)
@@ -169,36 +184,48 @@ mod tests {
     const D: usize = 3;
 
     #[test]
-    fn range_vec_merge() {
+    fn cannot_merge_uneven_rangevec() {
+        assert!(merge_ranges(&mut vec![0u16], &vec![1, 2]).is_err());
+    }
+
+    #[test]
+    fn cannot_merge_unever_feature_ranges() {
+        assert!(merge_feature_ranges::<u16>(&mut vec![None], &vec![None, None]).is_err());
+    }
+
+    #[test]
+    fn range_vec_merge() -> Result<()> {
         let mut ra = vec![0u16, 0];
         // Merging with a fresh one shouldn't change counts
-        raw_merge_ranges(&mut ra, &vec![0, 0]);
+        merge_ranges(&mut ra, &vec![0, 0])?;
         assert_eq!(0, ra[0]);
         assert_eq!(0, ra[1]);
 
         // Zeroed ra: count should update to be the same as its src
-        raw_merge_ranges(&mut ra, &vec![3, 0]);
+        merge_ranges(&mut ra, &vec![3, 0])?;
         assert_eq!(3, ra[0]);
         assert_eq!(0, ra[1]);
 
         // And everything should increase properly
-        raw_merge_ranges(&mut ra, &vec![417, 710]);
+        merge_ranges(&mut ra, &vec![417, 710])?;
         assert_eq!(420, ra[0]);
         assert_eq!(710, ra[1]);
+
+        Ok(())
     }
 
     #[test]
-    fn feature_ranges_merge() {
+    fn feature_ranges_merge() -> Result<()> {
         let mut a: FeatureRanges<u16> = vec![None, None];
 
-        raw_merge_feature_ranges(&mut a, &vec![None, None]);
+        merge_feature_ranges(&mut a, &vec![None, None])?;
         assert_eq!(None, a[0]);
         assert_eq!(None, a[1]);
 
         // Empty merged with filled: copy
         {
             let src = vec![Some(vec![1]), Some(vec![2, 3])];
-            raw_merge_feature_ranges(&mut a, &src);
+            merge_feature_ranges(&mut a, &src)?;
 
             assert_eq!(Some(vec![1]), a[0]);
             assert_eq!(Some(vec![2, 3]), a[1]);
@@ -207,11 +234,13 @@ mod tests {
         // Non empty: just update ranges
         {
             let src = vec![Some(vec![41]), Some(vec![0, 4])];
-            raw_merge_feature_ranges(&mut a, &src);
+            merge_feature_ranges(&mut a, &src)?;
 
             assert_eq!(Some(vec![42]), a[0]);
             assert_eq!(Some(vec![2, 7]), a[1]);
         }
+
+        Ok(())
     }
 
     #[test]
