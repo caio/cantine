@@ -75,9 +75,9 @@ pub fn query(matches: &ArgMatches) -> io::Result<()> {
     let mut cute_agg: HashMap<Feature, Vec<u16>> = HashMap::new();
     for feat in Feature::VALUES.iter() {
         let idx = *feat as usize;
-        if let Some(counts) = agg.get(idx) {
+        if let Some(counts) = &agg[idx] {
             // i.e.: I want to avoid this clone(). Cow maybe?
-            cute_agg.insert(*feat, counts.inner().clone());
+            cute_agg.insert(*feat, counts.clone());
         }
     }
 

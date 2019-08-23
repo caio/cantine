@@ -74,7 +74,7 @@ impl FeatureIndexFields where {
         request: &SearchRequest,
         query_parser: &QueryParser,
         searcher: &tantivy::Searcher,
-    ) -> Result<(Vec<u64>, FeatureRanges)> {
+    ) -> Result<(Vec<u64>, FeatureRanges<FeatureValue>)> {
         let iquery = self.interpret_request(&request, &query_parser).unwrap();
 
         let (hits, agg) = searcher

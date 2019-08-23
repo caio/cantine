@@ -1,3 +1,5 @@
+use std::ops::AddAssign;
+
 use tantivy::{
     collector::{Collector, SegmentCollector},
     fastfield::BytesFastFieldReader,
@@ -7,134 +9,82 @@ use tantivy::{
 
 use crate::search::{AggregationRequest, FeatureValue, FeatureVector};
 
-#[derive(Debug)]
-pub struct FeatureRanges(Vec<Option<RangeVec>>);
+pub type FeatureRanges<T> = Vec<Option<Vec<T>>>;
 
-impl FeatureRanges {
-    fn merge(&mut self, other: &FeatureRanges) -> Result<()> {
-        let FeatureRanges(inner) = self;
+trait Zero {
+    fn zero() -> Self;
+}
 
-        if inner.len() != other.len() {
-            return Err(tantivy::Error::SystemError(
-                "Cannot merge FeatureRanges of different sizes".to_owned(),
-            ));
-        }
-
-        for i in 0..inner.len() {
-            // For every Some() RangeVec in the other
-            if let Some(other_rv) = &other.get(i) {
-                inner
-                    .get_mut(i)
-                    .expect("Bound by self.len(), should never happen")
-                    .get_or_insert_with(|| RangeVec::new(other_rv.len()))
-                    .merge(other_rv)?;
-            }
-        }
-        Ok(())
-    }
-
-    fn len(&self) -> usize {
-        self.0.len()
-    }
-
-    fn new(size: usize) -> Self {
-        assert!(size != 0);
-        FeatureRanges(vec![None; size])
-    }
-
-    pub fn get(&self, idx: usize) -> &Option<RangeVec> {
-        assert!(idx < self.len());
-        &self.0[idx]
-    }
-
-    fn get_mut(&mut self, idx: usize) -> Option<&mut Option<RangeVec>> {
-        self.0.get_mut(idx)
+impl Zero for FeatureValue {
+    fn zero() -> FeatureValue {
+        0
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct RangeVec(Vec<FeatureValue>);
-
-impl RangeVec {
-    fn new(size: usize) -> Self {
-        assert!(size != 0);
-        RangeVec(vec![0; size])
-    }
-
-    fn merge(&mut self, other: &RangeVec) -> Result<()> {
-        let RangeVec(storage) = self;
-        if storage.len() == other.len() {
-            for i in 0..storage.len() {
-                storage[i] += other.get(i);
-            }
-
-            Ok(())
-        } else {
-            Err(tantivy::TantivyError::SystemError(
-                "Tried to merge RangeVec of different sizes".to_owned(),
-            ))
+fn raw_merge_feature_ranges<'a, T>(dest: &'a mut FeatureRanges<T>, src: &'a FeatureRanges<T>)
+where
+    T: AddAssign<&'a T> + Zero + Clone,
+{
+    debug_assert_eq!(dest.len(), src.len());
+    // All I'm doing here is summing a sparse x dense matrix. Rice?
+    for (i, mine) in dest.iter_mut().enumerate() {
+        if let Some(ranges) = &src[i] {
+            let dest_ranges = mine.get_or_insert_with(|| vec![T::zero(); ranges.len()]);
+            raw_merge_ranges(dest_ranges, &ranges);
         }
-    }
-
-    fn len(&self) -> usize {
-        let RangeVec(storage) = self;
-        storage.len()
-    }
-
-    fn get(&self, idx: usize) -> FeatureValue {
-        assert!(idx < self.len());
-        let RangeVec(storage) = self;
-        storage[idx]
-    }
-
-    fn inc(&mut self, idx: usize) {
-        assert!(idx < self.len());
-        let RangeVec(storage) = self;
-        storage[idx] += 1;
-    }
-
-    pub fn inner(&self) -> &Vec<FeatureValue> {
-        &self.0
     }
 }
 
-pub struct FeatureCollector {
+fn raw_merge_ranges<'a, T>(dest: &'a mut [T], src: &'a [T])
+where
+    T: AddAssign<&'a T>,
+{
+    debug_assert_eq!(dest.len(), src.len());
+    for (i, src_item) in src.iter().enumerate() {
+        dest[i] += src_item;
+    }
+}
+
+pub struct FeatureCollector<T> {
     field: Field,
-    agg: FeatureRanges,
+    agg: FeatureRanges<T>,
     wanted: AggregationRequest,
 }
 
-pub struct FeatureSegmentCollector {
-    agg: FeatureRanges,
+pub struct FeatureSegmentCollector<T> {
+    // do I need agg here?
+    agg: FeatureRanges<T>,
     reader: BytesFastFieldReader,
     wanted: AggregationRequest,
 }
 
-impl FeatureCollector {
+// XXX I can't seem to be able to make <FeatureValue> parametric :(
+
+impl FeatureCollector<FeatureValue> {
     pub fn for_field(
         field: Field,
         num_features: usize,
         wanted: &AggregationRequest,
-    ) -> FeatureCollector {
+    ) -> FeatureCollector<FeatureValue> {
         FeatureCollector {
             field,
             wanted: wanted.clone(),
-            agg: FeatureRanges::new(num_features),
+            agg: vec![None; num_features],
         }
     }
 }
 
-impl Collector for FeatureCollector {
-    type Fruit = FeatureRanges;
-    type Child = FeatureSegmentCollector;
+impl Collector for FeatureCollector<FeatureValue> {
+    type Fruit = FeatureRanges<FeatureValue>;
+    type Child = FeatureSegmentCollector<FeatureValue>;
 
     fn for_segment(
         &self,
         _segment_local_id: u32,
         segment_reader: &SegmentReader,
-    ) -> Result<FeatureSegmentCollector> {
+    ) -> Result<Self::Child> {
         Ok(FeatureSegmentCollector {
-            agg: FeatureRanges::new(self.agg.len()),
+            agg: vec![None; self.agg.len()],
             wanted: self.wanted.clone(),
             reader: segment_reader
                 .fast_fields()
@@ -147,27 +97,34 @@ impl Collector for FeatureCollector {
         false
     }
 
-    fn merge_fruits(&self, children: Vec<FeatureRanges>) -> Result<Self::Fruit> {
-        let mut merged = FeatureRanges::new(self.agg.len());
+    fn merge_fruits(&self, children: Vec<FeatureRanges<FeatureValue>>) -> Result<Self::Fruit> {
+        let mut merged = FeatureRanges::with_capacity(self.agg.len());
+        merged.resize(self.agg.len(), None);
 
-        merged.merge(&self.agg)?;
+        raw_merge_feature_ranges(&mut merged, &self.agg);
 
         for child in children {
-            merged.merge(&child)?;
+            raw_merge_feature_ranges(&mut merged, &child)
         }
 
         Ok(merged)
     }
 }
 
-impl SegmentCollector for FeatureSegmentCollector {
-    type Fruit = FeatureRanges;
+impl SegmentCollector for FeatureSegmentCollector<FeatureValue> {
+    type Fruit = FeatureRanges<FeatureValue>;
 
     fn collect(&mut self, doc: u32, _score: f32) {
         let data = self.reader.get_bytes(doc);
         let doc_features = FeatureVector::parse(self.agg.len(), data).unwrap();
 
         for (feat, ranges) in &self.wanted {
+            // Wanted contains a feature that goes beyond num_features
+            if *feat > self.agg.len() {
+                // XXX Add visibility to when this happens
+                continue;
+            }
+
             let opt = doc_features.get(*feat);
 
             // Document doesn't have this feature: Nothing to do
@@ -177,21 +134,13 @@ impl SegmentCollector for FeatureSegmentCollector {
 
             let value = opt.unwrap();
 
-            // Wanted contains a feature that goes beyond num_features
-            if *feat as usize > self.agg.len() {
-                // XXX Add visibility to when this happens
-                continue;
-            }
-
             // Index/Count ranges in the order they were requested
             for (idx, range) in ranges.iter().enumerate() {
                 if range.contains(&value) {
                     self.agg
-                        .get_mut(*feat as usize)
-                        // Guaranteed by the len() check above
-                        .unwrap()
-                        .get_or_insert_with(|| RangeVec::new(ranges.len()))
-                        .inc(idx);
+                        .get_mut(*feat)
+                        .expect("agg should have been initialized by now")
+                        .get_or_insert_with(|| vec![0; ranges.len()])[idx] += 1;
                 }
             }
         }
@@ -220,105 +169,49 @@ mod tests {
     const D: usize = 3;
 
     #[test]
-    fn cannot_merge_different_sized_range_vecs() {
-        let mut ra = RangeVec::new(1);
-        assert!(ra.merge(&RangeVec::new(2)).is_err());
-    }
-
-    #[test]
-    fn range_vec_basic_usage() {
-        let mut ra = RangeVec::new(1);
-        assert_eq!(1, ra.len());
-
-        assert_eq!(0, ra.get(0));
-        ra.inc(0);
-        assert_eq!(1, ra.get(0));
-        ra.inc(0);
-        assert_eq!(2, ra.get(0));
-    }
-
-    #[test]
-    fn can_wrap_existing_vec() {
-        let ra = RangeVec(vec![1, 0, 3]);
-        assert_eq!(1, ra.get(0));
-        assert_eq!(0, ra.get(1));
-        assert_eq!(3, ra.get(2));
-    }
-
-    #[test]
-    fn range_vec_merge() -> Result<()> {
-        let mut ra = RangeVec::new(2);
-
+    fn range_vec_merge() {
+        let mut ra = vec![0u16, 0];
         // Merging with a fresh one shouldn't change counts
-        ra.merge(&RangeVec::new(2))?;
-        assert_eq!(0, ra.get(0));
-        assert_eq!(0, ra.get(1));
+        raw_merge_ranges(&mut ra, &vec![0, 0]);
+        assert_eq!(0, ra[0]);
+        assert_eq!(0, ra[1]);
 
         // Zeroed ra: count should update to be the same as its src
-        ra.merge(&RangeVec(vec![3, 0]))?;
-        assert_eq!(3, ra.get(0));
-        assert_eq!(0, ra.get(1));
+        raw_merge_ranges(&mut ra, &vec![3, 0]);
+        assert_eq!(3, ra[0]);
+        assert_eq!(0, ra[1]);
 
         // And everything should increase properly
-        ra.merge(&RangeVec(vec![417, 710]))?;
-        assert_eq!(420, ra.get(0));
-        assert_eq!(710, ra.get(1));
-
-        Ok(())
+        raw_merge_ranges(&mut ra, &vec![417, 710]);
+        assert_eq!(420, ra[0]);
+        assert_eq!(710, ra[1]);
     }
 
     #[test]
-    fn feature_ranges_init() {
-        let frs = FeatureRanges::new(2);
-        assert_eq!(2, frs.len());
+    fn feature_ranges_merge() {
+        let mut a: FeatureRanges<u16> = vec![None, None];
 
-        assert_eq!(&None, frs.get(0));
-        assert_eq!(&None, frs.get(1));
-    }
-
-    #[test]
-    fn cannot_merge_different_sized_feature_ranges() {
-        let mut a = FeatureRanges::new(1);
-        assert!(a.merge(&FeatureRanges::new(2)).is_err());
-    }
-
-    #[test]
-    fn cannot_merge_feature_ranges_with_uneven_ranges() {
-        let mut a = FeatureRanges(vec![Some(RangeVec(vec![1]))]);
-        let b = FeatureRanges(vec![Some(RangeVec(vec![1, 2]))]);
-        assert_eq!(a.len(), b.len());
-        // a.len() == b.len(), but the inner ranges aren't even
-        assert!(a.merge(&b).is_err());
-    }
-
-    #[test]
-    fn feature_ranges_merge() -> Result<()> {
-        let mut a = FeatureRanges::new(2);
-
-        // Merge with empty: nothing changes
-        a.merge(&FeatureRanges::new(2))?;
-        assert_eq!(&None, a.get(0));
-        assert_eq!(&None, a.get(1));
+        raw_merge_feature_ranges(&mut a, &vec![None, None]);
+        assert_eq!(None, a[0]);
+        assert_eq!(None, a[1]);
 
         // Empty merged with filled: copy
         {
-            let src = FeatureRanges(vec![Some(RangeVec(vec![1])), Some(RangeVec(vec![2, 3]))]);
-            a.merge(&src)?;
+            let src = vec![Some(vec![1]), Some(vec![2, 3])];
+            raw_merge_feature_ranges(&mut a, &src);
 
-            assert_eq!(&Some(RangeVec(vec![1])), a.get(0));
-            assert_eq!(&Some(RangeVec(vec![2, 3])), a.get(1));
+            assert_eq!(Some(vec![1]), a[0]);
+            assert_eq!(Some(vec![2, 3]), a[1]);
         }
 
         // Non empty: just update ranges
         {
-            let src = FeatureRanges(vec![Some(RangeVec(vec![41])), Some(RangeVec(vec![0, 4]))]);
-            a.merge(&src)?;
+            let src = vec![Some(vec![41]), Some(vec![0, 4])];
+            raw_merge_feature_ranges(&mut a, &src);
 
-            assert_eq!(&Some(RangeVec(vec![42])), a.get(0));
-            assert_eq!(&Some(RangeVec(vec![2, 7])), a.get(1));
+            assert_eq!(Some(vec![42]), a[0]);
+            assert_eq!(Some(vec![2, 7]), a[1]);
         }
-
-        Ok(())
     }
 
     #[test]
@@ -381,13 +274,13 @@ mod tests {
         )?;
 
         // { A => { "2-10": 2, "0-5": 1 } }
-        assert_eq!(&Some(RangeVec(vec![2, 1])), feature_ranges.get(A as usize));
+        assert_eq!(Some(vec![2u16, 1]), feature_ranges[A]);
         // { B => { "9-100": 1, "420-710": 0 } }
-        assert_eq!(&Some(RangeVec(vec![1, 0])), feature_ranges.get(B as usize));
+        assert_eq!(Some(vec![1, 0]), feature_ranges[B]);
         // { C => { "2" => 1 } }
-        assert_eq!(&Some(RangeVec(vec![1])), feature_ranges.get(C as usize));
+        assert_eq!(Some(vec![1]), feature_ranges[C]);
         // Asking to count a feature but providing no ranges should no-op
-        assert_eq!(&None, feature_ranges.get(D as usize));
+        assert_eq!(None, feature_ranges[D]);
 
         Ok(())
     }
