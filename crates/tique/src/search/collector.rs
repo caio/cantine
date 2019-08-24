@@ -113,9 +113,7 @@ impl Collector for FeatureCollector<FeatureValue> {
     }
 
     fn merge_fruits(&self, children: Vec<FeatureRanges<FeatureValue>>) -> Result<Self::Fruit> {
-        let mut merged = FeatureRanges::with_capacity(self.agg.len());
-        merged.resize(self.agg.len(), None);
-
+        let mut merged = vec![None; self.agg.len()];
         merge_feature_ranges(&mut merged, &self.agg)?;
 
         for child in children {
