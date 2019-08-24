@@ -122,7 +122,7 @@ impl FeatureIndexFields where {
                             TantivyError::SystemError("Unknown feature in filters".to_owned())
                         })?,
                         // XXX can't this be less awkward?
-                        *range.start() as u64..(range.end() + 1) as u64,
+                        u64::from(*range.start())..u64::from(range.end() + 1),
                     )),
                 ));
             }
@@ -130,7 +130,7 @@ impl FeatureIndexFields where {
 
         if let Some(fulltext) = &req.query {
             if let Some(boxed_query) = query_parser.parse(fulltext.as_ref())? {
-                if clauses.len() == 0 {
+                if clauses.is_empty() {
                     return Ok(boxed_query);
                 } else {
                     clauses.push((Occur::Must, boxed_query))
@@ -138,7 +138,7 @@ impl FeatureIndexFields where {
             }
         }
 
-        if clauses.len() == 0 {
+        if clauses.is_empty() {
             Ok(Box::new(AllQuery))
         } else {
             let bq: BooleanQuery = clauses.into();
@@ -163,14 +163,14 @@ impl FeatureIndexFields where {
         let mut buf = vec![std::u8::MAX; buf_size];
         let mut fv = FeatureVector::parse(num_features, buf.as_mut_slice()).unwrap();
 
-        features.map(|feats| {
+        if let Some(feats) = features {
             for (feat, value) in feats {
                 fv.set(feat, value).unwrap();
                 if let Some(feature) = self.feature(feat) {
-                    doc.add_u64(feature, value as u64);
+                    doc.add_u64(feature, u64::from(value));
                 }
             }
-        });
+        }
 
         doc.add_bytes(self.feature_vector(), fv.as_bytes().into());
         FeatureDocument(doc)
@@ -262,13 +262,10 @@ mod tests {
 
         let mut writer = index.writer_with_num_threads(1, 40_000_000).unwrap();
 
-        fields.add_document(&mut writer, fields.make_document(1, "one".to_owned(), None));
+        fields.add_document(&writer, fields.make_document(1, "one".to_owned(), None));
+        fields.add_document(&writer, fields.make_document(2, "one two".to_owned(), None));
         fields.add_document(
-            &mut writer,
-            fields.make_document(2, "one two".to_owned(), None),
-        );
-        fields.add_document(
-            &mut writer,
+            &writer,
             fields.make_document(3, "one two three".to_owned(), None),
         );
 
@@ -321,9 +318,9 @@ mod tests {
 
         let mut writer = index.writer_with_num_threads(1, 40_000_000).unwrap();
 
-        let mut do_add = |id: u64, feats| {
+        let do_add = |id: u64, feats| {
             fields.add_document(
-                &mut writer,
+                &writer,
                 fields.make_document(id, "".to_owned(), Some(feats)),
             );
         };
@@ -422,8 +419,8 @@ mod tests {
 
         assert_eq!(expected_len, doc.len());
 
-        if let &Value::U64(doc_id) = doc.get_first(fields.id()).unwrap() {
-            assert_eq!(id, doc_id);
+        if let Value::U64(doc_id) = doc.get_first(fields.id()).unwrap() {
+            assert_eq!(&id, doc_id);
         } else {
             panic!("Id field should be U64(id)");
         }

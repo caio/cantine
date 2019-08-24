@@ -20,19 +20,19 @@ pub enum Token<'a> {
 fn parse_not_phrase(input: &str) -> IResult<&str, Token> {
     map(
         delimited(tag("-\""), take_while1(|c| c != '"'), is_char('"')),
-        |r| Token::NotPhrase(r),
+        Token::NotPhrase,
     )(input)
 }
 
 fn parse_phrase(input: &str) -> IResult<&str, Token> {
     map(
         delimited(is_char('"'), take_while1(|c| c != '"'), is_char('"')),
-        |r| Token::Phrase(r),
+        Token::Phrase,
     )(input)
 }
 
 fn parse_term(input: &str) -> IResult<&str, Token> {
-    map(take_while1(is_term_char), |r| Token::Term(r))(input)
+    map(take_while1(is_term_char), Token::Term)(input)
 }
 
 fn parse_not_term(input: &str) -> IResult<&str, Token> {

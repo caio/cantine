@@ -1,4 +1,4 @@
-use std::ops::AddAssign;
+use std::ops::{AddAssign, RangeInclusive};
 
 use tantivy::{
     collector::{Collector, SegmentCollector},
@@ -23,7 +23,7 @@ impl Zero for FeatureValue {
 
 fn merge_feature_ranges<'a, T>(
     dest: &'a mut FeatureRanges<T>,
-    src: &'a FeatureRanges<T>,
+    src: &'a [Option<Vec<T>>],
 ) -> Result<()>
 where
     T: AddAssign<&'a T> + Zero + Clone,
@@ -79,11 +79,11 @@ impl FeatureCollector<FeatureValue> {
     pub fn for_field(
         field: Field,
         num_features: usize,
-        wanted: &AggregationRequest,
+        wanted: &[(usize, Vec<RangeInclusive<FeatureValue>>)],
     ) -> FeatureCollector<FeatureValue> {
         FeatureCollector {
             field,
-            wanted: wanted.clone(),
+            wanted: wanted.to_vec(),
             agg: vec![None; num_features],
         }
     }
@@ -185,29 +185,29 @@ mod tests {
 
     #[test]
     fn cannot_merge_uneven_rangevec() {
-        assert!(merge_ranges(&mut vec![0u16], &vec![1, 2]).is_err());
+        assert!(merge_ranges(&mut [0u16], &[1, 2]).is_err());
     }
 
     #[test]
     fn cannot_merge_unever_feature_ranges() {
-        assert!(merge_feature_ranges::<u16>(&mut vec![None], &vec![None, None]).is_err());
+        assert!(merge_feature_ranges::<u16>(&mut vec![None], &[None, None]).is_err());
     }
 
     #[test]
     fn range_vec_merge() -> Result<()> {
         let mut ra = vec![0u16, 0];
         // Merging with a fresh one shouldn't change counts
-        merge_ranges(&mut ra, &vec![0, 0])?;
+        merge_ranges(&mut ra, &[0, 0])?;
         assert_eq!(0, ra[0]);
         assert_eq!(0, ra[1]);
 
         // Zeroed ra: count should update to be the same as its src
-        merge_ranges(&mut ra, &vec![3, 0])?;
+        merge_ranges(&mut ra, &[3, 0])?;
         assert_eq!(3, ra[0]);
         assert_eq!(0, ra[1]);
 
         // And everything should increase properly
-        merge_ranges(&mut ra, &vec![417, 710])?;
+        merge_ranges(&mut ra, &[417, 710])?;
         assert_eq!(420, ra[0]);
         assert_eq!(710, ra[1]);
 
@@ -218,7 +218,7 @@ mod tests {
     fn feature_ranges_merge() -> Result<()> {
         let mut a: FeatureRanges<u16> = vec![None, None];
 
-        merge_feature_ranges(&mut a, &vec![None, None])?;
+        merge_feature_ranges(&mut a, &[None, None])?;
         assert_eq!(None, a[0]);
         assert_eq!(None, a[1]);
 

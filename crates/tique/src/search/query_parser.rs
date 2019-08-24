@@ -18,10 +18,7 @@ pub struct QueryParser {
 
 impl QueryParser {
     pub fn new(field: Field, tokenizer: Box<dyn BoxedTokenizer>) -> QueryParser {
-        QueryParser {
-            field: field,
-            tokenizer: tokenizer,
-        }
+        QueryParser { field, tokenizer }
     }
 
     pub fn parse(&self, input: &str) -> Result<Option<Box<dyn Query>>> {
@@ -35,8 +32,9 @@ impl QueryParser {
                 let mut subqueries: Vec<(Occur, Box<dyn Query>)> = Vec::new();
 
                 for tok in parsed {
-                    self.query_from_token(&tok)?
-                        .map(|query| subqueries.push((Occur::Must, query)));
+                    if let Some(query) = self.query_from_token(&tok)? {
+                        subqueries.push((Occur::Must, query));
+                    }
                 }
 
                 let bq: BooleanQuery = subqueries.into();

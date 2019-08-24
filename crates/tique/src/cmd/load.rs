@@ -8,12 +8,12 @@ use crate::{database::BincodeDatabase, search::FeatureIndexFields, CerberusRecip
 
 use clap::{value_t, ArgMatches};
 use serde_json;
-use tantivy::{directory::MmapDirectory, tokenizer::TokenizerManager, Index};
+use tantivy::{directory::MmapDirectory, Index};
 
 pub fn load(matches: &ArgMatches) -> io::Result<()> {
     let output_dir = matches.value_of("output_dir").unwrap();
     let buf_size = value_t!(matches, "buffer_size", usize).unwrap();
-    let commit_every = value_t!(matches, "commit_every", u64).unwrap();
+    let commit_every = value_t!(matches, "commit_every", usize).unwrap();
 
     let base_path = Path::new(output_dir);
     let db_path = base_path.join("database");
@@ -122,12 +122,10 @@ pub fn load(matches: &ArgMatches) -> io::Result<()> {
         println!("FeatureDocuments: finished!");
     });
 
-    let mut docs_added = 0;
     let mut cur = Instant::now();
 
-    for doc in docs {
-        fields.add_document(&mut writer, doc);
-        docs_added += 1;
+    for (docs_added, doc) in docs.iter().enumerate() {
+        fields.add_document(&writer, doc);
 
         if docs_added % commit_every == 0 {
             println!("IndexWriter: Comitting {} documents...", commit_every);
@@ -137,7 +135,7 @@ pub fn load(matches: &ArgMatches) -> io::Result<()> {
             let elapsed = cur.elapsed();
             cur = new;
 
-            let rate = commit_every / elapsed.as_secs();
+            let rate = commit_every as u64 / elapsed.as_secs();
             println!(
                 "IndexWriter: {} Documents so far ({} / sec).",
                 docs_added, rate

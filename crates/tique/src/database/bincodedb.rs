@@ -73,9 +73,9 @@ where
             ))
         } else {
             Ok(BincodeDatabase {
-                index: index,
-                log: log,
-                data: data,
+                index,
+                log,
+                data,
                 _marker: PhantomData,
             })
         }
@@ -103,7 +103,7 @@ where
             None => Ok(None),
 
             Some(&offset) => {
-                let found = self.data.from_offset(offset)?;
+                let found = self.data.at_offset(offset)?;
                 Ok(Some(bincode::deserialize(found).map_err(|_| {
                     io::Error::new(io::ErrorKind::InvalidData, "Failed to deserialize")
                 })?))
@@ -129,7 +129,7 @@ mod tests {
     impl Recipe {
         fn new(id: u64) -> Recipe {
             Recipe {
-                id: id,
+                id,
                 name: "hue".to_owned(),
             }
         }
