@@ -428,7 +428,7 @@ mod tests {
         if let Value::Str(entry) = doc.get_first(fields.fulltext()).unwrap() {
             assert_eq!(&fulltext, entry);
         } else {
-            panic!("Fulltext field should be Vec<String(text)>");
+            panic!("Fulltext field should be Str(text)>");
         };
 
         if num_features > 0 {
