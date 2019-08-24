@@ -18,10 +18,7 @@ impl AppendOnlyMappedFile {
             .append(true)
             .open(path)?;
 
-        let mut db = AppendOnlyMappedFile {
-            file: file,
-            mmap: None,
-        };
+        let mut db = AppendOnlyMappedFile { file, mmap: None };
 
         db.remap()?;
 
@@ -53,15 +50,16 @@ impl AppendOnlyMappedFile {
         Ok(())
     }
 
+    #[cfg(test)]
     pub fn flush(&self) -> Result<()> {
         self.mmap.as_ref().map_or(Ok(()), |mmap| mmap.flush())
     }
 
-    pub fn from_offset(&self, offset: usize) -> Result<&[u8]> {
-        let mmap = self.mmap.as_ref().ok_or(io::Error::new(
-            io::ErrorKind::Other,
-            "No mmap found. File empty?",
-        ))?;
+    pub fn at_offset(&self, offset: usize) -> Result<&[u8]> {
+        let mmap = self
+            .mmap
+            .as_ref()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "No mmap found. File empty?"))?;
 
         if offset > mmap.len() {
             Err(io::Error::new(
@@ -79,8 +77,8 @@ impl AppendOnlyMappedFile {
     {
         match self.mmap.as_ref().map(|m| m.chunks(chunk_size)) {
             None => Ok(()),
-            Some(mut iter) => {
-                while let Some(chunk) = iter.next() {
+            Some(iter) => {
+                for chunk in iter {
                     if !mapper(chunk)? {
                         break;
                     };
@@ -121,7 +119,7 @@ mod tests {
 
     #[test]
     fn cannot_read_empty_db() -> Result<()> {
-        assert!(open_empty()?.from_offset(0).is_err());
+        assert!(open_empty()?.at_offset(0).is_err());
         Ok(())
     }
 
@@ -132,7 +130,7 @@ mod tests {
 
         db.append(data)?;
 
-        assert_eq!(data, db.from_offset(0)?);
+        assert_eq!(data, db.at_offset(0)?);
         Ok(())
     }
 
@@ -159,7 +157,7 @@ mod tests {
         let mut db = open_empty()?;
 
         db.append(&[1, 2, 3, 4, 5])?;
-        assert!(db.from_offset(6).is_err());
+        assert!(db.at_offset(6).is_err());
         Ok(())
     }
 
@@ -176,7 +174,7 @@ mod tests {
 
         let mut db = AppendOnlyMappedFile::new(&db_path)?;
         db.append(&[4, 5])?;
-        assert_eq!(&[1, 2, 3, 4, 5], db.from_offset(0)?);
+        assert_eq!(&[1, 2, 3, 4, 5], db.at_offset(0)?);
 
         Ok(())
     }

@@ -1,8 +1,8 @@
 use std::io;
 
-mod database;
+mod bincodedb;
 mod mapped_file;
 
-pub use database::BincodeDatabase;
+pub use bincodedb::BincodeDatabase;
 
 pub type Result<T> = io::Result<T>;
