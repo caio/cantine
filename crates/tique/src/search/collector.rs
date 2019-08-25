@@ -64,6 +64,7 @@ pub struct FeatureCollector<T> {
     field: Field,
     agg: FeatureRanges<T>,
     wanted: AggregationRequest,
+    unset_value: Option<T>,
 }
 
 pub struct FeatureSegmentCollector<T> {
@@ -71,6 +72,7 @@ pub struct FeatureSegmentCollector<T> {
     agg: FeatureRanges<T>,
     reader: BytesFastFieldReader,
     wanted: AggregationRequest,
+    unset_value: Option<T>,
 }
 
 // XXX I can't seem to be able to make <FeatureValue> parametric :(
@@ -79,12 +81,14 @@ impl FeatureCollector<FeatureValue> {
     pub fn for_field(
         field: Field,
         num_features: usize,
+        unset_value: Option<FeatureValue>,
         wanted: &[(usize, Vec<RangeInclusive<FeatureValue>>)],
     ) -> FeatureCollector<FeatureValue> {
         FeatureCollector {
             field,
             wanted: wanted.to_vec(),
             agg: vec![None; num_features],
+            unset_value,
         }
     }
 }
@@ -105,6 +109,7 @@ impl Collector for FeatureCollector<FeatureValue> {
                 .fast_fields()
                 .bytes(self.field)
                 .expect("Field is not a bytes fast field."),
+            unset_value: self.unset_value,
         })
     }
 
@@ -129,7 +134,7 @@ impl SegmentCollector for FeatureSegmentCollector<FeatureValue> {
 
     fn collect(&mut self, doc: u32, _score: f32) {
         let data = self.reader.get_bytes(doc);
-        let doc_features = FeatureVector::parse(self.agg.len(), data).unwrap();
+        let doc_features = FeatureVector::parse(data, self.agg.len(), self.unset_value).unwrap();
 
         for (feat, ranges) in &self.wanted {
             // Wanted contains a feature that goes beyond num_features
@@ -251,7 +256,7 @@ mod tests {
         let index = Index::create_in_ram(schema);
         let mut writer = index.writer_with_num_threads(1, 40_000_000)?;
 
-        let add_doc = |fv: FeatureVector<&mut [u8], usize>| -> Result<()> {
+        let add_doc = |fv: FeatureVector<&mut [u8], u16>| -> Result<()> {
             let mut doc = Document::default();
             doc.add_bytes(field, fv.as_bytes().to_owned());
             writer.add_document(doc);
@@ -261,12 +266,13 @@ mod tests {
         // And we populate it with a couple of docs where
         // the bytes field is a features::FeatureVector
         let num_features = 4;
-        let empty_buffer = vec![std::u8::MAX; 4 * 2];
+        let empty_buffer = vec![std::u8::MAX; num_features * 2];
+        let unset = Some(std::u16::MAX);
 
         {
             // Doc{ A: 5, B: 10}
             let mut buf = empty_buffer.clone();
-            let mut fv = FeatureVector::parse(num_features, buf.as_mut_slice()).unwrap();
+            let mut fv = FeatureVector::parse(buf.as_mut_slice(), num_features, unset).unwrap();
             fv.set(A, 5).unwrap();
             fv.set(B, 10).unwrap();
             add_doc(fv)?;
@@ -275,7 +281,7 @@ mod tests {
         {
             // Doc{ A: 7, C: 2}
             let mut buf = empty_buffer.clone();
-            let mut fv = FeatureVector::parse(num_features, buf.as_mut_slice()).unwrap();
+            let mut fv = FeatureVector::parse(buf.as_mut_slice(), num_features, unset).unwrap();
             fv.set(A, 7).unwrap();
             fv.set(C, 2).unwrap();
             add_doc(fv)?;
@@ -297,7 +303,7 @@ mod tests {
 
         let feature_ranges = searcher.search(
             &AllQuery,
-            &FeatureCollector::for_field(field, num_features, &wanted),
+            &FeatureCollector::for_field(field, num_features, unset, &wanted),
         )?;
 
         // { A => { "2-10": 2, "0-5": 1 } }

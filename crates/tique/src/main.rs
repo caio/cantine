@@ -58,12 +58,6 @@ impl Into<usize> for Feature {
     }
 }
 
-impl search::IsUnset<u16> for Feature {
-    fn is_unset(val: u16) -> bool {
-        val == std::u16::MAX
-    }
-}
-
 #[derive(Deserialize, Serialize, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct CerberusRecipeModel {

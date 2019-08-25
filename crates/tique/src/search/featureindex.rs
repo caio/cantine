@@ -69,6 +69,10 @@ impl FeatureIndexFields where {
         }
     }
 
+    fn unset_value(&self) -> Option<FeatureValue> {
+        Some(std::u16::MAX)
+    }
+
     pub fn search(
         &self,
         request: &SearchRequest,
@@ -85,6 +89,7 @@ impl FeatureIndexFields where {
                     FeatureCollector::for_field(
                         self.feature_vector(),
                         self.num_features(),
+                        self.unset_value(),
                         &request.agg.as_ref().unwrap_or(&Vec::new()),
                     ),
                 ),
@@ -161,11 +166,13 @@ impl FeatureIndexFields where {
         let buf_size = 2 * self.num_features();
 
         let mut buf = vec![std::u8::MAX; buf_size];
-        let mut fv = FeatureVector::parse(num_features, buf.as_mut_slice()).unwrap();
+        let mut fv: FeatureVector<_, u16> =
+            FeatureVector::parse(buf.as_mut_slice(), num_features, None).unwrap();
 
         if let Some(feats) = features {
             for (feat, value) in feats {
                 fv.set(feat, value).unwrap();
+                // XXX This should always pass
                 if let Some(feature) = self.feature(feat) {
                     doc.add_u64(feature, u64::from(value));
                 }
@@ -434,12 +441,11 @@ mod tests {
         if num_features > 0 {
             if let Value::Bytes(bytes) = doc.get_first(fields.feature_vector()).unwrap() {
                 let mut buf = vec![std::u8::MAX; 4];
-                let mut fv = FeatureVector::parse(2, buf.as_mut_slice()).unwrap();
+                let mut fv: FeatureVector<_, u16> =
+                    FeatureVector::parse(buf.as_mut_slice(), 2, None).unwrap();
 
-                // One for the serialized feature vector
                 for (feat, value) in features {
                     fv.set(feat, value).unwrap();
-                    // And one for every set feature
                 }
 
                 assert_eq!(fv.as_bytes(), bytes.as_slice());

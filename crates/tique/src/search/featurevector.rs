@@ -1,33 +1,29 @@
 use byteorder::{ByteOrder, LittleEndian};
-use std::marker::PhantomData;
 use zerocopy::{AsBytes, ByteSlice, ByteSliceMut};
 
-pub trait IsUnset<T> {
-    fn is_unset(value: T) -> bool;
-}
-
-impl IsUnset<FeatureValue> for usize {
-    fn is_unset(value: FeatureValue) -> bool {
-        value == UNSET_FEATURE
-    }
-}
-
 #[derive(Debug)]
-pub struct FeatureVector<B: ByteSlice, T>(usize, B, PhantomData<T>);
+pub struct FeatureVector<B: ByteSlice, T>(usize, B, Option<T>);
 
 pub type FeatureValue = u16;
-const UNSET_FEATURE: FeatureValue = std::u16::MAX;
 
 impl<B, T> FeatureVector<B, T>
 where
     B: ByteSlice,
-    T: Into<usize> + IsUnset<FeatureValue>,
+    T: PartialEq<FeatureValue>,
 {
-    pub fn parse(num_features: usize, src: B) -> Option<FeatureVector<B, T>> {
-        if num_features == 0 || src.len() < num_features * 2 {
+    fn compute_size(num_features: usize) -> usize {
+        num_features * 2
+    }
+
+    pub fn parse(
+        src: B,
+        num_features: usize,
+        unset_value: Option<T>,
+    ) -> Option<FeatureVector<B, T>> {
+        if num_features == 0 || src.len() < Self::compute_size(num_features) {
             None
         } else {
-            Some(FeatureVector(num_features, src, PhantomData))
+            Some(FeatureVector(num_features, src, unset_value))
         }
     }
 
@@ -35,18 +31,21 @@ where
         LittleEndian::read_u16(buf)
     }
 
-    pub fn get(&self, feature: T) -> Option<FeatureValue> {
-        let idx: usize = feature.into();
+    pub fn get(&self, feature: usize) -> Option<FeatureValue> {
+        if feature >= self.0 {
+            return None;
+        }
 
-        if idx < self.0 {
-            let value = self.read_value(&self.1[idx * 2..]);
-            if T::is_unset(value) {
+        let value = self.read_value(&self.1[feature * 2..]);
+
+        if let Some(unset) = &self.2 {
+            if unset == &value {
                 None
             } else {
                 Some(value)
             }
         } else {
-            None
+            Some(value)
         }
     }
 
@@ -55,14 +54,10 @@ where
     }
 }
 
-impl<B: ByteSliceMut, T> FeatureVector<B, T>
-where
-    T: Into<usize>,
-{
-    pub fn set(&mut self, feature: T, value: FeatureValue) -> Result<(), &'static str> {
-        let idx = feature.into();
-        if idx < self.0 {
-            self.1[idx * 2..idx * 2 + 2].copy_from_slice(value.as_bytes());
+impl<B: ByteSliceMut, T> FeatureVector<B, T> {
+    pub fn set(&mut self, feature: usize, value: FeatureValue) -> Result<(), &'static str> {
+        if feature < self.0 {
+            self.1[feature * 2..feature * 2 + 2].copy_from_slice(value.as_bytes());
             Ok(())
         } else {
             Err("Feature maps to index larger than known buffer")
@@ -79,10 +74,12 @@ mod tests {
 
     const EMPTY_BUFFER: [u8; 8] = [std::u8::MAX; LENGTH * 2];
 
+    const UNSET: Option<u16> = Some(std::u16::MAX);
+
     #[test]
     fn init_ok() {
         let mut buf = EMPTY_BUFFER.to_vec();
-        let vector = FeatureVector::parse(LENGTH, buf.as_mut_slice()).unwrap();
+        let vector = FeatureVector::parse(buf.as_mut_slice(), LENGTH, UNSET).unwrap();
 
         for feat in 0..LENGTH {
             assert_eq!(None, vector.get(feat));
@@ -92,21 +89,21 @@ mod tests {
     #[test]
     fn get_set() {
         let mut buf = EMPTY_BUFFER.to_vec();
-        let mut vector = FeatureVector::parse(LENGTH, buf.as_mut_slice()).unwrap();
+        let mut vector = FeatureVector::parse(buf.as_mut_slice(), LENGTH, UNSET).unwrap();
 
-        for feat in 0..LENGTH {
-            vector.set(feat, feat as FeatureValue).unwrap();
-            assert_eq!(Some(feat as FeatureValue), vector.get(feat));
+        for feat in 0..LENGTH as u16 {
+            vector.set(feat as usize, feat).unwrap();
+            assert_eq!(Some(feat), vector.get(feat as usize));
         }
     }
 
     #[test]
     fn cannot_set_over_num_features() {
         let mut buf = EMPTY_BUFFER.to_vec();
-        let mut features = FeatureVector::parse(1, buf.as_mut_slice()).unwrap();
+        let mut features = FeatureVector::parse(buf.as_mut_slice(), 1, UNSET).unwrap();
 
         // Feature idx 0 should work
-        features.set(0usize, 10).unwrap();
+        features.set(0, 10).unwrap();
 
         // Anything else shouldn't
         assert!(features.set(1, 10).is_err());
@@ -116,7 +113,8 @@ mod tests {
     #[test]
     fn cannot_create_with_num_features_zero() {
         let mut buf = EMPTY_BUFFER.to_vec();
-        let opt_pv: Option<FeatureVector<_, usize>> = FeatureVector::parse(0, buf.as_mut_slice());
+        let opt_pv: Option<FeatureVector<_, u16>> =
+            FeatureVector::parse(buf.as_mut_slice(), 0, None);
         assert!(opt_pv.is_none());
     }
 
@@ -124,9 +122,9 @@ mod tests {
     fn example_usage() {
         let mut buf = EMPTY_BUFFER.to_vec();
 
-        let mut features = FeatureVector::parse(LENGTH, buf.as_mut_slice()).unwrap();
+        let mut features = FeatureVector::parse(buf.as_mut_slice(), LENGTH, UNSET).unwrap();
 
-        features.set(0usize, 10).unwrap();
+        features.set(0, 10).unwrap();
         features.set(1, 60).unwrap();
 
         assert_eq!(Some(10), features.get(0));
@@ -139,8 +137,8 @@ mod tests {
         let mut from_bytes_buf = EMPTY_BUFFER.to_vec();
         from_bytes_buf.copy_from_slice(&bytes[..]);
 
-        let opt: Option<FeatureVector<_, usize>> =
-            FeatureVector::parse(LENGTH, from_bytes_buf.as_slice());
+        let opt: Option<FeatureVector<_, u16>> =
+            FeatureVector::parse(from_bytes_buf.as_slice(), LENGTH, UNSET);
 
         assert!(opt.is_some());
 
@@ -149,4 +147,22 @@ mod tests {
         assert_eq!(bytes, from_bytes.as_bytes());
     }
 
+    #[test]
+    fn without_unset_smoke() {
+        let mut buf = vec![0u8; LENGTH * 2];
+
+        // When parsing without an unset value
+        let mut fv: FeatureVector<_, u16> =
+            FeatureVector::parse(buf.as_mut_slice(), LENGTH, None).unwrap();
+
+        // gets always work
+        for feat in 0..LENGTH {
+            assert_eq!(fv.get(feat), Some(0));
+        }
+
+        assert_eq!(None, fv.get(5));
+
+        fv.set(0, 42).unwrap();
+        assert_eq!(Some(42), fv.get(0));
+    }
 }
