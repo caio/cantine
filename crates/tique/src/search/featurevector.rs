@@ -1,4 +1,5 @@
-use byteorder::{ByteOrder, LittleEndian};
+use byteorder::{ByteOrder, NativeEndian};
+use std::mem::size_of;
 use zerocopy::{AsBytes, ByteSlice, ByteSliceMut};
 
 #[derive(Debug)]
@@ -6,13 +7,29 @@ pub struct FeatureVector<B: ByteSlice, T>(usize, B, Option<T>);
 
 pub type FeatureValue = u16;
 
+pub trait ReadFromSlice<T> {
+    fn read_from_slice(buf: &[u8]) -> T;
+}
+
+impl ReadFromSlice<u16> for u16 {
+    fn read_from_slice(buf: &[u8]) -> Self {
+        NativeEndian::read_u16(buf)
+    }
+}
+
+impl ReadFromSlice<u64> for u64 {
+    fn read_from_slice(buf: &[u8]) -> Self {
+        NativeEndian::read_u64(buf)
+    }
+}
+
 impl<B, T> FeatureVector<B, T>
 where
     B: ByteSlice,
-    T: PartialEq<FeatureValue>,
+    T: PartialEq<T> + AsBytes + Clone + ReadFromSlice<T>,
 {
     fn compute_size(num_features: usize) -> usize {
-        num_features * 2
+        num_features * size_of::<T>()
     }
 
     pub fn parse(
@@ -27,11 +44,11 @@ where
         }
     }
 
-    fn read_value(&self, buf: &[u8]) -> FeatureValue {
-        LittleEndian::read_u16(buf)
+    fn read_value(&self, buf: &[u8]) -> T {
+        T::read_from_slice(buf)
     }
 
-    pub fn get(&self, feature: usize) -> Option<FeatureValue> {
+    pub fn get(&self, feature: usize) -> Option<T> {
         if feature >= self.0 {
             return None;
         }
@@ -54,10 +71,12 @@ where
     }
 }
 
-impl<B: ByteSliceMut, T> FeatureVector<B, T> {
-    pub fn set(&mut self, feature: usize, value: FeatureValue) -> Result<(), &'static str> {
+impl<B: ByteSliceMut, T: AsBytes> FeatureVector<B, T> {
+    pub fn set(&mut self, feature: usize, value: T) -> Result<(), &'static str> {
         if feature < self.0 {
-            self.1[feature * 2..feature * 2 + 2].copy_from_slice(value.as_bytes());
+            let size = size_of::<T>();
+            let start_offset = feature * size;
+            self.1[start_offset..start_offset + size].copy_from_slice(value.as_bytes());
             Ok(())
         } else {
             Err("Feature maps to index larger than known buffer")
@@ -69,16 +88,18 @@ impl<B: ByteSliceMut, T> FeatureVector<B, T> {
 mod tests {
 
     use super::*;
+    use std::u16::MAX;
 
     const LENGTH: usize = 4;
+    const UNSET: Option<u16> = Some(MAX);
 
-    const EMPTY_BUFFER: [u8; 8] = [std::u8::MAX; LENGTH * 2];
-
-    const UNSET: Option<u16> = Some(std::u16::MAX);
+    fn empty_buf() -> Vec<u8> {
+        vec![MAX; LENGTH].as_bytes().into()
+    }
 
     #[test]
     fn init_ok() {
-        let mut buf = EMPTY_BUFFER.to_vec();
+        let mut buf = empty_buf();
         let vector = FeatureVector::parse(buf.as_mut_slice(), LENGTH, UNSET).unwrap();
 
         for feat in 0..LENGTH {
@@ -88,7 +109,7 @@ mod tests {
 
     #[test]
     fn get_set() {
-        let mut buf = EMPTY_BUFFER.to_vec();
+        let mut buf = empty_buf();
         let mut vector = FeatureVector::parse(buf.as_mut_slice(), LENGTH, UNSET).unwrap();
 
         for feat in 0..LENGTH as u16 {
@@ -99,7 +120,7 @@ mod tests {
 
     #[test]
     fn cannot_set_over_num_features() {
-        let mut buf = EMPTY_BUFFER.to_vec();
+        let mut buf = empty_buf();
         let mut features = FeatureVector::parse(buf.as_mut_slice(), 1, UNSET).unwrap();
 
         // Feature idx 0 should work
@@ -112,7 +133,7 @@ mod tests {
 
     #[test]
     fn cannot_create_with_num_features_zero() {
-        let mut buf = EMPTY_BUFFER.to_vec();
+        let mut buf = empty_buf();
         let opt_pv: Option<FeatureVector<_, u16>> =
             FeatureVector::parse(buf.as_mut_slice(), 0, None);
         assert!(opt_pv.is_none());
@@ -120,7 +141,7 @@ mod tests {
 
     #[test]
     fn example_usage() {
-        let mut buf = EMPTY_BUFFER.to_vec();
+        let mut buf = empty_buf();
 
         let mut features = FeatureVector::parse(buf.as_mut_slice(), LENGTH, UNSET).unwrap();
 
@@ -132,9 +153,7 @@ mod tests {
         assert_eq!(None, features.get(2));
 
         let bytes = features.as_bytes();
-        assert_eq!(EMPTY_BUFFER.len(), bytes.len());
-
-        let mut from_bytes_buf = EMPTY_BUFFER.to_vec();
+        let mut from_bytes_buf = empty_buf();
         from_bytes_buf.copy_from_slice(&bytes[..]);
 
         let opt: Option<FeatureVector<_, u16>> =
