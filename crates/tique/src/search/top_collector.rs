@@ -1,9 +1,13 @@
 use std::{cmp::Ordering, collections::BinaryHeap};
-use tantivy::{DocAddress, DocId, Result, Score, SegmentLocalId, SegmentReader};
+use tantivy::{
+    collector::{Collector, SegmentCollector},
+    DocAddress, DocId, Result, Score, SegmentLocalId, SegmentReader,
+};
 
 /// This is pretty much tantivy's TopCollector and friends, tweaked to:
 ///   * Have a stable ordering, using DocAddress to break even scores
 ///   * Support pagination via a SearchMarker, without pages or offsets
+/// And specialized fixed on score to make things easier for now
 
 struct StableComparableDoc<D> {
     feature: Score,
@@ -28,7 +32,7 @@ impl SearchMarker {
             // Given document has a score higher than the marker: it should have
             // definitely appeared in the results
             Some(Ordering::Less) => true,
-            // No document with lower score should appeared before the marker
+            // No document with lower score appears before the marker
             _ => false,
         }
     }
@@ -75,29 +79,25 @@ pub struct TopCollector {
 }
 
 impl TopCollector {
-    /// Creates a top collector, with a number of documents equal to "limit".
-    ///
-    /// # Panics
-    /// The method panics if limit is 0
     pub fn with_limit(limit: usize, after: Option<SearchMarker>) -> TopCollector {
         if limit < 1 {
             panic!("Limit must be strictly greater than 0.");
         }
         TopCollector { limit, after }
     }
+}
 
-    pub fn limit(&self) -> usize {
-        self.limit
+impl Collector for TopCollector {
+    type Fruit = Vec<(Score, DocAddress)>;
+    type Child = TopSegmentCollector;
+
+    fn requires_scoring(&self) -> bool {
+        true
     }
 
-    pub fn merge_fruits(
-        &self,
-        children: Vec<Vec<(Score, DocAddress)>>,
-    ) -> Result<Vec<(Score, DocAddress)>> {
-        if self.limit == 0 {
-            return Ok(Vec::new());
-        }
+    fn merge_fruits(&self, children: Vec<Self::Fruit>) -> Result<Self::Fruit> {
         let mut top_collector = BinaryHeap::new();
+
         for child_fruit in children {
             for (feature, doc) in child_fruit {
                 if top_collector.len() < self.limit {
@@ -113,6 +113,7 @@ impl TopCollector {
                 }
             }
         }
+
         Ok(top_collector
             .into_sorted_vec()
             .into_iter()
@@ -120,11 +121,7 @@ impl TopCollector {
             .collect())
     }
 
-    pub fn for_segment<F: PartialOrd>(
-        &self,
-        segment_id: SegmentLocalId,
-        _: &SegmentReader,
-    ) -> Result<TopSegmentCollector> {
+    fn for_segment(&self, segment_id: SegmentLocalId, _: &SegmentReader) -> Result<Self::Child> {
         Ok(TopSegmentCollector::new(
             segment_id,
             self.limit,
@@ -154,27 +151,17 @@ impl TopSegmentCollector {
         }
     }
 
-    pub fn harvest(self) -> Vec<(Score, DocAddress)> {
-        let segment_id = self.segment_id;
-        self.heap
-            .into_sorted_vec()
-            .into_iter()
-            .map(|comparable_doc| {
-                (
-                    comparable_doc.feature,
-                    DocAddress(segment_id, comparable_doc.doc),
-                )
-            })
-            .collect()
-    }
-
     #[cfg(test)]
     fn len(&self) -> usize {
         self.heap.len()
     }
+}
+
+impl SegmentCollector for TopSegmentCollector {
+    type Fruit = Vec<(Score, DocAddress)>;
 
     #[inline(always)]
-    pub fn collect(&mut self, doc: DocId, feature: Score) {
+    fn collect(&mut self, doc: DocId, feature: Score) {
         if let Some(marker) = &self.after {
             if marker.has_seen(feature, self.segment_id, doc) {
                 return;
@@ -198,12 +185,25 @@ impl TopSegmentCollector {
             self.heap.push(StableComparableDoc { feature, doc });
         }
     }
+
+    fn harvest(self) -> Self::Fruit {
+        let segment_id = self.segment_id;
+        self.heap
+            .into_sorted_vec()
+            .into_iter()
+            .map(|comparable_doc| {
+                (
+                    comparable_doc.feature,
+                    DocAddress(segment_id, comparable_doc.doc),
+                )
+            })
+            .collect()
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{SearchMarker, TopSegmentCollector};
-    use tantivy::DocAddress;
+    use super::*;
 
     #[test]
     fn test_top_collector_not_at_capacity() {
@@ -316,5 +316,33 @@ mod tests {
             vec![(0.5, DocAddress(0, 6)), (0.0, DocAddress(0, 1))],
             collector.harvest()
         );
+    }
+
+    #[test]
+    fn fruits_are_merged_correctly() {
+        let collector = TopCollector::with_limit(5, None);
+
+        let merged = collector
+            .merge_fruits(vec![
+                vec![(0.5, DocAddress(0, 1))],
+                // S1 has a doc that scored the same as S0, so
+                // it should only appear *after* the one in S0
+                vec![(0.5, DocAddress(1, 1)), (0.6, DocAddress(1, 2))],
+                // S2 has two evenly scored docs, the one with
+                // the lowest internal id should appear first
+                vec![(0.2, DocAddress(2, 2)), (0.2, DocAddress(2, 1))],
+            ])
+            .unwrap();
+
+        assert_eq!(
+            vec![
+                (0.6, DocAddress(1, 2)),
+                (0.5, DocAddress(0, 1)),
+                (0.5, DocAddress(1, 1)),
+                (0.2, DocAddress(2, 1)),
+                (0.2, DocAddress(2, 2))
+            ],
+            merged
+        )
     }
 }
