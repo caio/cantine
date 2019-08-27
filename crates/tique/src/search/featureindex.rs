@@ -3,7 +3,6 @@ use std::{ops::RangeInclusive, path::PathBuf};
 use serde::{Deserialize, Serialize};
 
 use tantivy::{
-    collector::TopDocs,
     directory::MmapDirectory,
     query::{AllQuery, BooleanQuery, Occur, Query, RangeQuery},
     schema::{
@@ -14,7 +13,8 @@ use tantivy::{
 };
 
 use crate::search::{
-    collector::FeatureCollector, FeatureRanges, FeatureValue, FeatureVector, QueryParser, Result,
+    collector::FeatureCollector, top_collector::TopCollector, FeatureRanges, FeatureValue,
+    FeatureVector, QueryParser, Result,
 };
 
 #[derive(Clone)]
@@ -85,7 +85,8 @@ impl FeatureIndexFields where {
             .search(
                 &iquery,
                 &(
-                    TopDocs::with_limit(request.page_size.unwrap_or(10) as usize),
+                    // FIXME accept a SearchMarker instead of hardcoding None
+                    TopCollector::with_limit(request.page_size.unwrap_or(10) as usize, None),
                     FeatureCollector::for_field(
                         self.feature_vector(),
                         self.num_features(),
@@ -293,8 +294,7 @@ mod tests {
                 query: Some(term.to_owned()),
                 ..Default::default()
             };
-            let (mut result, _agg) = fields.search(&query, &query_parser, &searcher).unwrap();
-            result.sort();
+            let (result, _agg) = fields.search(&query, &query_parser, &searcher).unwrap();
             Ok(result)
         };
 
@@ -349,8 +349,7 @@ mod tests {
                 filter: Some(feats),
                 ..Default::default()
             };
-            let (mut result, _) = fields.search(&query, &parser, &searcher)?;
-            result.sort();
+            let (result, _) = fields.search(&query, &parser, &searcher)?;
             Ok(result)
         };
 
