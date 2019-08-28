@@ -1,6 +1,0 @@
-table Recipe {
-  id:ulong;
-  name:string;
-}
-
-root_type Recipe;
