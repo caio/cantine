@@ -7,33 +7,27 @@ use tantivy::{
     Result, SegmentReader,
 };
 
-use crate::search::{AggregationRequest, FeatureValue, FeatureVector};
+use crate::search::{FeatureValue, FeatureVector};
+pub type AggregationRequest = Vec<(usize, Vec<RangeInclusive<FeatureValue>>)>;
 
 pub type FeatureRanges<T> = Vec<Option<Vec<T>>>;
-
-trait Zero {
-    fn zero() -> Self;
-}
-
-impl Zero for FeatureValue {
-    fn zero() -> FeatureValue {
-        0
-    }
-}
 
 fn merge_feature_ranges<'a, T>(
     dest: &'a mut FeatureRanges<T>,
     src: &'a [Option<Vec<T>>],
 ) -> Result<()>
 where
-    T: AddAssign<&'a T> + Zero + Clone,
+    T: AddAssign<&'a T> + Clone,
 {
     if dest.len() == src.len() {
         // All I'm doing here is summing a sparse x dense matrix. Rice?
         for (i, mine) in dest.iter_mut().enumerate() {
             if let Some(ranges) = &src[i] {
-                let dest_ranges = mine.get_or_insert_with(|| vec![T::zero(); ranges.len()]);
-                merge_ranges(dest_ranges, &ranges)?;
+                if let Some(current) = mine {
+                    merge_ranges(current, &ranges)?;
+                } else {
+                    mine.replace(ranges.clone());
+                }
             }
         }
         Ok(())
