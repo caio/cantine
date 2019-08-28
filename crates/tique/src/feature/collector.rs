@@ -7,7 +7,7 @@ use tantivy::{
     Result, SegmentReader,
 };
 
-use crate::search::{FeatureValue, FeatureVector};
+use super::{FeatureValue, FeatureVector};
 pub type AggregationRequest = Vec<(usize, Vec<RangeInclusive<FeatureValue>>)>;
 
 pub type FeatureRanges<T> = Vec<Option<Vec<T>>>;

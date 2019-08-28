@@ -1,32 +1,23 @@
-use std::{mem::size_of, ops::RangeInclusive, path::PathBuf};
-
-use serde::{Deserialize, Serialize};
+use std::{mem::size_of, ops::RangeInclusive};
 
 use tantivy::{
-    directory::MmapDirectory,
-    query::{AllQuery, BooleanQuery, Occur, Query, RangeQuery},
-    schema::{
-        Field, IndexRecordOption, Schema, SchemaBuilder, TextFieldIndexing, TextOptions, FAST,
-        INDEXED, STORED,
-    },
-    Document, Index, IndexWriter, TantivyError,
+    query::{BooleanQuery, Occur, Query, RangeQuery},
+    schema::{Field, SchemaBuilder, INDEXED},
+    Document, Result, TantivyError,
 };
 
-use crate::search::{
-    collector::FeatureCollector, top_collector::TopCollector, FeatureRanges, FeatureValue,
-    FeatureVector, QueryParser, Result,
-};
+use super::{FeatureValue, FeatureVector};
 
 #[derive(Clone)]
-pub struct FeatureIndexFields(Vec<Field>, Option<FeatureValue>);
+pub struct FeatureFields(Vec<Field>, Option<FeatureValue>);
 
 // TODO make it all composable!
 //      Interface should be able to:
 //         - LOAD from tantivy::Index
 //         - NEW from SchemaBuilder, and a prefix so I can actually reliably load?
 //         - Persist parameters? Or require them for loading?
-impl FeatureIndexFields {
-    // TODO try_from(index) -> FeatureIndexFields
+impl FeatureFields {
+    // TODO try_from(index) -> FeatureFields
     // FIXME what about a default value?
     pub fn create(
         builder: &mut SchemaBuilder,
@@ -35,7 +26,7 @@ impl FeatureIndexFields {
         unset_value: Option<FeatureValue>,
         // FIXME how to make them sortable? Wire from the outside?
         // DEFAULT VALUE + DEFAULT_MEANS_EMPTY
-    ) -> FeatureIndexFields {
+    ) -> FeatureFields {
         assert!(num_features > 0, "num_features must be >0");
 
         let mut fields = Vec::with_capacity(1 + num_features);
@@ -46,7 +37,7 @@ impl FeatureIndexFields {
             fields.push(builder.add_u64_field(&format!("{}feat_{}", prefix, i).as_str(), INDEXED));
         }
 
-        FeatureIndexFields(fields, unset_value)
+        FeatureFields(fields, unset_value)
     }
 
     pub fn feature_vector(&self) -> Field {
@@ -130,10 +121,11 @@ pub type FilterRequest = Vec<(usize, RangeInclusive<FeatureValue>)>;
 mod tests {
 
     use super::*;
+    use tantivy::schema::Schema;
 
-    fn test_fields(num_features: usize) -> (Schema, FeatureIndexFields) {
+    fn test_fields(num_features: usize) -> (Schema, FeatureFields) {
         let mut builder = SchemaBuilder::new();
-        let fields = FeatureIndexFields::create(&mut builder, "prefix", num_features, None);
+        let fields = FeatureFields::create(&mut builder, "prefix", num_features, None);
         (builder.build(), fields)
     }
 
