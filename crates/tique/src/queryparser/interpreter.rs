@@ -1,15 +1,12 @@
-use crate::search::parser::{parse_query, Token};
+use super::parser::{parse_query, Token};
 
 use tantivy::{
     self,
     query::{AllQuery, BooleanQuery, Occur, PhraseQuery, Query, TermQuery},
     schema::{Field, IndexRecordOption},
     tokenizer::BoxedTokenizer,
-    Term,
+    Result, Term,
 };
-
-// TODO stop using tantivy's Result
-type Result<T> = super::Result<T>;
 
 pub struct QueryParser {
     field: Field,
