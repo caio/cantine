@@ -26,18 +26,14 @@ impl ReadFromSlice<u64> for u64 {
 impl<B, T> FeatureVector<B, T>
 where
     B: ByteSlice,
-    T: PartialEq<T> + AsBytes + Clone + ReadFromSlice<T>,
+    T: PartialEq<T> + AsBytes + Copy + ReadFromSlice<T>,
 {
-    fn compute_size(num_features: usize) -> usize {
-        num_features * size_of::<T>()
-    }
-
     pub fn parse(
         src: B,
         num_features: usize,
         unset_value: Option<T>,
     ) -> Option<FeatureVector<B, T>> {
-        if num_features == 0 || src.len() < Self::compute_size(num_features) {
+        if num_features == 0 || src.len() < num_features * size_of::<T>() {
             None
         } else {
             Some(FeatureVector(num_features, src, unset_value))
@@ -53,7 +49,10 @@ where
             return None;
         }
 
-        let value = self.read_value(&self.1[feature * 2..]);
+        let start_offset = feature * size_of::<T>();
+        let end_offset = start_offset + size_of::<T>();
+
+        let value = self.read_value(&self.1[start_offset..end_offset]);
 
         if let Some(unset) = &self.2 {
             if unset == &value {
@@ -183,5 +182,19 @@ mod tests {
 
         fv.set(0, 42).unwrap();
         assert_eq!(Some(42), fv.get(0));
+    }
+
+    #[test]
+    fn u64_works() {
+        let mut buf = vec![0u8; 10 * size_of::<u64>()];
+        let mut fv: FeatureVector<_, u64> =
+            FeatureVector::parse(buf.as_mut_slice(), 10, Some(0)).unwrap();
+
+        for feat in 0..10 {
+            assert_eq!(None, fv.get(feat));
+            let target = feat as u64 + 1;
+            fv.set(feat, target).unwrap();
+            assert_eq!(Some(target), fv.get(feat));
+        }
     }
 }
