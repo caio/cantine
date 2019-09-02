@@ -132,7 +132,7 @@ macro_rules! collector_impl {
             fn collect(&mut self, doc: u32, _score: f32) {
                 let data = self.reader.get_bytes(doc);
                 let doc_features =
-                    FeatureVector::parse(data, self.agg.len(), self.unset_value).unwrap();
+                    FeatureVector::<_, $t>::parse(data, self.agg.len(), self.unset_value).unwrap();
 
                 for (feat, ranges) in &self.wanted {
                     // Wanted contains a feature that goes beyond num_features
@@ -275,7 +275,8 @@ mod tests {
         {
             // Doc{ A: 5, B: 10}
             let mut buf = empty_buffer.clone();
-            let mut fv = FeatureVector::parse(buf.as_mut_slice(), num_features, unset).unwrap();
+            let mut fv =
+                FeatureVector::<_, u16>::parse(buf.as_mut_slice(), num_features, unset).unwrap();
             fv.set(A, 5).unwrap();
             fv.set(B, 10).unwrap();
             add_doc(fv)?;
@@ -284,7 +285,8 @@ mod tests {
         {
             // Doc{ A: 7, C: 2}
             let mut buf = empty_buffer.clone();
-            let mut fv = FeatureVector::parse(buf.as_mut_slice(), num_features, unset).unwrap();
+            let mut fv =
+                FeatureVector::<_, u16>::parse(buf.as_mut_slice(), num_features, unset).unwrap();
             fv.set(A, 7).unwrap();
             fv.set(C, 2).unwrap();
             add_doc(fv)?;

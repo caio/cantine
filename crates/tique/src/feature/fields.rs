@@ -94,8 +94,8 @@ impl FeatureFields {
         }
 
         let mut buf = vec![0; num_features * size_of::<u16>()];
-        let mut fv: FeatureVector<_, u16> =
-            FeatureVector::parse(buf.as_mut_slice(), num_features, None).unwrap();
+        let mut fv =
+            FeatureVector::<_, u16>::parse(buf.as_mut_slice(), num_features, None).unwrap();
 
         for (feat, value) in features {
             fv.set(feat, value).unwrap();
