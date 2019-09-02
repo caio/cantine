@@ -169,29 +169,27 @@ mod tests {
         assert_eq!(Some(42), fv.get(0));
     }
 
-    #[test]
-    fn u64_works() {
-        let mut buf = vec![0u8; 10 * size_of::<u64>()];
-        let mut fv = FeatureVector::<_, u64>::parse(buf.as_mut_slice(), 10, Some(0)).unwrap();
+    macro_rules! check_fv_get_set {
+        ($t: ty, $vals: expr) => {
+            let mut buf = vec![0u8; $vals.len() * size_of::<$t>()];
+            let mut fv =
+                FeatureVector::<_, $t>::parse(buf.as_mut_slice(), $vals.len(), Some(0)).unwrap();
 
-        for feat in 0..10 {
-            assert_eq!(None, fv.get(feat));
-            let target = feat as u64 + 1;
-            fv.set(feat, target).unwrap();
-            assert_eq!(Some(target), fv.get(feat));
-        }
+            for feat in 0..$vals.len() {
+                assert_eq!(None, fv.get(feat));
+                fv.set(feat, $vals[feat]).unwrap();
+                assert_eq!(Some($vals[feat]), fv.get(feat));
+            }
+        };
     }
 
     #[test]
-    fn signed_smoke() {
-        let mut buf = vec![0u8; 10 * size_of::<i32>()];
-        let mut fv = FeatureVector::<_, i32>::parse(buf.as_mut_slice(), 10, Some(0)).unwrap();
-
-        for feat in 0..10 {
-            assert_eq!(None, fv.get(feat));
-            let target = feat as i32 - 42;
-            fv.set(feat, target).unwrap();
-            assert_eq!(Some(target), fv.get(feat));
-        }
+    fn get_set_all_supported_types() {
+        check_fv_get_set!(u16, [1, 2, 3, 4]);
+        check_fv_get_set!(u32, [1, 2, 3, 4]);
+        check_fv_get_set!(u64, [1, 2, 3, 4]);
+        check_fv_get_set!(i16, [-1, 2, -3, 4]);
+        check_fv_get_set!(i32, [-1, 2, -3, 4]);
+        check_fv_get_set!(i64, [-1, 2, -3, 4]);
     }
 }
