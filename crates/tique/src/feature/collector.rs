@@ -170,7 +170,11 @@ macro_rules! collector_impl {
 }
 
 collector_impl!(u16);
+collector_impl!(u32);
 collector_impl!(u64);
+collector_impl!(i16);
+collector_impl!(i32);
+collector_impl!(i64);
 
 #[cfg(test)]
 mod tests {

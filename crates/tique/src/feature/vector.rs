@@ -64,7 +64,11 @@ macro_rules! feature_vector {
 }
 
 feature_vector!(u16, NativeEndian::read_u16);
+feature_vector!(u32, NativeEndian::read_u32);
 feature_vector!(u64, NativeEndian::read_u64);
+feature_vector!(i16, NativeEndian::read_i16);
+feature_vector!(i32, NativeEndian::read_i32);
+feature_vector!(i64, NativeEndian::read_i64);
 
 #[cfg(test)]
 mod tests {
@@ -173,6 +177,19 @@ mod tests {
         for feat in 0..10 {
             assert_eq!(None, fv.get(feat));
             let target = feat as u64 + 1;
+            fv.set(feat, target).unwrap();
+            assert_eq!(Some(target), fv.get(feat));
+        }
+    }
+
+    #[test]
+    fn signed_smoke() {
+        let mut buf = vec![0u8; 10 * size_of::<i32>()];
+        let mut fv = FeatureVector::<_, i32>::parse(buf.as_mut_slice(), 10, Some(0)).unwrap();
+
+        for feat in 0..10 {
+            assert_eq!(None, fv.get(feat));
+            let target = feat as i32 - 42;
             fv.set(feat, target).unwrap();
             assert_eq!(Some(target), fv.get(feat));
         }
