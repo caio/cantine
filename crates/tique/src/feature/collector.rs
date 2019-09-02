@@ -7,9 +7,9 @@ use tantivy::{
     Result, SegmentReader,
 };
 
-use super::{FeatureValue, FeatureVector};
-pub type AggregationRequest = Vec<(usize, Vec<RangeInclusive<FeatureValue>>)>;
+use super::FeatureVector;
 
+pub type AggregationRequest<T> = Vec<(usize, Vec<RangeInclusive<T>>)>;
 pub type FeatureRanges<T> = Vec<Option<Vec<T>>>;
 
 fn merge_feature_ranges<'a, T>(
@@ -57,7 +57,7 @@ where
 pub struct FeatureCollector<T> {
     field: Field,
     agg: FeatureRanges<T>,
-    wanted: AggregationRequest,
+    wanted: AggregationRequest<T>,
     unset_value: Option<T>,
 }
 
@@ -65,19 +65,20 @@ pub struct FeatureSegmentCollector<T> {
     // do I need agg here?
     agg: FeatureRanges<T>,
     reader: BytesFastFieldReader,
-    wanted: AggregationRequest,
+    wanted: AggregationRequest<T>,
     unset_value: Option<T>,
 }
 
-// XXX I can't seem to be able to make <FeatureValue> parametric :(
-
-impl FeatureCollector<FeatureValue> {
+impl<T> FeatureCollector<T>
+where
+    for<'a> T: Copy + AddAssign<&'a T>,
+{
     pub fn for_field(
         field: Field,
         num_features: usize,
-        unset_value: Option<FeatureValue>,
-        wanted: &[(usize, Vec<RangeInclusive<FeatureValue>>)],
-    ) -> FeatureCollector<FeatureValue> {
+        unset_value: Option<T>,
+        wanted: &[(usize, Vec<RangeInclusive<T>>)],
+    ) -> FeatureCollector<T> {
         FeatureCollector {
             field,
             wanted: wanted.to_vec(),
@@ -87,81 +88,89 @@ impl FeatureCollector<FeatureValue> {
     }
 }
 
-impl Collector for FeatureCollector<FeatureValue> {
-    type Fruit = FeatureRanges<FeatureValue>;
-    type Child = FeatureSegmentCollector<FeatureValue>;
+macro_rules! collector_impl {
+    ($t: ty) => {
+        impl Collector for FeatureCollector<$t> {
+            type Fruit = FeatureRanges<$t>;
+            type Child = FeatureSegmentCollector<$t>;
 
-    fn for_segment(
-        &self,
-        _segment_local_id: u32,
-        segment_reader: &SegmentReader,
-    ) -> Result<Self::Child> {
-        Ok(FeatureSegmentCollector {
-            agg: vec![None; self.agg.len()],
-            wanted: self.wanted.clone(),
-            reader: segment_reader
-                .fast_fields()
-                .bytes(self.field)
-                .expect("Field is not a bytes fast field."),
-            unset_value: self.unset_value,
-        })
-    }
+            fn for_segment(
+                &self,
+                _segment_local_id: u32,
+                segment_reader: &SegmentReader,
+            ) -> Result<Self::Child> {
+                Ok(FeatureSegmentCollector {
+                    agg: vec![None; self.agg.len()],
+                    wanted: self.wanted.clone(),
+                    reader: segment_reader
+                        .fast_fields()
+                        .bytes(self.field)
+                        .expect("Field is not a bytes fast field."),
+                    unset_value: self.unset_value,
+                })
+            }
 
-    fn requires_scoring(&self) -> bool {
-        false
-    }
+            fn requires_scoring(&self) -> bool {
+                false
+            }
 
-    fn merge_fruits(&self, children: Vec<FeatureRanges<FeatureValue>>) -> Result<Self::Fruit> {
-        let mut merged = vec![None; self.agg.len()];
-        merge_feature_ranges(&mut merged, &self.agg)?;
+            fn merge_fruits(&self, children: Vec<Self::Fruit>) -> Result<Self::Fruit> {
+                let mut merged = vec![None; self.agg.len()];
+                merge_feature_ranges(&mut merged, &self.agg)?;
 
-        for child in children {
-            merge_feature_ranges(&mut merged, &child)?;
+                for child in children {
+                    merge_feature_ranges(&mut merged, &child)?;
+                }
+
+                Ok(merged)
+            }
         }
 
-        Ok(merged)
-    }
-}
+        impl SegmentCollector for FeatureSegmentCollector<$t> {
+            type Fruit = FeatureRanges<$t>;
 
-impl SegmentCollector for FeatureSegmentCollector<FeatureValue> {
-    type Fruit = FeatureRanges<FeatureValue>;
+            fn collect(&mut self, doc: u32, _score: f32) {
+                let data = self.reader.get_bytes(doc);
+                let doc_features =
+                    FeatureVector::parse(data, self.agg.len(), self.unset_value).unwrap();
 
-    fn collect(&mut self, doc: u32, _score: f32) {
-        let data = self.reader.get_bytes(doc);
-        let doc_features = FeatureVector::parse(data, self.agg.len(), self.unset_value).unwrap();
+                for (feat, ranges) in &self.wanted {
+                    // Wanted contains a feature that goes beyond num_features
+                    if *feat > self.agg.len() {
+                        // XXX Add visibility to when this happens
+                        continue;
+                    }
 
-        for (feat, ranges) in &self.wanted {
-            // Wanted contains a feature that goes beyond num_features
-            if *feat > self.agg.len() {
-                // XXX Add visibility to when this happens
-                continue;
-            }
+                    let opt = doc_features.get(*feat);
 
-            let opt = doc_features.get(*feat);
+                    // Document doesn't have this feature: Nothing to do
+                    if opt.is_none() {
+                        continue;
+                    }
 
-            // Document doesn't have this feature: Nothing to do
-            if opt.is_none() {
-                continue;
-            }
+                    let value = opt.unwrap();
 
-            let value = opt.unwrap();
-
-            // Index/Count ranges in the order they were requested
-            for (idx, range) in ranges.iter().enumerate() {
-                if range.contains(&value) {
-                    self.agg
-                        .get_mut(*feat)
-                        .expect("agg should have been initialized by now")
-                        .get_or_insert_with(|| vec![0; ranges.len()])[idx] += 1;
+                    // Index/Count ranges in the order they were requested
+                    for (idx, range) in ranges.iter().enumerate() {
+                        if range.contains(&value) {
+                            self.agg
+                                .get_mut(*feat)
+                                .expect("agg should have been initialized by now")
+                                .get_or_insert_with(|| vec![0; ranges.len()])[idx] += 1;
+                        }
+                    }
                 }
             }
-        }
-    }
 
-    fn harvest(self) -> <Self as SegmentCollector>::Fruit {
-        self.agg
-    }
+            fn harvest(self) -> <Self as SegmentCollector>::Fruit {
+                self.agg
+            }
+        }
+    };
 }
+
+collector_impl!(u16);
+collector_impl!(u64);
 
 #[cfg(test)]
 mod tests {
@@ -286,7 +295,7 @@ mod tests {
         let reader = index.reader()?;
         let searcher = reader.searcher();
 
-        let wanted: AggregationRequest = vec![
+        let wanted: AggregationRequest<u16> = vec![
             // feature A between ranges 2-10 and 0-5
             (A, vec![2..=10, 0..=5]),
             // and so on...
