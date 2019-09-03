@@ -56,10 +56,10 @@ impl FeatureFields {
         }
     }
 
-    pub fn interpret_request(&self, filters: &FilterRequest) -> Result<Box<dyn Query>> {
+    pub fn interpret_request(&self, filters: FilterRequest) -> Result<Box<dyn Query>> {
         let mut clauses: Vec<(Occur, Box<dyn Query>)> = Vec::new();
 
-        for (feat, range) in filters {
+        for (feat, range) in &filters {
             clauses.push((
                 Occur::Must,
                 Box::new(RangeQuery::new_u64(
