@@ -23,7 +23,7 @@ impl QueryParser {
             .map_err(|e| tantivy::TantivyError::InvalidArgument(format!("{:?}", e)))?;
 
         Ok(match parsed.len() {
-            0 => Some(Box::new(AllQuery)),
+            0 => None,
             1 => self.query_from_token(&parsed[0])?,
             _ => {
                 let mut subqueries: Vec<(Occur, Box<dyn Query>)> = Vec::new();
@@ -34,8 +34,17 @@ impl QueryParser {
                     }
                 }
 
-                let bq: BooleanQuery = subqueries.into();
-                Some(Box::new(bq))
+                match subqueries.len() {
+                    0 => None,
+                    1 => {
+                        let single = subqueries.pop().expect("Element always present");
+                        Some(single.1)
+                    }
+                    _ => {
+                        let bq: BooleanQuery = subqueries.into();
+                        Some(Box::new(bq))
+                    }
+                }
             }
         })
     }
@@ -170,5 +179,20 @@ mod tests {
     #[test]
     fn cannot_assemble_phrase_when_allow_phrase_is_false() {
         assert!(test_parser().assemble_query("hello world", false).is_err());
+    }
+
+    #[test]
+    fn empty_query_results_in_none() {
+        assert!(test_parser().parse("").unwrap().is_none());
+    }
+
+    #[test]
+    fn tokenizer_may_make_query_empty() {
+        // The test parses uses en_stem
+        let parser = test_parser();
+        // A raw tokenizer would yield Term<'> here
+        assert!(parser.parse("'").unwrap().is_none());
+        // And here would be a BooleanQuery with each term
+        assert!(parser.parse("' <  !").unwrap().is_none());
     }
 }
