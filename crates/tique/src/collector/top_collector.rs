@@ -10,7 +10,7 @@ use tantivy::{
 /// And specialized fixed on score to make things easier for now
 
 struct StableComparableDoc<D> {
-    feature: Score,
+    score: Score,
     doc: D,
 }
 
@@ -24,9 +24,9 @@ pub struct SearchMarker {
 impl SearchMarker {
     // Answers wether the previous search(es) would have listed
     // a document with the given attributes.
-    pub fn has_seen(&self, feature: Score, segment_id: SegmentLocalId, doc_id: DocId) -> bool {
+    pub fn has_seen(&self, score: Score, segment_id: SegmentLocalId, doc_id: DocId) -> bool {
         // If feature > self.score => yes
-        match self.score.partial_cmp(&feature) {
+        match self.score.partial_cmp(&score) {
             // Score is the same, so we should only pick the higher addresses
             Some(Ordering::Equal) => DocAddress(segment_id, doc_id) <= self.addr,
             // Given document has a score higher than the marker: it should have
@@ -55,7 +55,7 @@ impl<D: PartialOrd> Ord for StableComparableDoc<D> {
     #[inline]
     fn cmp(&self, other: &Self) -> Ordering {
         // Highest feature first
-        match other.feature.partial_cmp(&self.feature) {
+        match other.score.partial_cmp(&self.score) {
             Some(Ordering::Equal) | None => {
                 // Break even by _lowest_ doc
                 self.doc.partial_cmp(&other.doc).unwrap_or(Ordering::Equal)
@@ -99,16 +99,16 @@ impl Collector for TopCollector {
         let mut top_collector = BinaryHeap::new();
 
         for child_fruit in children {
-            for (feature, doc) in child_fruit {
+            for (score, doc) in child_fruit {
                 if top_collector.len() < self.limit {
-                    top_collector.push(StableComparableDoc { feature, doc });
+                    top_collector.push(StableComparableDoc { score, doc });
                 } else if let Some(mut head) = top_collector.peek_mut() {
-                    if match head.feature.partial_cmp(&feature) {
+                    if match head.score.partial_cmp(&score) {
                         Some(Ordering::Equal) => doc < head.doc,
                         Some(Ordering::Less) => true,
                         _ => false,
                     } {
-                        *head = StableComparableDoc { feature, doc };
+                        *head = StableComparableDoc { score, doc };
                     }
                 }
             }
@@ -117,7 +117,7 @@ impl Collector for TopCollector {
         Ok(top_collector
             .into_sorted_vec()
             .into_iter()
-            .map(|cdoc| (cdoc.feature, cdoc.doc))
+            .map(|doc| (doc.score, doc.doc))
             .collect())
     }
 
@@ -161,28 +161,28 @@ impl SegmentCollector for TopSegmentCollector {
     type Fruit = Vec<(Score, DocAddress)>;
 
     #[inline(always)]
-    fn collect(&mut self, doc: DocId, feature: Score) {
+    fn collect(&mut self, doc: DocId, score: Score) {
         if let Some(marker) = &self.after {
-            if marker.has_seen(feature, self.segment_id, doc) {
+            if marker.has_seen(score, self.segment_id, doc) {
                 return;
             }
         }
 
         if self.heap.len() >= self.limit {
             if let Some(head) = self.heap.peek() {
-                if match head.feature.partial_cmp(&feature) {
+                if match head.score.partial_cmp(&score) {
                     Some(Ordering::Equal) => doc < head.doc,
                     Some(Ordering::Less) => true,
                     _ => false,
                 } {
                     if let Some(mut head) = self.heap.peek_mut() {
-                        head.feature = feature;
+                        head.score = score;
                         head.doc = doc;
                     }
                 }
             }
         } else {
-            self.heap.push(StableComparableDoc { feature, doc });
+            self.heap.push(StableComparableDoc { score, doc });
         }
     }
 
@@ -193,7 +193,7 @@ impl SegmentCollector for TopSegmentCollector {
             .into_iter()
             .map(|comparable_doc| {
                 (
-                    comparable_doc.feature,
+                    comparable_doc.score,
                     DocAddress(segment_id, comparable_doc.doc),
                 )
             })
