@@ -13,7 +13,3 @@ zerocopy = "0.2"
 
 [dev-dependencies]
 quickcheck = "0.8"
-
-# For flamegraph
-[profile.release]
-debug = true
