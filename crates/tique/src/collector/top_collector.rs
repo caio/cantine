@@ -9,22 +9,29 @@ use tantivy::{
 ///   * Support pagination via a SearchMarker, without pages or offsets
 /// And specialized fixed on score to make things easier for now
 
-struct StableComparableDoc<D> {
-    score: Score,
-    doc: D,
-}
-
 #[derive(Clone)]
-pub struct SearchMarker {
-    score: Score,
+pub struct SearchMarker<T> {
+    score: T,
     addr: DocAddress,
 }
 
+pub struct TopCollector<T> {
+    limit: usize,
+    after: Option<SearchMarker<T>>,
+}
+
+pub struct TopSegmentCollector<T> {
+    limit: usize,
+    heap: BinaryHeap<Scored<T, DocId>>,
+    segment_id: u32,
+    after: Option<SearchMarker<T>>,
+}
+
 // A reference to the last picked result in a search result
-impl SearchMarker {
+impl<T: PartialOrd> SearchMarker<T> {
     // Answers wether the previous search(es) would have listed
     // a document with the given attributes.
-    pub fn has_seen(&self, score: Score, segment_id: SegmentLocalId, doc_id: DocId) -> bool {
+    pub fn has_seen(&self, score: T, segment_id: SegmentLocalId, doc_id: DocId) -> bool {
         // If feature > self.score => yes
         match self.score.partial_cmp(&score) {
             // Score is the same, so we should only pick the higher addresses
@@ -37,7 +44,7 @@ impl SearchMarker {
         }
     }
 
-    pub fn new(score: Score, segment: SegmentLocalId, doc: DocId) -> Self {
+    pub fn new(score: T, segment: SegmentLocalId, doc: DocId) -> Self {
         SearchMarker {
             score,
             addr: DocAddress(segment, doc),
@@ -45,13 +52,18 @@ impl SearchMarker {
     }
 }
 
-impl<D: PartialOrd> PartialOrd for StableComparableDoc<D> {
+struct Scored<T, D> {
+    score: T,
+    doc: D,
+}
+
+impl<D: PartialOrd> PartialOrd for Scored<Score, D> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl<D: PartialOrd> Ord for StableComparableDoc<D> {
+impl<D: PartialOrd> Ord for Scored<Score, D> {
     #[inline]
     fn cmp(&self, other: &Self) -> Ordering {
         // Highest feature first
@@ -65,21 +77,16 @@ impl<D: PartialOrd> Ord for StableComparableDoc<D> {
     }
 }
 
-impl<D: PartialOrd> PartialEq for StableComparableDoc<D> {
+impl<D: PartialOrd> PartialEq for Scored<Score, D> {
     fn eq(&self, other: &Self) -> bool {
         self.cmp(other) == Ordering::Equal
     }
 }
 
-impl<D: PartialOrd> Eq for StableComparableDoc<D> {}
+impl<D: PartialOrd> Eq for Scored<Score, D> {}
 
-pub struct TopCollector {
-    limit: usize,
-    after: Option<SearchMarker>,
-}
-
-impl TopCollector {
-    pub fn with_limit(limit: usize, after: Option<SearchMarker>) -> TopCollector {
+impl TopCollector<Score> {
+    pub fn with_limit(limit: usize, after: Option<SearchMarker<Score>>) -> Self {
         if limit < 1 {
             panic!("Limit must be strictly greater than 0.");
         }
@@ -87,9 +94,9 @@ impl TopCollector {
     }
 }
 
-impl Collector for TopCollector {
+impl Collector for TopCollector<Score> {
     type Fruit = Vec<(Score, DocAddress)>;
-    type Child = TopSegmentCollector;
+    type Child = TopSegmentCollector<Score>;
 
     fn requires_scoring(&self) -> bool {
         true
@@ -101,14 +108,14 @@ impl Collector for TopCollector {
         for child_fruit in children {
             for (score, doc) in child_fruit {
                 if top_collector.len() < self.limit {
-                    top_collector.push(StableComparableDoc { score, doc });
+                    top_collector.push(Scored { score, doc });
                 } else if let Some(mut head) = top_collector.peek_mut() {
                     if match head.score.partial_cmp(&score) {
                         Some(Ordering::Equal) => doc < head.doc,
                         Some(Ordering::Less) => true,
                         _ => false,
                     } {
-                        *head = StableComparableDoc { score, doc };
+                        *head = Scored { score, doc };
                     }
                 }
             }
@@ -130,19 +137,8 @@ impl Collector for TopCollector {
     }
 }
 
-pub struct TopSegmentCollector {
-    limit: usize,
-    heap: BinaryHeap<StableComparableDoc<DocId>>,
-    segment_id: u32,
-    after: Option<SearchMarker>,
-}
-
-impl TopSegmentCollector {
-    fn new(
-        segment_id: SegmentLocalId,
-        limit: usize,
-        after: Option<SearchMarker>,
-    ) -> TopSegmentCollector {
+impl TopSegmentCollector<Score> {
+    fn new(segment_id: SegmentLocalId, limit: usize, after: Option<SearchMarker<Score>>) -> Self {
         TopSegmentCollector {
             limit,
             heap: BinaryHeap::with_capacity(limit),
@@ -157,7 +153,7 @@ impl TopSegmentCollector {
     }
 }
 
-impl SegmentCollector for TopSegmentCollector {
+impl SegmentCollector for TopSegmentCollector<Score> {
     type Fruit = Vec<(Score, DocAddress)>;
 
     #[inline(always)]
@@ -182,7 +178,7 @@ impl SegmentCollector for TopSegmentCollector {
                 }
             }
         } else {
-            self.heap.push(StableComparableDoc { score, doc });
+            self.heap.push(Scored { score, doc });
         }
     }
 
