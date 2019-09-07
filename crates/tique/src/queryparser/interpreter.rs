@@ -113,6 +113,8 @@ mod tests {
     use tantivy::schema::{SchemaBuilder, TEXT};
     use tantivy::tokenizer::TokenizerManager;
 
+    use quickcheck::quickcheck;
+
     fn test_parser() -> QueryParser {
         let mut schema_builder = SchemaBuilder::new();
         let field = schema_builder.add_text_field("text", TEXT);
@@ -191,5 +193,16 @@ mod tests {
         assert!(parser.parse("'").unwrap().is_none());
         // And here would be a BooleanQuery with each term
         assert!(parser.parse("' <  !").unwrap().is_none());
+    }
+
+    #[allow(unused_must_use)]
+    fn can_handle_arbitrary_input_without_crashing(input: String) -> bool {
+        test_parser().parse(input.as_str());
+        true
+    }
+
+    #[test]
+    fn prop_tests() {
+        quickcheck(can_handle_arbitrary_input_without_crashing as fn(String) -> bool);
     }
 }

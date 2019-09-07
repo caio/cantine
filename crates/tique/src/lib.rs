@@ -1,3 +1,3 @@
-mod collector;
-mod feature;
-mod queryparser;
+pub mod collector;
+pub mod feature;
+pub mod queryparser;
