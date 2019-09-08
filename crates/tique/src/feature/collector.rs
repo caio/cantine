@@ -1,4 +1,7 @@
-use std::ops::{AddAssign, RangeInclusive};
+use std::{
+    mem::size_of,
+    ops::{AddAssign, RangeInclusive},
+};
 
 use tantivy::{
     collector::{Collector, SegmentCollector},
@@ -7,7 +10,7 @@ use tantivy::{
     Result, SegmentReader,
 };
 
-use super::FeatureVector;
+use byteorder::{ByteOrder, NativeEndian};
 
 pub type AggregationRequest<T> = Vec<(usize, Vec<RangeInclusive<T>>)>;
 pub type FeatureRanges<T> = Vec<Option<Vec<T>>>;
@@ -89,7 +92,7 @@ where
 }
 
 macro_rules! collector_impl {
-    ($t: ty) => {
+    ($t: ty, $reader: expr) => {
         impl Collector for FeatureCollector<$t> {
             type Fruit = FeatureRanges<$t>;
             type Child = FeatureSegmentCollector<$t>;
@@ -131,24 +134,23 @@ macro_rules! collector_impl {
 
             fn collect(&mut self, doc: u32, _score: f32) {
                 let data = self.reader.get_bytes(doc);
-                let doc_features =
-                    FeatureVector::<_, $t>::parse(data, self.agg.len(), self.unset_value).unwrap();
 
                 for (feat, ranges) in &self.wanted {
-                    // Wanted contains a feature that goes beyond num_features
-                    if *feat > self.agg.len() {
+                    let start_offset = *feat * size_of::<$t>();
+                    let end_offset = start_offset + size_of::<$t>();
+
+                    if data.len() < end_offset {
                         // XXX Add visibility to when this happens
                         continue;
                     }
 
-                    let opt = doc_features.get(*feat);
+                    let value = $reader(&data[start_offset..end_offset]);
 
-                    // Document doesn't have this feature: Nothing to do
-                    if opt.is_none() {
-                        continue;
+                    if let Some(unset_value) = self.unset_value {
+                        if value == unset_value {
+                            continue;
+                        }
                     }
-
-                    let value = opt.unwrap();
 
                     // Index/Count ranges in the order they were requested
                     for (idx, range) in ranges.iter().enumerate() {
@@ -169,17 +171,18 @@ macro_rules! collector_impl {
     };
 }
 
-collector_impl!(u16);
-collector_impl!(u32);
-collector_impl!(u64);
-collector_impl!(i16);
-collector_impl!(i32);
-collector_impl!(i64);
+collector_impl!(u16, NativeEndian::read_u16);
+collector_impl!(u32, NativeEndian::read_u32);
+collector_impl!(u64, NativeEndian::read_u64);
+collector_impl!(i16, NativeEndian::read_i16);
+collector_impl!(i32, NativeEndian::read_i32);
+collector_impl!(i64, NativeEndian::read_i64);
 
 #[cfg(test)]
 mod tests {
 
     use super::*;
+    use zerocopy::AsBytes;
 
     use tantivy::{
         self,
@@ -188,18 +191,13 @@ mod tests {
         Index,
     };
 
-    const A: usize = 0;
-    const B: usize = 1;
-    const C: usize = 2;
-    const D: usize = 3;
-
     #[test]
     fn cannot_merge_uneven_rangevec() {
         assert!(merge_ranges(&mut [0u16], &[1, 2]).is_err());
     }
 
     #[test]
-    fn cannot_merge_unever_feature_ranges() {
+    fn cannot_merge_uneven_feature_ranges() {
         assert!(merge_feature_ranges::<u16>(&mut vec![None], &[None, None]).is_err());
     }
 
@@ -263,7 +261,15 @@ mod tests {
         let index = Index::create_in_ram(schema);
         let mut writer = index.writer_with_num_threads(1, 40_000_000)?;
 
-        let add_doc = |fv: FeatureVector<&mut [u8], u16>| -> Result<()> {
+        const A: usize = 0;
+        const B: usize = 1;
+        const C: usize = 2;
+        const D: usize = 3;
+
+        const NUM_FEATURES: usize = 4;
+        const UNSET: u16 = std::u16::MAX;
+
+        let add_doc = |fv: &[u16; NUM_FEATURES]| -> Result<()> {
             let mut doc = Document::default();
             doc.add_bytes(field, fv.as_bytes().to_owned());
             writer.add_document(doc);
@@ -272,29 +278,8 @@ mod tests {
 
         // And we populate it with a couple of docs where
         // the bytes field is a features::FeatureVector
-        let num_features = 4;
-        let empty_buffer = vec![std::u8::MAX; num_features * 2];
-        let unset = Some(std::u16::MAX);
-
-        {
-            // Doc{ A: 5, B: 10}
-            let mut buf = empty_buffer.clone();
-            let mut fv =
-                FeatureVector::<_, u16>::parse(buf.as_mut_slice(), num_features, unset).unwrap();
-            fv.set(A, 5).unwrap();
-            fv.set(B, 10).unwrap();
-            add_doc(fv)?;
-        }
-
-        {
-            // Doc{ A: 7, C: 2}
-            let mut buf = empty_buffer.clone();
-            let mut fv =
-                FeatureVector::<_, u16>::parse(buf.as_mut_slice(), num_features, unset).unwrap();
-            fv.set(A, 7).unwrap();
-            fv.set(C, 2).unwrap();
-            add_doc(fv)?;
-        }
+        add_doc(&[5, 10, UNSET, UNSET])?;
+        add_doc(&[7, UNSET, 2, UNSET])?;
 
         writer.commit()?;
 
@@ -302,9 +287,8 @@ mod tests {
         let searcher = reader.searcher();
 
         let wanted: AggregationRequest<u16> = vec![
-            // feature A between ranges 2-10 and 0-5
+            // feature A between ranges 2-10 and 0-5, etc
             (A, vec![2..=10, 0..=5]),
-            // and so on...
             (B, vec![9..=100, 420..=710]),
             (C, vec![2..=2]),
             (D, vec![]),
@@ -312,7 +296,7 @@ mod tests {
 
         let feature_ranges = searcher.search(
             &AllQuery,
-            &FeatureCollector::for_field(field, num_features, unset, &wanted),
+            &FeatureCollector::for_field(field, NUM_FEATURES, Some(UNSET), &wanted),
         )?;
 
         // { A => { "2-10": 2, "0-5": 1 } }
