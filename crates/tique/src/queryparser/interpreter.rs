@@ -11,11 +11,20 @@ use tantivy::{
 pub struct QueryParser {
     field: Field,
     tokenizer: Box<dyn BoxedTokenizer>,
+    occur: Occur,
 }
 
 impl QueryParser {
-    pub fn new(field: Field, tokenizer: Box<dyn BoxedTokenizer>) -> QueryParser {
-        QueryParser { field, tokenizer }
+    pub fn new(field: Field, tokenizer: Box<dyn BoxedTokenizer>, match_all: bool) -> QueryParser {
+        QueryParser {
+            field,
+            tokenizer,
+            occur: if match_all {
+                Occur::Must
+            } else {
+                Occur::Should
+            },
+        }
     }
 
     pub fn parse(&self, input: &str) -> Result<Option<Box<dyn Query>>> {
@@ -30,7 +39,7 @@ impl QueryParser {
 
                 for tok in parsed {
                     if let Some(query) = self.query_from_token(&tok)? {
-                        subqueries.push((Occur::Must, query));
+                        subqueries.push((self.occur, query));
                     }
                 }
 
@@ -110,15 +119,16 @@ impl QueryParser {
 mod tests {
     use super::*;
 
-    use tantivy::schema::{SchemaBuilder, TEXT};
     use tantivy::tokenizer::TokenizerManager;
 
     use quickcheck::quickcheck;
 
     fn test_parser() -> QueryParser {
-        let mut schema_builder = SchemaBuilder::new();
-        let field = schema_builder.add_text_field("text", TEXT);
-        QueryParser::new(field, TokenizerManager::default().get("en_stem").unwrap())
+        QueryParser::new(
+            Field(0),
+            TokenizerManager::default().get("en_stem").unwrap(),
+            true,
+        )
     }
 
     fn parsed(input: &str) -> Box<dyn Query> {
@@ -173,6 +183,37 @@ mod tests {
             assert_eq!(Occur::Must, *occur);
             assert!(inner.as_any().downcast_ref::<AllQuery>().is_some())
         }
+    }
+
+    fn check_match_all(match_all: bool, wanted: Occur) -> Result<()> {
+        let parser = QueryParser::new(
+            Field(0),
+            TokenizerManager::default().get("en_stem").unwrap(),
+            match_all,
+        );
+
+        let parsed = parser.parse("two terms")?.unwrap();
+
+        let bq = parsed
+            .as_any()
+            .downcast_ref::<BooleanQuery>()
+            .expect("Must be a boolean query");
+
+        let clauses = bq.clauses();
+
+        assert_eq!(2, clauses.len());
+
+        for (occur, _query) in clauses {
+            assert_eq!(wanted, *occur);
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn queries_are_joined_according_to_match_all() -> Result<()> {
+        check_match_all(true, Occur::Must)?;
+        check_match_all(false, Occur::Should)
     }
 
     #[test]
