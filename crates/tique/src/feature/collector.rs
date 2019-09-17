@@ -59,13 +59,12 @@ where
 
 pub struct FeatureCollector<T> {
     field: Field,
-    agg: FeatureRanges<T>,
+    num_features: usize,
     wanted: AggregationRequest<T>,
     unset_value: Option<T>,
 }
 
 pub struct FeatureSegmentCollector<T> {
-    // do I need agg here?
     agg: FeatureRanges<T>,
     reader: BytesFastFieldReader,
     wanted: AggregationRequest<T>,
@@ -84,9 +83,9 @@ where
     ) -> FeatureCollector<T> {
         FeatureCollector {
             field,
-            wanted: wanted.to_vec(),
-            agg: vec![None; num_features],
+            num_features,
             unset_value,
+            wanted: wanted.to_vec(),
         }
     }
 }
@@ -103,7 +102,7 @@ macro_rules! collector_impl {
                 segment_reader: &SegmentReader,
             ) -> Result<Self::Child> {
                 Ok(FeatureSegmentCollector {
-                    agg: vec![None; self.agg.len()],
+                    agg: vec![None; self.num_features],
                     wanted: self.wanted.clone(),
                     reader: segment_reader
                         .fast_fields()
@@ -118,8 +117,9 @@ macro_rules! collector_impl {
             }
 
             fn merge_fruits(&self, children: Vec<Self::Fruit>) -> Result<Self::Fruit> {
-                let mut merged = vec![None; self.agg.len()];
-                merge_feature_ranges(&mut merged, &self.agg)?;
+                // TODO check if is it worth it to short-circuit the very common
+                //      case where children.len() == 1
+                let mut merged = vec![None; self.num_features];
 
                 for child in children {
                     merge_feature_ranges(&mut merged, &child)?;
