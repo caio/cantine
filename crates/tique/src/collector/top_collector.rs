@@ -23,7 +23,7 @@ pub struct TopCollector<T> {
 pub struct TopSegmentCollector<T> {
     limit: usize,
     heap: BinaryHeap<Scored<T, DocId>>,
-    segment_id: u32,
+    segment_id: SegmentLocalId,
     after: Option<SearchMarker<T>>,
 }
 
