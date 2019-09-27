@@ -9,8 +9,8 @@ tantivy = "0.10"
 serde = { version = "1", features = ["derive"] }
 byteorder = "1.3"
 nom = "5"
-zerocopy = "0.2"
 
 [dev-dependencies]
 quickcheck = "0.8"
+zerocopy = "0.2"
 rand = "0.7"
