@@ -13,3 +13,4 @@ zerocopy = "0.2"
 
 [dev-dependencies]
 quickcheck = "0.8"
+rand = "0.7"
