@@ -339,11 +339,11 @@ mod tests {
 
         assert_eq!(10, sorted.len());
 
-        for i in 0..9 {
-            let next_found = search_after(1, Some(sorted[i].clone()));
-            assert_eq!(1, next_found.len());
+        for slice in sorted.as_slice().windows(2) {
+            let found = search_after(1, Some(slice[0].clone()));
+            assert_eq!(1, found.len());
 
-            assert_eq!(sorted[i + 1], next_found[0]);
+            assert_eq!(slice[1], found[0]);
         }
     }
 }
