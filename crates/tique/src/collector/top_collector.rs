@@ -11,8 +11,8 @@ use super::{Scored, TopK};
 /// And specialized fixed on score to make things easier for now
 
 pub struct TopCollector<T> {
-    limit: usize,
-    after: Option<SearchMarker<T>>,
+    pub limit: usize,
+    pub after: Option<SearchMarker<T>>,
 }
 
 pub type SearchMarker<T> = Scored<T, DocAddress>;
@@ -34,7 +34,7 @@ where
         TopCollector { limit, after }
     }
 
-    fn merge_many(&self, children: Vec<Vec<SearchMarker<T>>>) -> Vec<SearchMarker<T>> {
+    pub fn merge_many(&self, children: Vec<Vec<SearchMarker<T>>>) -> Vec<SearchMarker<T>> {
         let mut topk = TopK::new(self.limit);
 
         for child_fruit in children {
