@@ -72,7 +72,7 @@ impl<T> TopSegmentCollector<T>
 where
     T: PartialOrd + Copy,
 {
-    fn new(segment_id: SegmentLocalId, limit: usize, after: Option<SearchMarker<T>>) -> Self {
+    pub fn new(segment_id: SegmentLocalId, limit: usize, after: Option<SearchMarker<T>>) -> Self {
         TopSegmentCollector {
             collected: TopK::new(limit),
             segment_id,
@@ -86,7 +86,7 @@ where
     }
 
     #[inline(always)]
-    fn visit(&mut self, doc: DocId, score: T) {
+    pub fn visit(&mut self, doc: DocId, score: T) {
         if let Some(after) = &self.after {
             let scored = Scored {
                 score,
@@ -100,7 +100,7 @@ where
         self.collected.visit(score, doc);
     }
 
-    fn into_vec(self) -> Vec<Scored<T, DocAddress>> {
+    pub fn into_vec(self) -> Vec<SearchMarker<T>> {
         let segment_id = self.segment_id;
         self.collected
             .into_vec()
