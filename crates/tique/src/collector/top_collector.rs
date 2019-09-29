@@ -23,24 +23,18 @@ pub struct TopSegmentCollector<T> {
     after: Option<SearchMarker<T>>,
 }
 
-impl TopCollector<Score> {
-    pub fn with_limit(limit: usize, after: Option<SearchMarker<Score>>) -> Self {
+impl<T> TopCollector<T>
+where
+    T: PartialOrd,
+{
+    pub fn with_limit(limit: usize, after: Option<SearchMarker<T>>) -> Self {
         if limit < 1 {
             panic!("Limit must be greater than 0");
         }
         TopCollector { limit, after }
     }
-}
 
-impl Collector for TopCollector<Score> {
-    type Fruit = Vec<Scored<Score, DocAddress>>;
-    type Child = TopSegmentCollector<Score>;
-
-    fn requires_scoring(&self) -> bool {
-        true
-    }
-
-    fn merge_fruits(&self, children: Vec<Self::Fruit>) -> Result<Self::Fruit> {
+    fn merge_many(&self, children: Vec<Vec<SearchMarker<T>>>) -> Vec<SearchMarker<T>> {
         let mut topk = TopK::new(self.limit);
 
         for child_fruit in children {
@@ -49,7 +43,20 @@ impl Collector for TopCollector<Score> {
             }
         }
 
-        Ok(topk.into_sorted_vec())
+        topk.into_sorted_vec()
+    }
+}
+
+impl Collector for TopCollector<Score> {
+    type Fruit = Vec<SearchMarker<Score>>;
+    type Child = TopSegmentCollector<Score>;
+
+    fn requires_scoring(&self) -> bool {
+        true
+    }
+
+    fn merge_fruits(&self, children: Vec<Self::Fruit>) -> Result<Self::Fruit> {
+        Ok(self.merge_many(children))
     }
 
     fn for_segment(&self, segment_id: SegmentLocalId, _: &SegmentReader) -> Result<Self::Child> {
@@ -61,8 +68,11 @@ impl Collector for TopCollector<Score> {
     }
 }
 
-impl TopSegmentCollector<Score> {
-    fn new(segment_id: SegmentLocalId, limit: usize, after: Option<SearchMarker<Score>>) -> Self {
+impl<T> TopSegmentCollector<T>
+where
+    T: PartialOrd + Copy,
+{
+    fn new(segment_id: SegmentLocalId, limit: usize, after: Option<SearchMarker<T>>) -> Self {
         TopSegmentCollector {
             collected: TopK::new(limit),
             segment_id,
@@ -74,13 +84,9 @@ impl TopSegmentCollector<Score> {
     fn len(&self) -> usize {
         self.collected.len()
     }
-}
-
-impl SegmentCollector for TopSegmentCollector<Score> {
-    type Fruit = Vec<Scored<Score, DocAddress>>;
 
     #[inline(always)]
-    fn collect(&mut self, doc: DocId, score: Score) {
+    fn visit(&mut self, doc: DocId, score: T) {
         if let Some(after) = &self.after {
             let scored = Scored {
                 score,
@@ -94,7 +100,7 @@ impl SegmentCollector for TopSegmentCollector<Score> {
         self.collected.visit(score, doc);
     }
 
-    fn harvest(self) -> Self::Fruit {
+    fn into_vec(self) -> Vec<Scored<T, DocAddress>> {
         let segment_id = self.segment_id;
         self.collected
             .into_vec()
@@ -104,6 +110,18 @@ impl SegmentCollector for TopSegmentCollector<Score> {
                 doc: DocAddress(segment_id, doc),
             })
             .collect()
+    }
+}
+
+impl SegmentCollector for TopSegmentCollector<Score> {
+    type Fruit = Vec<SearchMarker<Score>>;
+
+    fn collect(&mut self, doc: DocId, score: Score) {
+        self.visit(doc, score);
+    }
+
+    fn harvest(self) -> Self::Fruit {
+        self.into_vec()
     }
 }
 
