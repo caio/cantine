@@ -5,19 +5,19 @@ use tantivy::{
 
 use super::{SearchMarker, TopCollector, TopSegmentCollector};
 
-struct CustomScoreTopCollector<T, F> {
-    scorer_for_segment: F,
+pub struct CustomScoreTopCollector<T, F> {
+    scorer_factory: F,
     collector: TopCollector<T>,
 }
 
 impl<T, F> CustomScoreTopCollector<T, F>
 where
     T: 'static + PartialOrd + Copy + Sync + Send,
-    F: 'static + Sync + Fn(SegmentLocalId, &SegmentReader) -> Box<dyn Fn(DocId) -> T>,
+    F: 'static + Sync + DocScorerFactory<T>,
 {
-    pub fn new(limit: usize, after: Option<SearchMarker<T>>, scorer_for_segment: F) -> Self {
+    pub fn new(limit: usize, after: Option<SearchMarker<T>>, scorer_factory: F) -> Self {
         Self {
-            scorer_for_segment,
+            scorer_factory,
             collector: TopCollector::with_limit(limit, after),
         }
     }
@@ -31,13 +31,30 @@ where
     }
 }
 
+pub trait DocScorerFactory<T>: Sync {
+    type Type: DocScorer<T>;
+    fn for_segment(&self, reader: &SegmentReader) -> Self::Type;
+}
+
+impl<T, C, F> DocScorerFactory<T> for F
+where
+    F: 'static + Sync + Send + Fn(&SegmentReader) -> C,
+    C: DocScorer<T>,
+{
+    type Type = C;
+
+    fn for_segment(&self, reader: &SegmentReader) -> Self::Type {
+        (self)(reader)
+    }
+}
+
 impl<T, F> Collector for CustomScoreTopCollector<T, F>
 where
     T: 'static + PartialOrd + Copy + Sync + Send,
-    F: 'static + Sync + Fn(SegmentLocalId, &SegmentReader) -> Box<dyn Fn(DocId) -> T>,
+    F: 'static + DocScorerFactory<T>,
 {
     type Fruit = Vec<SearchMarker<T>>;
-    type Child = CustomScoreTopSegmentCollector<T, Box<dyn Fn(DocId) -> T>>;
+    type Child = CustomScoreTopSegmentCollector<T, F::Type>;
 
     fn requires_scoring(&self) -> bool {
         false
@@ -52,7 +69,7 @@ where
         segment_id: SegmentLocalId,
         reader: &SegmentReader,
     ) -> Result<Self::Child> {
-        let scorer = (self.scorer_for_segment)(segment_id, reader);
+        let scorer = self.scorer_factory.for_segment(reader);
         Ok(CustomScoreTopSegmentCollector::new(
             segment_id,
             self.limit(),
@@ -62,7 +79,7 @@ where
     }
 }
 
-struct CustomScoreTopSegmentCollector<T, F> {
+pub struct CustomScoreTopSegmentCollector<T, F> {
     scorer: F,
     collector: TopSegmentCollector<T>,
 }
@@ -70,7 +87,7 @@ struct CustomScoreTopSegmentCollector<T, F> {
 impl<T, F> CustomScoreTopSegmentCollector<T, F>
 where
     T: PartialOrd + Copy,
-    F: Fn(DocId) -> T,
+    F: DocScorer<T>,
 {
     fn new(
         segment_id: SegmentLocalId,
@@ -88,17 +105,30 @@ where
 impl<T, F> SegmentCollector for CustomScoreTopSegmentCollector<T, F>
 where
     T: 'static + PartialOrd + Copy + Sync + Send,
-    F: 'static + Fn(DocId) -> T,
+    F: 'static + DocScorer<T>,
 {
     type Fruit = Vec<SearchMarker<T>>;
 
     fn collect(&mut self, doc: DocId, _: Score) {
-        let score = (self.scorer)(doc);
+        let score = self.scorer.score(doc);
         self.collector.visit(doc, score);
     }
 
     fn harvest(self) -> Self::Fruit {
         self.collector.into_vec()
+    }
+}
+
+pub trait DocScorer<T> {
+    fn score(&self, doc_id: DocId) -> T;
+}
+
+impl<F, T> DocScorer<T> for F
+where
+    F: 'static + Sync + Send + Fn(DocId) -> T,
+{
+    fn score(&self, doc_id: DocId) -> T {
+        (self)(doc_id)
     }
 }
 
@@ -140,9 +170,9 @@ mod tests {
         let reader = index.reader()?;
         let searcher = reader.searcher();
 
-        let colletor = CustomScoreTopCollector::new(2, None, |_sid, _reader| {
+        let colletor = CustomScoreTopCollector::new(2, None, |_: &SegmentReader| {
             // Score is doc_id * 10
-            Box::new(|doc_id: DocId| doc_id * 10)
+            |doc_id: DocId| doc_id * 10
         });
 
         let topdocs = searcher.search(&AllQuery, &colletor)?;
