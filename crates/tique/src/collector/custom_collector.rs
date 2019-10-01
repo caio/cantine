@@ -3,31 +3,31 @@ use tantivy::{
     DocId, Result, Score, SegmentLocalId, SegmentReader,
 };
 
-use super::{SearchMarker, TopCollector, TopSegmentCollector};
+use super::{
+    CollectCondition, ConditionalTopCollector, ConditionalTopSegmentCollector, SearchMarker,
+};
 
-pub struct CustomScoreTopCollector<T, F> {
+pub struct CustomScoreTopCollector<T, C, F>
+where
+    C: CollectCondition<T>,
+{
     scorer_factory: F,
-    collector: TopCollector<T>,
+    collector: ConditionalTopCollector<T, C>,
+    condition: C,
 }
 
-impl<T, F> CustomScoreTopCollector<T, F>
+impl<T, C, F> CustomScoreTopCollector<T, C, F>
 where
     T: 'static + PartialOrd + Copy + Sync + Send,
+    C: CollectCondition<T>,
     F: 'static + Sync + DocScorerFactory<T>,
 {
-    pub fn new(limit: usize, after: Option<SearchMarker<T>>, scorer_factory: F) -> Self {
+    pub fn new(limit: usize, condition: C, scorer_factory: F) -> Self {
         Self {
+            collector: ConditionalTopCollector::with_limit(limit, condition.clone()),
             scorer_factory,
-            collector: TopCollector::with_limit(limit, after),
+            condition,
         }
-    }
-
-    fn limit(&self) -> usize {
-        self.collector.limit
-    }
-
-    fn after(&self) -> Option<SearchMarker<T>> {
-        self.collector.after.clone()
     }
 }
 
@@ -48,13 +48,14 @@ where
     }
 }
 
-impl<T, F> Collector for CustomScoreTopCollector<T, F>
+impl<T, C, F> Collector for CustomScoreTopCollector<T, C, F>
 where
     T: 'static + PartialOrd + Copy + Sync + Send,
+    C: CollectCondition<T> + Sync,
     F: 'static + DocScorerFactory<T>,
 {
     type Fruit = Vec<SearchMarker<T>>;
-    type Child = CustomScoreTopSegmentCollector<T, F::Type>;
+    type Child = CustomScoreTopSegmentCollector<T, C, F::Type>;
 
     fn requires_scoring(&self) -> bool {
         false
@@ -72,40 +73,40 @@ where
         let scorer = self.scorer_factory.for_segment(reader);
         Ok(CustomScoreTopSegmentCollector::new(
             segment_id,
-            self.limit(),
-            self.after(),
+            self.collector.limit,
+            self.condition.clone(),
             scorer,
         ))
     }
 }
 
-pub struct CustomScoreTopSegmentCollector<T, F> {
+pub struct CustomScoreTopSegmentCollector<T, C, F>
+where
+    C: CollectCondition<T>,
+{
     scorer: F,
-    collector: TopSegmentCollector<T>,
+    collector: ConditionalTopSegmentCollector<T, C>,
 }
 
-impl<T, F> CustomScoreTopSegmentCollector<T, F>
+impl<T, C, F> CustomScoreTopSegmentCollector<T, C, F>
 where
     T: PartialOrd + Copy,
+    C: CollectCondition<T>,
     F: DocScorer<T>,
 {
-    fn new(
-        segment_id: SegmentLocalId,
-        limit: usize,
-        after: Option<SearchMarker<T>>,
-        scorer: F,
-    ) -> Self {
+    fn new(segment_id: SegmentLocalId, limit: usize, condition: C, scorer: F) -> Self {
         Self {
             scorer,
-            collector: TopSegmentCollector::new(segment_id, limit, after),
+            collector: ConditionalTopSegmentCollector::new(segment_id, limit, condition),
         }
     }
 }
 
-impl<T, F> SegmentCollector for CustomScoreTopSegmentCollector<T, F>
+impl<T, C, F> SegmentCollector for CustomScoreTopSegmentCollector<T, C, F>
 where
     T: 'static + PartialOrd + Copy + Sync + Send,
-    F: 'static + DocScorer<T>,
+    C: CollectCondition<T>,
+    F: DocScorer<T>,
 {
     type Fruit = Vec<SearchMarker<T>>;
 
@@ -119,7 +120,7 @@ where
     }
 }
 
-pub trait DocScorer<T> {
+pub trait DocScorer<T>: 'static {
     fn score(&self, doc_id: DocId) -> T;
 }
 
@@ -141,7 +142,7 @@ mod tests {
     #[test]
     fn custom_segment_scorer_gets_called() {
         // Use the doc_id as the score
-        let mut collector = CustomScoreTopSegmentCollector::new(0, 1, None, |doc_id| doc_id);
+        let mut collector = CustomScoreTopSegmentCollector::new(0, 1, true, |doc_id| doc_id);
 
         // So that whatever we provide as a score
         collector.collect(1, 42.0);
@@ -170,7 +171,7 @@ mod tests {
         let reader = index.reader()?;
         let searcher = reader.searcher();
 
-        let colletor = CustomScoreTopCollector::new(2, None, |_: &SegmentReader| {
+        let colletor = CustomScoreTopCollector::new(2, true, |_: &SegmentReader| {
             // Score is doc_id * 10
             |doc_id: DocId| doc_id * 10
         });

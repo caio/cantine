@@ -1,16 +1,20 @@
 use tantivy::{collector::Collector, schema::Field, SegmentReader};
 
-use super::{CustomScoreTopCollector, SearchMarker};
+use super::{CollectCondition, CustomScoreTopCollector, SearchMarker};
 
-pub struct FastFieldTopCollector;
+//XXX This is very awkward
+pub struct FastFieldTopCollector<C>(C);
 
 macro_rules! impl_fast_field_top_collector {
     ($name: ident, $type: ty, $reader: ident) => {
-        impl FastFieldTopCollector {
+        impl<C> FastFieldTopCollector<C>
+        where
+            C: CollectCondition<$type> + Sync,
+        {
             pub fn $name(
                 field: Field,
                 limit: usize,
-                after: Option<SearchMarker<$type>>,
+                condition: C,
             ) -> impl Collector<Fruit = Vec<SearchMarker<$type>>> {
                 let scorer_for_segment = move |reader: &SegmentReader| {
                     let scorer = reader
@@ -19,7 +23,7 @@ macro_rules! impl_fast_field_top_collector {
                         .expect("Not a fast field");
                     Box::new(move |doc_id| scorer.get(doc_id))
                 };
-                CustomScoreTopCollector::new(limit, after, scorer_for_segment)
+                CustomScoreTopCollector::new(limit, condition, scorer_for_segment)
             }
         }
     };
@@ -65,8 +69,8 @@ mod tests {
         let reader = index.reader()?;
         let searcher = reader.searcher();
 
-        let top_u64_collector = FastFieldTopCollector::top_u64(u64_field, 2, None);
-        let top_i64_collector = FastFieldTopCollector::top_i64(i64_field, 2, None);
+        let top_u64_collector = FastFieldTopCollector::top_u64(u64_field, 2, true);
+        let top_i64_collector = FastFieldTopCollector::top_i64(i64_field, 2, true);
 
         let (top_u64, top_i64) =
             searcher.search(&AllQuery, &(top_u64_collector, top_i64_collector))?;

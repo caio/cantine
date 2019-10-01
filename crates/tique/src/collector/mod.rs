@@ -5,5 +5,7 @@ mod topk;
 
 pub use custom_collector::CustomScoreTopCollector;
 pub use field_collector::FastFieldTopCollector;
-pub use top_collector::{SearchMarker, TopCollector, TopSegmentCollector};
+pub use top_collector::{
+    CollectCondition, ConditionalTopCollector, ConditionalTopSegmentCollector, SearchMarker,
+};
 pub use topk::{Scored, TopK};

@@ -1,3 +1,5 @@
+use std::marker::PhantomData;
+
 use tantivy::{
     collector::{Collector, SegmentCollector},
     DocAddress, DocId, Result, Score, SegmentLocalId, SegmentReader,
@@ -5,33 +7,60 @@ use tantivy::{
 
 use super::{Scored, TopK};
 
-/// This is pretty much tantivy's TopCollector and friends, tweaked to:
-///   * Have a stable ordering, using DocAddress to break even scores
-///   * Support pagination via a SearchMarker, without pages or offsets
-/// And specialized fixed on score to make things easier for now
+pub trait CollectCondition<T>: 'static + Clone {
+    fn check(&self, segment_id: SegmentLocalId, doc_id: DocId, score: T) -> bool;
+}
 
-pub struct TopCollector<T> {
-    pub limit: usize,
-    pub after: Option<SearchMarker<T>>,
+impl<T> CollectCondition<T> for bool {
+    fn check(&self, _: SegmentLocalId, _: DocId, _: T) -> bool {
+        *self
+    }
+}
+
+impl<F, T> CollectCondition<T> for F
+where
+    F: 'static + Clone + Fn(SegmentLocalId, DocId, T) -> bool,
+{
+    fn check(&self, segment_id: SegmentLocalId, doc_id: DocId, score: T) -> bool {
+        (self)(segment_id, doc_id, score)
+    }
 }
 
 pub type SearchMarker<T> = Scored<T, DocAddress>;
 
-pub struct TopSegmentCollector<T> {
-    segment_id: SegmentLocalId,
-    collected: TopK<T, DocId>,
-    after: Option<SearchMarker<T>>,
+impl<T> CollectCondition<T> for SearchMarker<T>
+where
+    T: 'static + PartialOrd + Clone,
+{
+    fn check(&self, segment_id: SegmentLocalId, doc_id: DocId, score: T) -> bool {
+        // So: only collect items that would come _after_ this marker
+        *self > Scored::new(score, DocAddress(segment_id, doc_id))
+    }
 }
 
-impl<T> TopCollector<T>
+pub struct ConditionalTopCollector<T, F>
+where
+    F: CollectCondition<T>,
+{
+    pub limit: usize,
+    condition: F,
+    _marker: PhantomData<T>,
+}
+
+impl<T, F> ConditionalTopCollector<T, F>
 where
     T: PartialOrd,
+    F: CollectCondition<T>,
 {
-    pub fn with_limit(limit: usize, after: Option<SearchMarker<T>>) -> Self {
+    pub fn with_limit(limit: usize, condition: F) -> Self {
         if limit < 1 {
             panic!("Limit must be greater than 0");
         }
-        TopCollector { limit, after }
+        ConditionalTopCollector {
+            limit,
+            condition,
+            _marker: PhantomData,
+        }
     }
 
     pub fn merge_many(&self, children: Vec<Vec<SearchMarker<T>>>) -> Vec<SearchMarker<T>> {
@@ -47,9 +76,12 @@ where
     }
 }
 
-impl Collector for TopCollector<Score> {
+impl<F> Collector for ConditionalTopCollector<Score, F>
+where
+    F: CollectCondition<Score> + Sync,
+{
     type Fruit = Vec<SearchMarker<Score>>;
-    type Child = TopSegmentCollector<Score>;
+    type Child = ConditionalTopSegmentCollector<Score, F>;
 
     fn requires_scoring(&self) -> bool {
         true
@@ -59,24 +91,38 @@ impl Collector for TopCollector<Score> {
         Ok(self.merge_many(children))
     }
 
-    fn for_segment(&self, segment_id: SegmentLocalId, _: &SegmentReader) -> Result<Self::Child> {
-        Ok(TopSegmentCollector::new(
+    fn for_segment(
+        &self,
+        segment_id: SegmentLocalId,
+        _reader: &SegmentReader,
+    ) -> Result<Self::Child> {
+        Ok(ConditionalTopSegmentCollector::new(
             segment_id,
             self.limit,
-            self.after.clone(),
+            self.condition.clone(),
         ))
     }
 }
 
-impl<T> TopSegmentCollector<T>
+pub struct ConditionalTopSegmentCollector<T, F>
+where
+    F: CollectCondition<T>,
+{
+    segment_id: SegmentLocalId,
+    collected: TopK<T, DocId>,
+    condition: F,
+}
+
+impl<T, F> ConditionalTopSegmentCollector<T, F>
 where
     T: PartialOrd + Copy,
+    F: CollectCondition<T>,
 {
-    pub fn new(segment_id: SegmentLocalId, limit: usize, after: Option<SearchMarker<T>>) -> Self {
-        TopSegmentCollector {
+    pub fn new(segment_id: SegmentLocalId, limit: usize, condition: F) -> Self {
+        ConditionalTopSegmentCollector {
             collected: TopK::new(limit),
             segment_id,
-            after,
+            condition,
         }
     }
 
@@ -87,17 +133,9 @@ where
 
     #[inline(always)]
     pub fn visit(&mut self, doc: DocId, score: T) {
-        if let Some(after) = &self.after {
-            let scored = Scored {
-                score,
-                doc: DocAddress(self.segment_id, doc),
-            };
-            if *after <= scored {
-                return;
-            }
+        if self.condition.check(self.segment_id, doc, score) {
+            self.collected.visit(score, doc);
         }
-
-        self.collected.visit(score, doc);
     }
 
     pub fn into_vec(self) -> Vec<SearchMarker<T>> {
@@ -113,7 +151,10 @@ where
     }
 }
 
-impl SegmentCollector for TopSegmentCollector<Score> {
+impl<F> SegmentCollector for ConditionalTopSegmentCollector<Score, F>
+where
+    F: CollectCondition<Score>,
+{
     type Fruit = Vec<SearchMarker<Score>>;
 
     fn collect(&mut self, doc: DocId, score: Score) {
@@ -130,10 +171,39 @@ mod tests {
     use super::*;
 
     #[test]
+    fn condition_is_checked() {
+        const LIMIT: usize = 4;
+
+        let mut nil_collector = ConditionalTopSegmentCollector::new(0, LIMIT, false);
+
+        let mut top_collector = ConditionalTopSegmentCollector::new(0, LIMIT, true);
+
+        let condition = |_sid, doc, _score| doc % 2 == 1;
+
+        let mut just_odds = ConditionalTopSegmentCollector::new(0, LIMIT, condition);
+
+        for i in 0..4 {
+            nil_collector.collect(i, 420.0);
+            top_collector.collect(i, 420.0);
+            just_odds.collect(i, 420.0);
+        }
+
+        assert_eq!(0, nil_collector.len());
+        assert_eq!(4, top_collector.len());
+        assert_eq!(2, just_odds.len());
+
+        // Verify that the collected items respect the condition
+        for scored in just_odds.harvest() {
+            let DocAddress(seg_id, doc_id) = scored.doc;
+            assert!(condition(seg_id, doc_id, scored.score))
+        }
+    }
+
+    #[test]
     fn collection_with_a_marker_smoke() {
         // Doc id=4 on segment=0 had score=0.5
         let marker = Scored::new(0.5, DocAddress(0, 4));
-        let mut collector = TopSegmentCollector::new(0, 3, Some(marker));
+        let mut collector = ConditionalTopSegmentCollector::new(0, 3, marker);
 
         // Every doc with a higher score has appeared already
         collector.collect(7, 0.6);
@@ -159,7 +229,7 @@ mod tests {
 
     #[test]
     fn fruits_are_merged_correctly() {
-        let collector = TopCollector::with_limit(5, None);
+        let collector = ConditionalTopCollector::with_limit(5, true);
 
         let merged = collector
             .merge_fruits(vec![
