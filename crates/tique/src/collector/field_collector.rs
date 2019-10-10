@@ -2,41 +2,34 @@ use tantivy::{collector::Collector, schema::Field, SegmentReader};
 
 use super::{CollectCondition, CustomScoreTopCollector, SearchMarker};
 
-//XXX This is very awkward
-pub struct FastFieldTopCollector<C>(C);
-
-macro_rules! impl_fast_field_top_collector {
+macro_rules! fast_field_custom_score_collector {
     ($name: ident, $type: ty, $reader: ident) => {
-        impl<C> FastFieldTopCollector<C>
+        pub fn $name<C>(
+            field: Field,
+            limit: usize,
+            condition: C,
+        ) -> impl Collector<Fruit = Vec<SearchMarker<$type>>>
         where
             C: CollectCondition<$type> + Sync,
         {
-            pub fn $name(
-                field: Field,
-                limit: usize,
-                condition: C,
-            ) -> impl Collector<Fruit = Vec<SearchMarker<$type>>> {
-                let scorer_for_segment = move |reader: &SegmentReader| {
-                    let scorer = reader
-                        .fast_fields()
-                        .$reader(field)
-                        .expect("Not a fast field");
-                    Box::new(move |doc_id| scorer.get(doc_id))
-                };
-                CustomScoreTopCollector::new(limit, condition, scorer_for_segment)
-            }
+            let scorer_for_segment = move |reader: &SegmentReader| {
+                let scorer = reader
+                    .fast_fields()
+                    .$reader(field)
+                    .expect("Not a fast field");
+                move |doc_id| scorer.get(doc_id)
+            };
+            CustomScoreTopCollector::new(limit, condition, scorer_for_segment)
         }
     };
 }
 
-impl_fast_field_top_collector!(top_i64, i64, i64);
-impl_fast_field_top_collector!(top_u64, u64, u64);
-// TODO when the f64 implementation lands
-// impl_fast_field_top_collector!(top_f64, f64, f64);
+fast_field_custom_score_collector!(ordered_by_i64_fast_field, i64, i64);
+fast_field_custom_score_collector!(ordered_by_u64_fast_field, u64, u64);
 
 #[cfg(test)]
 mod tests {
-    use super::FastFieldTopCollector;
+    use super::*;
 
     use tantivy::{
         query::AllQuery,
@@ -69,8 +62,8 @@ mod tests {
         let reader = index.reader()?;
         let searcher = reader.searcher();
 
-        let top_u64_collector = FastFieldTopCollector::top_u64(u64_field, 2, true);
-        let top_i64_collector = FastFieldTopCollector::top_i64(i64_field, 2, true);
+        let top_u64_collector = ordered_by_u64_fast_field(u64_field, 2, true);
+        let top_i64_collector = ordered_by_i64_fast_field(i64_field, 2, true);
 
         let (top_u64, top_i64) =
             searcher.search(&AllQuery, &(top_u64_collector, top_i64_collector))?;
