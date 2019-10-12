@@ -7,6 +7,29 @@ use tantivy::{
 
 use super::{Scored, TopK};
 
+pub trait CollectConditionFactory<T>: Clone {
+    type Type: CollectCondition<T>;
+    fn for_segment(&self, reader: &SegmentReader) -> Self::Type;
+}
+
+impl<T, C, F> CollectConditionFactory<T> for F
+where
+    F: Clone + Fn(&SegmentReader) -> C,
+    C: CollectCondition<T>,
+{
+    type Type = C;
+    fn for_segment(&self, reader: &SegmentReader) -> Self::Type {
+        (self)(reader)
+    }
+}
+
+impl<T> CollectConditionFactory<T> for bool {
+    type Type = bool;
+    fn for_segment(&self, _reader: &SegmentReader) -> Self::Type {
+        *self
+    }
+}
+
 pub trait CollectCondition<T>: 'static + Clone {
     fn check(&self, segment_id: SegmentLocalId, doc_id: DocId, score: T) -> bool;
 }
@@ -40,25 +63,25 @@ where
 
 pub struct ConditionalTopCollector<T, F>
 where
-    F: CollectCondition<T>,
+    F: CollectConditionFactory<T>,
 {
     pub limit: usize,
-    condition: F,
+    condition_factory: F,
     _marker: PhantomData<T>,
 }
 
 impl<T, F> ConditionalTopCollector<T, F>
 where
     T: PartialOrd,
-    F: CollectCondition<T>,
+    F: CollectConditionFactory<T>,
 {
-    pub fn with_limit(limit: usize, condition: F) -> Self {
+    pub fn with_limit(limit: usize, condition_factory: F) -> Self {
         if limit < 1 {
             panic!("Limit must be greater than 0");
         }
         ConditionalTopCollector {
             limit,
-            condition,
+            condition_factory,
             _marker: PhantomData,
         }
     }
@@ -78,10 +101,10 @@ where
 
 impl<F> Collector for ConditionalTopCollector<Score, F>
 where
-    F: CollectCondition<Score> + Sync,
+    F: CollectConditionFactory<Score> + Sync,
 {
     type Fruit = Vec<SearchMarker<Score>>;
-    type Child = ConditionalTopSegmentCollector<Score, F>;
+    type Child = ConditionalTopSegmentCollector<Score, F::Type>;
 
     fn requires_scoring(&self) -> bool {
         true
@@ -94,12 +117,12 @@ where
     fn for_segment(
         &self,
         segment_id: SegmentLocalId,
-        _reader: &SegmentReader,
+        reader: &SegmentReader,
     ) -> Result<Self::Child> {
         Ok(ConditionalTopSegmentCollector::new(
             segment_id,
             self.limit,
-            self.condition.clone(),
+            self.condition_factory.for_segment(reader),
         ))
     }
 }
@@ -260,5 +283,47 @@ mod tests {
             ],
             merged
         );
+    }
+
+    use tantivy::{query::AllQuery, schema, Document, Index, Result};
+
+    #[test]
+    fn only_collect_even_public_ids() -> Result<()> {
+        let mut builder = schema::SchemaBuilder::new();
+
+        let id_field = builder.add_u64_field("public_id", schema::FAST);
+
+        let index = Index::create_in_ram(builder.build());
+
+        let mut writer = index.writer_with_num_threads(1, 50_000_000)?;
+
+        const NUM_DOCS: u64 = 10;
+        for public_id in 0..NUM_DOCS {
+            let mut doc = Document::new();
+            doc.add_u64(id_field, public_id);
+            writer.add_document(doc);
+        }
+
+        writer.commit()?;
+
+        let reader = index.reader()?;
+        let searcher = reader.searcher();
+
+        let condition_factory = |reader: &SegmentReader| {
+            let id_reader = reader.fast_fields().u64(id_field).unwrap();
+
+            move |_segment_id, doc_id, _score| {
+                let stored_id = id_reader.get(doc_id);
+                stored_id % 2 == 0
+            }
+        };
+        let results = searcher.search(
+            &AllQuery,
+            &ConditionalTopCollector::with_limit(NUM_DOCS as usize, condition_factory),
+        )?;
+
+        assert_eq!(5, results.len());
+
+        Ok(())
     }
 }

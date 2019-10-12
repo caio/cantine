@@ -4,12 +4,13 @@ use tantivy::{
 };
 
 use super::{
-    CollectCondition, ConditionalTopCollector, ConditionalTopSegmentCollector, SearchMarker,
+    CollectCondition, CollectConditionFactory, ConditionalTopCollector,
+    ConditionalTopSegmentCollector, SearchMarker,
 };
 
 pub struct CustomScoreTopCollector<T, C, F>
 where
-    C: CollectCondition<T>,
+    C: CollectConditionFactory<T>,
 {
     scorer_factory: F,
     collector: ConditionalTopCollector<T, C>,
@@ -19,7 +20,7 @@ where
 impl<T, C, F> CustomScoreTopCollector<T, C, F>
 where
     T: 'static + PartialOrd + Copy + Sync + Send,
-    C: CollectCondition<T>,
+    C: CollectConditionFactory<T>,
     F: 'static + Sync + DocScorerFactory<T>,
 {
     pub fn new(limit: usize, condition: C, scorer_factory: F) -> Self {
@@ -51,11 +52,11 @@ where
 impl<T, C, F> Collector for CustomScoreTopCollector<T, C, F>
 where
     T: 'static + PartialOrd + Copy + Sync + Send,
-    C: CollectCondition<T> + Sync,
+    C: CollectConditionFactory<T> + Sync,
     F: 'static + DocScorerFactory<T>,
 {
     type Fruit = Vec<SearchMarker<T>>;
-    type Child = CustomScoreTopSegmentCollector<T, C, F::Type>;
+    type Child = CustomScoreTopSegmentCollector<T, C::Type, F::Type>;
 
     fn requires_scoring(&self) -> bool {
         false
@@ -74,7 +75,7 @@ where
         Ok(CustomScoreTopSegmentCollector::new(
             segment_id,
             self.collector.limit,
-            self.condition.clone(),
+            self.condition.for_segment(reader),
             scorer,
         ))
     }

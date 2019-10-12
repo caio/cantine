@@ -1,16 +1,16 @@
 use tantivy::{collector::Collector, schema::Field, SegmentReader};
 
-use super::{CollectCondition, CustomScoreTopCollector, SearchMarker};
+use super::{CollectConditionFactory, CustomScoreTopCollector, SearchMarker};
 
 macro_rules! fast_field_custom_score_collector {
     ($name: ident, $type: ty, $reader: ident) => {
         pub fn $name<C>(
             field: Field,
             limit: usize,
-            condition: C,
+            condition_factory: C,
         ) -> impl Collector<Fruit = Vec<SearchMarker<$type>>>
         where
-            C: CollectCondition<$type> + Sync,
+            C: CollectConditionFactory<$type> + Sync,
         {
             let scorer_for_segment = move |reader: &SegmentReader| {
                 let scorer = reader
@@ -19,7 +19,7 @@ macro_rules! fast_field_custom_score_collector {
                     .expect("Not a fast field");
                 move |doc_id| scorer.get(doc_id)
             };
-            CustomScoreTopCollector::new(limit, condition, scorer_for_segment)
+            CustomScoreTopCollector::new(limit, condition_factory, scorer_for_segment)
         }
     };
 }
