@@ -13,8 +13,8 @@ where
     C: CollectConditionFactory<T>,
 {
     scorer_factory: F,
+    condition_factory: C,
     collector: ConditionalTopCollector<T, C>,
-    condition: C,
 }
 
 impl<T, C, F> CustomScoreTopCollector<T, C, F>
@@ -23,11 +23,11 @@ where
     C: CollectConditionFactory<T>,
     F: 'static + Sync + DocScorerFactory<T>,
 {
-    pub fn new(limit: usize, condition: C, scorer_factory: F) -> Self {
+    pub fn new(limit: usize, condition_factory: C, scorer_factory: F) -> Self {
         Self {
-            collector: ConditionalTopCollector::with_limit(limit, condition.clone()),
+            collector: ConditionalTopCollector::with_limit(limit, condition_factory.clone()),
             scorer_factory,
-            condition,
+            condition_factory,
         }
     }
 }
@@ -75,7 +75,7 @@ where
         Ok(CustomScoreTopSegmentCollector::new(
             segment_id,
             self.collector.limit,
-            self.condition.for_segment(reader),
+            self.condition_factory.for_segment(reader),
             scorer,
         ))
     }
