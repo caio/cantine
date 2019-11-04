@@ -1,13 +1,14 @@
-use std::collections::HashMap;
-use std::io::{self, BufRead, Result};
-use std::num::NonZeroUsize;
-use std::path::Path;
-use std::sync::{mpsc::channel, Arc, RwLock};
-use std::thread::spawn;
-use std::time::Instant;
+use std::{
+    io::{self, BufRead, Result},
+    num::NonZeroUsize,
+    path::Path,
+    result::Result as StdResult,
+    sync::{mpsc::channel, Arc, RwLock},
+    thread::spawn,
+    time::Instant,
+};
 
 use crossbeam_channel::unbounded;
-use serde::{Deserialize, Serialize};
 use serde_json;
 use structopt::StructOpt;
 
@@ -19,29 +20,7 @@ use tantivy::{
 };
 
 use cantine::database::BincodeDatabase;
-
-#[derive(Deserialize, Serialize, Debug, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct CerberusRecipeModel {
-    recipe_id: u64,
-    name: String,
-    slug: String,
-    site_name: String,
-    crawl_url: String,
-    ingredients: Vec<String>,
-    instructions: Vec<String>,
-    diets: HashMap<String, f64>,
-
-    prep_time: Option<u32>,
-    total_time: Option<u32>,
-    cook_time: Option<u32>,
-
-    calories: Option<f64>,
-    fat_content: Option<f64>,
-    carbohydrate_content: Option<f64>,
-    protein_content: Option<f64>,
-    similar_recipe_ids: Vec<u64>,
-}
+use cantine::Recipe;
 
 #[derive(Debug, StructOpt)]
 #[structopt(name = "load")]
@@ -56,7 +35,7 @@ pub struct LoadOptions {
     output_dir: String,
 }
 
-fn does_not_exist(dir_path: String) -> std::result::Result<(), String> {
+fn does_not_exist(dir_path: String) -> StdResult<(), String> {
     if Path::new(dir_path.as_str()).exists() {
         Err("Path already exists".to_owned())
     } else {
@@ -64,7 +43,7 @@ fn does_not_exist(dir_path: String) -> std::result::Result<(), String> {
     }
 }
 
-fn make_document(fields: &IndexFields, recipe: &CerberusRecipeModel) -> Document {
+fn make_document(fields: &IndexFields, recipe: &Recipe) -> Document {
     let mut doc = Document::new();
     //
     doc.add_u64(fields.id, recipe.recipe_id);
@@ -134,7 +113,7 @@ impl IndexFields {
     }
 }
 
-pub fn load(options: LoadOptions) -> Result<()> {
+fn load(options: LoadOptions) -> Result<()> {
     println!("Started with {:?}", &options);
 
     let base_path = Path::new(options.output_dir.as_str());
@@ -168,8 +147,8 @@ pub fn load(options: LoadOptions) -> Result<()> {
 
         let fields = fields.clone();
         workers.push(spawn(move || {
-            for line in receiver.iter() {
-                let recipe: CerberusRecipeModel =
+            for line in receiver {
+                let recipe: Recipe =
                     serde_json::from_str(line.as_ref()).expect("valid recipe json");
 
                 writer
