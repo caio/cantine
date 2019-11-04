@@ -1,223 +1,138 @@
+use std::{
+    fs::File,
+    io::{Error, ErrorKind, Result},
+    ops::Deref,
+};
+
 use memmap::{MmapMut, MmapOptions};
-use std::fs::{File, OpenOptions};
-use std::io;
-use std::path::Path;
 
-type Result<T> = super::Result<T>;
-
-pub struct AppendOnlyMappedFile {
+pub(super) struct AppendOnlyMappedFile {
     file: File,
-    mmap: Option<MmapMut>,
+    mmap: MmapMut,
+    write_from: usize,
 }
 
 impl AppendOnlyMappedFile {
-    pub fn new(path: &Path) -> Result<AppendOnlyMappedFile> {
-        let file = OpenOptions::new()
-            .create(true)
-            .read(true)
-            .append(true)
-            .open(path)?;
+    pub fn open(file: File) -> Result<AppendOnlyMappedFile> {
+        let write_from = file.metadata()?.len() as usize;
+        let mmap = unsafe { MmapOptions::new().map_mut(&file)? };
+        Ok(AppendOnlyMappedFile {
+            file,
+            mmap,
+            write_from,
+        })
+    }
 
-        let mut db = AppendOnlyMappedFile { file, mmap: None };
-
-        db.remap()?;
-
-        Ok(db)
+    pub fn set_write_from(&mut self, write_from: usize) -> Result<()> {
+        if write_from <= self.len() {
+            self.write_from = write_from;
+            Ok(())
+        } else {
+            Err(Error::new(
+                ErrorKind::InvalidInput,
+                "write_from must be <= len()",
+            ))
+        }
     }
 
     pub fn len(&self) -> usize {
-        self.mmap.as_ref().map_or(0, |mmap| mmap.len())
+        self.mmap.len()
     }
 
-    pub fn append(&mut self, data: &[u8]) -> Result<()> {
-        let current_len = self.len();
-        let target_size = current_len + data.len();
+    pub fn append(&mut self, data: &[u8]) -> Result<usize> {
+        let read_from = self.write_from;
+        let final_size = read_from + data.len();
 
-        self.file.set_len(target_size as u64)?;
-        self.remap()?;
-
-        let mmap = self.mmap.as_mut().expect("Impossible?");
-        mmap[current_len..].copy_from_slice(data);
-        Ok(())
-    }
-
-    fn remap(&mut self) -> Result<()> {
-        if self.file.metadata()?.len() > 0 {
-            self.mmap
-                .replace(unsafe { MmapOptions::new().map_mut(&self.file)? });
+        if final_size > self.mmap.len() {
+            self.file.set_len(final_size as u64)?;
+            self.mmap = unsafe { MmapOptions::new().map_mut(&self.file)? };
         }
 
-        Ok(())
+        self.mmap[read_from..final_size].copy_from_slice(data);
+        self.write_from = final_size;
+        Ok(read_from)
     }
+}
 
-    #[cfg(test)]
-    pub fn flush(&self) -> Result<()> {
-        self.mmap.as_ref().map_or(Ok(()), |mmap| mmap.flush())
-    }
+impl Deref for AppendOnlyMappedFile {
+    type Target = [u8];
 
-    pub fn at_offset(&self, offset: usize) -> Result<&[u8]> {
-        let mmap = self
-            .mmap
-            .as_ref()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "No mmap found. File empty?"))?;
-
-        if offset > mmap.len() {
-            Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "Can't read beyond the mmap",
-            ))
-        } else {
-            Ok(&mmap[offset..])
-        }
-    }
-
-    pub fn each_chunk<F>(&self, chunk_size: usize, mut mapper: F) -> Result<()>
-    where
-        F: FnMut(&[u8]) -> Result<(bool)>,
-    {
-        match self.mmap.as_ref().map(|m| m.chunks(chunk_size)) {
-            None => Ok(()),
-            Some(iter) => {
-                for chunk in iter {
-                    if !mapper(chunk)? {
-                        break;
-                    };
-                }
-                Ok(())
-            }
-        }
+    #[inline]
+    fn deref(&self) -> &[u8] {
+        &self.mmap
     }
 }
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
+
     use tempfile;
 
-    use byteorder::ReadBytesExt;
-
     fn open_empty() -> Result<AppendOnlyMappedFile> {
-        let tmpdir = tempfile::TempDir::new()?;
-        AppendOnlyMappedFile::new(&tmpdir.path().join("db.bin"))
+        let file = tempfile::tempfile()?;
+        file.set_len(10)?;
+        let db = AppendOnlyMappedFile::open(file)?;
+        Ok(db)
     }
 
     #[test]
-    fn can_open_empty() {
-        assert!(open_empty().is_ok());
-    }
-
-    #[test]
-    fn can_flush_empty_db() -> Result<()> {
-        open_empty()?.flush()
-    }
-
-    #[test]
-    fn can_remap_empty_db() -> Result<()> {
-        open_empty()?.remap()
-    }
-
-    #[test]
-    fn cannot_read_empty_db() -> Result<()> {
-        assert!(open_empty()?.at_offset(0).is_err());
+    fn open_starts_at_end() -> Result<()> {
+        let db = open_empty()?;
+        assert_eq!(db.len(), db.write_from);
         Ok(())
     }
 
     #[test]
-    fn can_append_and_read_on_empty() -> Result<()> {
+    fn cannot_set_offset_beyond_len() -> Result<()> {
         let mut db = open_empty()?;
-        let data: &[u8] = &[1, 2, 3, 4, 5];
-
-        db.append(data)?;
-
-        assert_eq!(data, db.at_offset(0)?);
+        assert!(db.set_write_from(db.len() + 1).is_err());
         Ok(())
     }
 
     #[test]
-    fn length_grows_along_with_append_size() -> Result<()> {
+    fn can_write_and_read() -> Result<()> {
         let mut db = open_empty()?;
+        db.set_write_from(0)?;
 
-        assert_eq!(0, db.len());
+        let data = [1, 2, 3, 4, 5];
+        let read_from = db.append(&data)?;
 
-        db.append(&[1])?;
-        assert_eq!(1, db.len());
-
-        db.append(&[2])?;
-        assert_eq!(2, db.len());
-
-        db.append(&[3, 4, 5])?;
-        assert_eq!(5, db.len());
-
+        assert_eq!(data, db[read_from..data.len()]);
         Ok(())
     }
 
     #[test]
-    fn cannot_read_beyond_map() -> Result<()> {
+    fn len_does_not_grow_if_not_needed() -> Result<()> {
         let mut db = open_empty()?;
-
-        db.append(&[1, 2, 3, 4, 5])?;
-        assert!(db.at_offset(6).is_err());
+        let initial_len = db.len();
+        db.set_write_from(0)?;
+        db.append(&[1, 2, 3])?;
+        assert_eq!(initial_len, db.len());
         Ok(())
     }
 
     #[test]
-    fn can_operate_existing_db() -> Result<()> {
-        let tmpdir = tempfile::TempDir::new()?;
-        let db_path = tmpdir.path().join("db.bin");
-
-        {
-            let mut db = AppendOnlyMappedFile::new(&db_path)?;
-            db.append(&[1, 2, 3])?;
-            db.flush()?;
-        } // db goes out of scope, all should be synced
-
-        let mut db = AppendOnlyMappedFile::new(&db_path)?;
-        db.append(&[4, 5])?;
-        assert_eq!(&[1, 2, 3, 4, 5], db.at_offset(0)?);
-
-        Ok(())
-    }
-
-    #[test]
-    fn can_use_chunks_on_empty() -> Result<()> {
-        let mut tick = 0;
-
-        open_empty()?.each_chunk(1, |_| {
-            tick += 1;
-            Ok(true)
-        })?;
-
-        assert_eq!(0, tick);
-        Ok(())
-    }
-
-    #[test]
-    fn chunking_works() -> Result<()> {
+    fn len_grows_when_appending() -> Result<()> {
         let mut db = open_empty()?;
-        db.append(&[1, 2, 3, 4, 5, 6])?;
-
-        db.each_chunk(2, |chunk| {
-            let mut cursor = io::Cursor::new(&chunk);
-            assert_eq!(cursor.read_u8()? + 1, cursor.read_u8()?);
-            Ok(true)
-        })?;
-
+        let initial_len = db.len();
+        db.append(&[1, 2, 3])?;
+        assert_eq!(initial_len + 3, db.len());
         Ok(())
     }
 
     #[test]
-    fn can_stop_chunking() -> Result<()> {
+    fn len_grows_correctly_at_boundary() -> Result<()> {
         let mut db = open_empty()?;
-        db.append(&[1, 2, 3, 4, 5, 6])?;
+        let initial_len = db.len();
+        let data = [1u8, 2, 3, 4, 5];
 
-        let mut tick = 0;
-        db.each_chunk(1, |chunk| {
-            tick += 1;
-            Ok(chunk[0] < 5)
-        })?;
+        let write_from = initial_len - (data.len() - 2);
+        db.set_write_from(write_from)?;
+        db.append(&data)?;
 
-        assert_eq!(5, tick);
+        assert_eq!(initial_len + 2, db.len());
+        assert_eq!(data, db[write_from..]);
         Ok(())
     }
 }

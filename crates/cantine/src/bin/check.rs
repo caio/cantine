@@ -43,7 +43,7 @@ fn check(options: CheckOptions) -> Result<()> {
     // Nothing to check at the tantivy index atm
 
     println!("Loading database");
-    let db = Arc::new(BincodeDatabase::new(db_path.as_path())?);
+    let db = Arc::new(BincodeDatabase::open(db_path.as_path())?);
 
     let mut workers = Vec::new();
     let (line_sender, line_receiver) = unbounded::<String>();

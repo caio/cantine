@@ -1,6 +1,6 @@
 use std::{
     io::{self, BufRead, Result},
-    num::NonZeroUsize,
+    num::{NonZeroU64, NonZeroUsize},
     path::Path,
     result::Result as StdResult,
     sync::{mpsc::channel, Arc, RwLock},
@@ -35,6 +35,9 @@ pub struct LoadOptions {
     /// Number of worker threads to start
     #[structopt(short, long, default_value = "4")]
     num_producers: NonZeroUsize,
+    /// Size in MBs to pre-allocate the database
+    #[structopt(short, long, default_value = "1000")]
+    database_size: NonZeroU64,
     /// Path to a non-existing directory
     #[structopt(validator = does_not_exist)]
     output_dir: String,
@@ -167,7 +170,8 @@ fn load(options: LoadOptions) -> Result<()> {
     }
 
     let disk_writer = spawn(move || {
-        let mut db = BincodeDatabase::new(&db_path).unwrap();
+        let mut db =
+            BincodeDatabase::create(&db_path, options.database_size.get() * 1024 * 1024).unwrap();
 
         let cur = Instant::now();
         let mut num_recipes = 0;
