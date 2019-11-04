@@ -15,11 +15,14 @@ use structopt::StructOpt;
 use cantine::database::BincodeDatabase;
 use cantine::Recipe;
 
+/// Checks data generated via `load` against a stream of recipes
 #[derive(Debug, StructOpt)]
 #[structopt(name = "check")]
 pub struct CheckOptions {
+    /// Number of worker threads to start
     #[structopt(short, long, default_value = "4")]
     num_checkers: NonZeroUsize,
+    /// Path to the data directory that will be checked
     #[structopt(validator = is_dir)]
     base_path: PathBuf,
 }

@@ -22,15 +22,20 @@ use tantivy::{
 use cantine::database::BincodeDatabase;
 use cantine::Recipe;
 
+/// Loads recipes as json into cantine's database and index
 #[derive(Debug, StructOpt)]
 #[structopt(name = "load")]
 pub struct LoadOptions {
+    /// Size for tantivy's writer buffer in MBs
     #[structopt(short, long, default_value = "400")]
     buffer_size: NonZeroUsize,
+    /// How many recipes to ingest before comitting
     #[structopt(short, long, default_value = "100000")]
     commit_every: NonZeroUsize,
+    /// Number of worker threads to start
     #[structopt(short, long, default_value = "4")]
     num_producers: NonZeroUsize,
+    /// Path to a non-existing directory
     #[structopt(validator = does_not_exist)]
     output_dir: String,
 }
