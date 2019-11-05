@@ -6,8 +6,7 @@ use std::{
     path::Path,
 };
 
-use bincode;
-
+use bincode::{deserialize, serialize, serialized_size};
 use byteorder::LittleEndian;
 use serde::{de::DeserializeOwned, Serialize};
 use zerocopy::{AsBytes, ByteSlice, FromBytes, LayoutVerified, U64};
@@ -15,7 +14,6 @@ use zerocopy::{AsBytes, ByteSlice, FromBytes, LayoutVerified, U64};
 use super::mapped_file::AppendOnlyMappedFile;
 
 pub struct BincodeDatabase<T> {
-    // TODO flock()
     log: File,
     data: AppendOnlyMappedFile,
     index: HashMap<u64, usize>,
@@ -116,10 +114,10 @@ where
         // so we need to figure out where to start writing from
         // XXX Should be able to make this less awkward
         if max_offset > 0 {
-            let last_item: T = bincode::deserialize(&data[max_offset..])
+            let last_item: T = deserialize(&data[max_offset..])
                 .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Failed to deserialize"))?;
-            let item_size = bincode::serialized_size(&last_item)
-                .expect("size after deserialize doesn't fail") as usize;
+            let item_size =
+                serialized_size(&last_item).expect("size after deserialize doesn't fail") as usize;
 
             data.set_write_from(max_offset + item_size)?;
         } else {
@@ -135,7 +133,7 @@ where
     }
 
     pub fn add(&mut self, id: u64, obj: &T) -> Result<()> {
-        let data = bincode::serialize(obj).map_err(|_| {
+        let data = serialize(obj).map_err(|_| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
                 "Failed to serialize data being added",
@@ -157,14 +155,12 @@ where
         match self.index.get(&id) {
             None => Ok(None),
 
-            Some(&offset) => Ok(Some(bincode::deserialize(&self.data[offset..]).map_err(
-                |_| {
-                    io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "Failed to deserialize stored data",
-                    )
-                },
-            )?)),
+            Some(&offset) => Ok(Some(deserialize(&self.data[offset..]).map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Failed to deserialize stored data",
+                )
+            })?)),
         }
     }
 }
@@ -187,21 +183,9 @@ mod tests {
     use serde::Deserialize;
 
     #[derive(Serialize, Deserialize, Debug, PartialEq)]
-    pub struct Recipe {
-        pub id: u64,
-        name: String,
-    }
+    struct Item(u64);
 
-    impl Recipe {
-        fn new(id: u64) -> Recipe {
-            Recipe {
-                id,
-                name: "hue".to_owned(),
-            }
-        }
-    }
-
-    fn open_empty() -> Result<BincodeDatabase<Recipe>> {
+    fn open_empty() -> Result<BincodeDatabase<Item>> {
         let tmpdir = tempfile::TempDir::new().unwrap();
         BincodeDatabase::create(&tmpdir.path(), 10)
     }
@@ -221,9 +205,9 @@ mod tests {
     fn can_add_and_get() -> Result<()> {
         let mut db = open_empty()?;
 
-        let one = Recipe::new(1);
-        let two = Recipe::new(2);
-        let three = Recipe::new(3);
+        let one = Item(1);
+        let two = Item(2);
+        let three = Item(3);
 
         db.add(1, &one)?;
         db.add(2, &two)?;
@@ -241,8 +225,8 @@ mod tests {
         let tmpdir = tempfile::TempDir::new()?;
         let db_path = tmpdir.path();
 
-        BincodeDatabase::<Recipe>::create(&db_path, 1)?;
-        let overwrite_result = BincodeDatabase::<Recipe>::create(&db_path, 1);
+        BincodeDatabase::<Item>::create(&db_path, 1)?;
+        let overwrite_result = BincodeDatabase::<Item>::create(&db_path, 1);
         assert!(overwrite_result.is_err());
 
         Ok(())
@@ -258,19 +242,19 @@ mod tests {
         {
             let mut db = BincodeDatabase::create(&db_path, DB_SIZE)?;
 
-            db.add(1, &Recipe::new(1))?;
-            db.add(2, &Recipe::new(2))?;
+            db.add(1, &Item(1))?;
+            db.add(2, &Item(2))?;
         }
 
         {
             let mut db = BincodeDatabase::open(&db_path)?;
-            db.add(3, &Recipe::new(3))?;
+            db.add(3, &Item(3))?;
         }
 
         let existing_db = BincodeDatabase::open(&db_path)?;
-        assert_eq!(Some(Recipe::new(1)), existing_db.get(1)?);
-        assert_eq!(Some(Recipe::new(2)), existing_db.get(2)?);
-        assert_eq!(Some(Recipe::new(3)), existing_db.get(3)?);
+        assert_eq!(Some(Item(1)), existing_db.get(1)?);
+        assert_eq!(Some(Item(2)), existing_db.get(2)?);
+        assert_eq!(Some(Item(3)), existing_db.get(3)?);
 
         let data_file = OpenOptions::new()
             .read(true)
