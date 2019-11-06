@@ -6,31 +6,27 @@ use std::{
 
 use memmap::{MmapMut, MmapOptions};
 
-pub(super) struct AppendOnlyMappedFile {
+pub(super) struct MappedFile {
     file: File,
     mmap: MmapMut,
-    write_from: usize,
+    offset: usize,
 }
 
-impl AppendOnlyMappedFile {
-    pub fn open(file: File) -> Result<AppendOnlyMappedFile> {
-        let write_from = file.metadata()?.len() as usize;
+impl MappedFile {
+    pub fn open(file: File) -> Result<MappedFile> {
+        let offset = file.metadata()?.len() as usize;
         let mmap = unsafe { MmapOptions::new().map_mut(&file)? };
-        Ok(AppendOnlyMappedFile {
-            file,
-            mmap,
-            write_from,
-        })
+        Ok(MappedFile { file, mmap, offset })
     }
 
-    pub fn set_write_from(&mut self, write_from: usize) -> Result<()> {
-        if write_from <= self.len() {
-            self.write_from = write_from;
+    pub fn set_append_offset(&mut self, offset: usize) -> Result<()> {
+        if offset <= self.len() {
+            self.offset = offset;
             Ok(())
         } else {
             Err(Error::new(
                 ErrorKind::InvalidInput,
-                "write_from must be <= len()",
+                "offset must be <= len()",
             ))
         }
     }
@@ -40,7 +36,7 @@ impl AppendOnlyMappedFile {
     }
 
     pub fn append(&mut self, data: &[u8]) -> Result<usize> {
-        let read_from = self.write_from;
+        let read_from = self.offset;
         let final_size = read_from + data.len();
 
         if final_size > self.mmap.len() {
@@ -49,12 +45,12 @@ impl AppendOnlyMappedFile {
         }
 
         self.mmap[read_from..final_size].copy_from_slice(data);
-        self.write_from = final_size;
+        self.offset = final_size;
         Ok(read_from)
     }
 }
 
-impl Deref for AppendOnlyMappedFile {
+impl Deref for MappedFile {
     type Target = [u8];
 
     #[inline]
@@ -69,31 +65,31 @@ mod tests {
 
     use tempfile;
 
-    fn open_empty() -> Result<AppendOnlyMappedFile> {
+    fn open_empty() -> Result<MappedFile> {
         let file = tempfile::tempfile()?;
         file.set_len(10)?;
-        let db = AppendOnlyMappedFile::open(file)?;
+        let db = MappedFile::open(file)?;
         Ok(db)
     }
 
     #[test]
     fn open_starts_at_end() -> Result<()> {
         let db = open_empty()?;
-        assert_eq!(db.len(), db.write_from);
+        assert_eq!(db.len(), db.offset);
         Ok(())
     }
 
     #[test]
     fn cannot_set_offset_beyond_len() -> Result<()> {
         let mut db = open_empty()?;
-        assert!(db.set_write_from(db.len() + 1).is_err());
+        assert!(db.set_append_offset(db.len() + 1).is_err());
         Ok(())
     }
 
     #[test]
     fn can_write_and_read() -> Result<()> {
         let mut db = open_empty()?;
-        db.set_write_from(0)?;
+        db.set_append_offset(0)?;
 
         let data = [1, 2, 3, 4, 5];
         let read_from = db.append(&data)?;
@@ -106,7 +102,7 @@ mod tests {
     fn len_does_not_grow_if_not_needed() -> Result<()> {
         let mut db = open_empty()?;
         let initial_len = db.len();
-        db.set_write_from(0)?;
+        db.set_append_offset(0)?;
         db.append(&[1, 2, 3])?;
         assert_eq!(initial_len, db.len());
         Ok(())
@@ -128,7 +124,7 @@ mod tests {
         let data = [1u8, 2, 3, 4, 5];
 
         let write_from = initial_len - (data.len() - 2);
-        db.set_write_from(write_from)?;
+        db.set_append_offset(write_from)?;
         db.append(&data)?;
 
         assert_eq!(initial_len + 2, db.len());

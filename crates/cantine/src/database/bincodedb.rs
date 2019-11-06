@@ -11,11 +11,11 @@ use byteorder::LittleEndian;
 use serde::{de::DeserializeOwned, Serialize};
 use zerocopy::{AsBytes, ByteSlice, FromBytes, LayoutVerified, U64};
 
-use super::mapped_file::AppendOnlyMappedFile;
+use super::mapped_file::MappedFile;
 
 pub struct BincodeDatabase<T> {
     log: File,
-    data: AppendOnlyMappedFile,
+    data: MappedFile,
     index: HashMap<u64, usize>,
     _marker: PhantomData<T>,
 }
@@ -101,7 +101,7 @@ where
             .read(true)
             .append(true)
             .open(base_dir.join(DATA_FILE))?;
-        let mut data = AppendOnlyMappedFile::open(datafile)?;
+        let mut data = MappedFile::open(datafile)?;
 
         if max_offset >= data.len() {
             return Err(io::Error::new(
@@ -119,9 +119,9 @@ where
             let item_size =
                 serialized_size(&last_item).expect("size after deserialize doesn't fail") as usize;
 
-            data.set_write_from(max_offset + item_size)?;
+            data.set_append_offset(max_offset + item_size)?;
         } else {
-            data.set_write_from(0)?;
+            data.set_append_offset(0)?;
         }
 
         Ok(BincodeDatabase {
