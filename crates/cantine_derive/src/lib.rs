@@ -34,7 +34,9 @@ fn make_option_range(field: &Field) -> TokenStream2 {
     let name = &field.ident;
     let ty = extract_type_if_option(&field.ty).unwrap_or(&field.ty);
 
-    quote_spanned! { field.span()=> pub #name: Option<std::ops::Range<#ty>> }
+    quote_spanned! { field.span()=>
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub #name: Option<std::ops::Range<#ty>> }
 }
 
 fn make_vec(field: &Field) -> TokenStream2 {
