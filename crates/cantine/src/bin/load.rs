@@ -8,6 +8,7 @@ use std::{
     time::Instant,
 };
 
+use bincode;
 use crossbeam_channel::unbounded;
 use serde_json;
 use structopt::StructOpt;
@@ -70,38 +71,43 @@ fn make_document(fields: &IndexFields, recipe: &Recipe) -> Document {
     // FIXME actually index the features
     // feats.push((Feature::NumIngredients, recipe.ingredients.len() as u16));
 
-    if let Some(kcal) = recipe.calories {
+    doc.add_bytes(
+        fields.features_bincode,
+        bincode::serialize(&recipe.features).unwrap(),
+    );
+
+    if let Some(kcal) = recipe.features.calories {
         // feats.push((Feature::Calories, kcal as u16))
     }
-    if let Some(fat) = recipe.fat_content {
+    if let Some(fat) = recipe.features.fat_content {
         // feats.push((Feature::FatContent, fat as u16))
     }
-    if let Some(carbs) = recipe.carbohydrate_content {
+    if let Some(carbs) = recipe.features.carbohydrate_content {
         // feats.push((Feature::CarbContent, carbs as u16))
     }
-    if let Some(prot) = recipe.protein_content {
+    if let Some(prot) = recipe.features.protein_content {
         // feats.push((Feature::ProteinContent, prot as u16))
     }
-    if let Some(prep) = recipe.prep_time {
+    if let Some(prep) = recipe.features.prep_time {
         // feats.push((Feature::PrepTime, prep as u16))
     }
-    if let Some(cook) = recipe.cook_time {
+    if let Some(cook) = recipe.features.cook_time {
         // feats.push((Feature::CookTime, cook as u16))
     }
-    if let Some(total) = recipe.total_time {
+    if let Some(total) = recipe.features.total_time {
         // feats.push((Feature::PrepTime, total as u16))
     }
 
-    for (diet, score) in &recipe.diets {
-        // match diet.as_str() {
-        //     "keto" => feats.push((Feature::DietKeto, bucket_threshold(score))),
-        //     "lowcarb" => feats.push((Feature::DietLowCarb, bucket_threshold(score))),
-        //     "paleo" => feats.push((Feature::DietPaleo, bucket_threshold(score))),
-        //     "vegan" => feats.push((Feature::DietVegan, bucket_threshold(score))),
-        //     "vegetarian" => feats.push((Feature::DietVegetarian, bucket_threshold(score))),
-        //     _ => panic!("off!"),
-        // }
-    }
+    // for (diet, score) in &recipe.diets {
+    // match diet.as_str() {
+    //     "keto" => feats.push((Feature::DietKeto, bucket_threshold(score))),
+    //     "lowcarb" => feats.push((Feature::DietLowCarb, bucket_threshold(score))),
+    //     "paleo" => feats.push((Feature::DietPaleo, bucket_threshold(score))),
+    //     "vegan" => feats.push((Feature::DietVegan, bucket_threshold(score))),
+    //     "vegetarian" => feats.push((Feature::DietVegetarian, bucket_threshold(score))),
+    //     _ => panic!("off!"),
+    // }
+    // }
 
     doc
 }
@@ -110,6 +116,7 @@ fn make_document(fields: &IndexFields, recipe: &Recipe) -> Document {
 struct IndexFields {
     id: Field,
     fulltext: Field,
+    features_bincode: Field,
 }
 
 impl IndexFields {
@@ -117,6 +124,7 @@ impl IndexFields {
         IndexFields {
             id: builder.add_u64_field("id", schema::STORED),
             fulltext: builder.add_text_field("fulltext", schema::TEXT),
+            features_bincode: builder.add_bytes_field("features_bincode"),
         }
     }
 }
