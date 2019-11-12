@@ -13,7 +13,7 @@ use serde_json;
 use structopt::StructOpt;
 
 use cantine::database::BincodeDatabase;
-use cantine::Recipe;
+use cantine::model::Recipe;
 
 /// Checks data generated via `load` against a stream of recipes
 #[derive(Debug, StructOpt)]

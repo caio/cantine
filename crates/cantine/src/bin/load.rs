@@ -21,7 +21,7 @@ use tantivy::{
 };
 
 use cantine::database::BincodeDatabase;
-use cantine::Recipe;
+use cantine::model::Recipe;
 
 /// Loads recipes as json into cantine's database and index
 #[derive(Debug, StructOpt)]
