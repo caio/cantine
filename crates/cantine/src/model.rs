@@ -50,31 +50,19 @@ pub struct Features {
     pub num_ingredients: u8,
     pub instructions_length: u32,
 
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub prep_time: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub total_time: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub cook_time: Option<u32>,
 
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub calories: Option<f32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub fat_content: Option<f32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub carbohydrate_content: Option<f32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub protein_content: Option<f32>,
 
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub diet_lowcarb: Option<f32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub diet_vegetarian: Option<f32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub diet_vegan: Option<f32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub diet_keto: Option<f32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub diet_paleo: Option<f32>,
 }
 
@@ -93,13 +81,13 @@ pub enum Sort {
 
 #[derive(Serialize, Deserialize, Debug, Default)]
 pub struct SearchQuery {
-    fulltext: Option<String>,
-    sort: Option<Sort>,
-    num_items: Option<u8>,
-    filters: Option<FeaturesFilterQuery>,
-    agg: Option<FeaturesAggregationQuery>,
+    pub fulltext: Option<String>,
+    pub sort: Option<Sort>,
+    pub num_items: Option<u8>,
+    pub filters: Option<FeaturesFilterQuery>,
+    pub agg: Option<FeaturesAggregationQuery>,
     // TODO decide how to expose After<score,@id>
-    after: Option<String>,
+    pub after: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Default)]

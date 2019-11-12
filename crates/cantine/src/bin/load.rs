@@ -13,14 +13,10 @@ use crossbeam_channel::unbounded;
 use serde_json;
 use structopt::StructOpt;
 
-use tantivy::{
-    self,
-    directory::MmapDirectory,
-    schema::{self, Field, SchemaBuilder},
-    Document, Index,
-};
+use tantivy::{self, directory::MmapDirectory, schema::SchemaBuilder, Document, Index};
 
 use cantine::database::BincodeDatabase;
+use cantine::index::IndexFields;
 use cantine::model::Recipe;
 
 /// Loads recipes as json into cantine's database and index
@@ -72,7 +68,7 @@ fn make_document(fields: &IndexFields, recipe: &Recipe) -> Document {
     // feats.push((Feature::NumIngredients, recipe.ingredients.len() as u16));
 
     doc.add_bytes(
-        fields.features_bincode,
+        fields.features,
         bincode::serialize(&recipe.features).unwrap(),
     );
 
@@ -112,23 +108,6 @@ fn make_document(fields: &IndexFields, recipe: &Recipe) -> Document {
     doc
 }
 
-#[derive(Clone)]
-struct IndexFields {
-    id: Field,
-    fulltext: Field,
-    features_bincode: Field,
-}
-
-impl IndexFields {
-    fn from_builder(builder: &mut SchemaBuilder) -> Self {
-        IndexFields {
-            id: builder.add_u64_field("id", schema::STORED),
-            fulltext: builder.add_text_field("fulltext", schema::TEXT),
-            features_bincode: builder.add_bytes_field("features_bincode"),
-        }
-    }
-}
-
 fn load(options: LoadOptions) -> Result<()> {
     println!("Started with {:?}", &options);
 
@@ -141,7 +120,7 @@ fn load(options: LoadOptions) -> Result<()> {
 
     let mut builder = SchemaBuilder::new();
 
-    let fields = IndexFields::from_builder(&mut builder);
+    let fields = IndexFields::from(&mut builder);
 
     let index =
         Index::open_or_create(MmapDirectory::open(&index_path).unwrap(), builder.build()).unwrap();
