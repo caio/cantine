@@ -41,8 +41,7 @@ fn make_option_range(field: &Field) -> TokenStream2 {
 
 fn make_vec(field: &Field) -> TokenStream2 {
     let name = &field.ident;
-    let ty = extract_type_if_option(&field.ty).unwrap_or(&field.ty);
-    quote_spanned! { field.span()=> pub #name: Vec<#ty> }
+    quote_spanned! { field.span()=> pub #name: Vec<u32> }
 }
 
 fn make_vec_range(field: &Field) -> TokenStream2 {
