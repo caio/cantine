@@ -28,9 +28,9 @@ impl<T> BincodeDatabase<T>
 where
     T: Serialize + DeserializeOwned,
 {
-    pub fn create(base_dir: &Path, initial_size: u64) -> Result<Self> {
-        let log_path = base_dir.join(LOG_FILE);
-        let data_path = base_dir.join(DATA_FILE);
+    pub fn create<P: AsRef<Path>>(base_dir: P, initial_size: u64) -> Result<Self> {
+        let log_path = base_dir.as_ref().join(LOG_FILE);
+        let data_path = base_dir.as_ref().join(DATA_FILE);
 
         if log_path.exists() || data_path.exists() {
             Err(io::Error::new(
@@ -60,7 +60,7 @@ where
         }
     }
 
-    pub fn open(base_dir: &Path) -> Result<Self> {
+    pub fn open<P: AsRef<Path>>(base_dir: P) -> Result<Self> {
         let mut index = HashMap::new();
         let mut max_offset = 0;
 
@@ -68,7 +68,7 @@ where
             .create(true)
             .read(true)
             .append(true)
-            .open(base_dir.join(LOG_FILE))?;
+            .open(base_dir.as_ref().join(LOG_FILE))?;
 
         let mut log_reader = BufReader::new(&log);
         loop {
@@ -100,7 +100,7 @@ where
             .create(true)
             .read(true)
             .append(true)
-            .open(base_dir.join(DATA_FILE))?;
+            .open(base_dir.as_ref().join(DATA_FILE))?;
         let mut data = MappedFile::open(datafile)?;
 
         if max_offset >= data.len() {
@@ -187,7 +187,7 @@ mod tests {
 
     fn open_empty() -> Result<BincodeDatabase<Item>> {
         let tmpdir = tempfile::TempDir::new().unwrap();
-        BincodeDatabase::create(&tmpdir.path(), 10)
+        BincodeDatabase::create(tmpdir, 10)
     }
 
     #[test]
@@ -223,10 +223,9 @@ mod tests {
     #[test]
     fn cannot_overwrite_database() -> Result<()> {
         let tmpdir = tempfile::TempDir::new()?;
-        let db_path = tmpdir.path();
 
-        BincodeDatabase::<Item>::create(&db_path, 1)?;
-        let overwrite_result = BincodeDatabase::<Item>::create(&db_path, 1);
+        BincodeDatabase::<Item>::create(&tmpdir, 1)?;
+        let overwrite_result = BincodeDatabase::<Item>::create(tmpdir, 1);
         assert!(overwrite_result.is_err());
 
         Ok(())
@@ -235,30 +234,29 @@ mod tests {
     #[test]
     fn can_load_existing_database() -> Result<()> {
         let tmpdir = tempfile::TempDir::new()?;
-        let db_path = tmpdir.path();
 
         const DB_SIZE: u64 = 1_000;
 
         {
-            let mut db = BincodeDatabase::create(&db_path, DB_SIZE)?;
+            let mut db = BincodeDatabase::create(&tmpdir, DB_SIZE)?;
 
             db.add(1, &Item(1))?;
             db.add(2, &Item(2))?;
         }
 
         {
-            let mut db = BincodeDatabase::open(&db_path)?;
+            let mut db = BincodeDatabase::open(&tmpdir)?;
             db.add(3, &Item(3))?;
         }
 
-        let existing_db = BincodeDatabase::open(&db_path)?;
+        let existing_db = BincodeDatabase::open(&tmpdir)?;
         assert_eq!(Some(Item(1)), existing_db.get(1)?);
         assert_eq!(Some(Item(2)), existing_db.get(2)?);
         assert_eq!(Some(Item(3)), existing_db.get(3)?);
 
         let data_file = OpenOptions::new()
             .read(true)
-            .open(db_path.join(DATA_FILE))?;
+            .open(tmpdir.path().join(DATA_FILE))?;
         assert_eq!(DB_SIZE, data_file.metadata()?.len());
 
         Ok(())

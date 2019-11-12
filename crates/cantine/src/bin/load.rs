@@ -158,7 +158,7 @@ fn load(options: LoadOptions) -> Result<()> {
 
     let disk_writer = spawn(move || {
         let mut db =
-            BincodeDatabase::create(&db_path, options.database_size.get() * 1024 * 1024).unwrap();
+            BincodeDatabase::create(db_path, options.database_size.get() * 1024 * 1024).unwrap();
 
         let cur = Instant::now();
         let mut num_recipes = 0;

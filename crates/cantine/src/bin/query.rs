@@ -50,9 +50,8 @@ pub fn main() -> Result<(), String> {
         )
         .unwrap();
 
-    // XXX open<P: AsRef<Path>>
     let db: BincodeDatabase<Recipe> =
-        BincodeDatabase::open(&options.base_path.join("database")).unwrap();
+        BincodeDatabase::open(options.base_path.join("database")).unwrap();
 
     let mut recipes: Vec<RecipeCard> = Vec::new();
     for item in topdocs.iter() {
