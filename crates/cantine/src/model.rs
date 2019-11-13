@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::database::DatabaseRecord;
 use cantine_derive::FilterAndAggregation;
 
 #[derive(Deserialize, Serialize, Debug, PartialEq)]
@@ -20,8 +21,18 @@ pub struct Recipe {
     pub features: Features,
 }
 
+impl DatabaseRecord for Recipe {
+    fn get_id(&self) -> u64 {
+        self.recipe_id
+    }
+    fn get_uuid(&self) -> &Uuid {
+        &self.uuid
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Default)]
 pub struct RecipeCard {
+    pub name: String,
     pub uuid: Uuid,
     pub crawl_url: String,
     pub num_ingredients: u8,
@@ -35,6 +46,7 @@ pub struct RecipeCard {
 impl From<Recipe> for RecipeCard {
     fn from(src: Recipe) -> Self {
         Self {
+            name: src.name,
             uuid: src.uuid,
             crawl_url: src.crawl_url,
             num_ingredients: src.features.num_ingredients,

@@ -20,3 +20,7 @@ tantivy = "0.10"
 tempfile = "3"
 uuid = { version = "0.8", features = ["serde"]  }
 zerocopy = "0.2"
+
+[dev-dependencies]
+# v4 feature added to generate test uuids
+uuid = { version = "0.8", features = ["serde", "v4"]  }

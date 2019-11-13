@@ -50,7 +50,6 @@ fn does_not_exist(dir_path: String) -> StdResult<(), String> {
 
 fn make_document(fields: &IndexFields, recipe: &Recipe) -> Document {
     let mut doc = Document::new();
-    //
     doc.add_u64(fields.id, recipe.recipe_id);
 
     let mut fulltext = Vec::new();
@@ -165,7 +164,7 @@ fn load(options: LoadOptions) -> Result<()> {
 
         for recipe in recipe_receiver {
             num_recipes += 1;
-            db.add(recipe.recipe_id, &recipe).unwrap();
+            db.add(&recipe).unwrap();
 
             if num_recipes % options.commit_every.get() == 0 {
                 writer.write().unwrap().commit().unwrap();

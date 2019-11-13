@@ -57,7 +57,7 @@ pub fn main() -> Result<(), String> {
     for item in topdocs.iter() {
         let doc = searcher.doc(item.doc).unwrap();
         if let Some(&Value::U64(id)) = doc.get_first(fields.id) {
-            recipes.push(db.get(id).unwrap().unwrap().into());
+            recipes.push(db.get_by_id(id).unwrap().unwrap().into());
         } else {
             return Err(format!("Found doc without id: {:?}", doc));
         }

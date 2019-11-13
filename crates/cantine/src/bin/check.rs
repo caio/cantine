@@ -58,7 +58,8 @@ fn check(options: CheckOptions) -> Result<()> {
                 let recipe: Recipe =
                     serde_json::from_str(line.as_ref()).expect("valid recipe json");
 
-                let db_recipe = db.get(recipe.recipe_id).unwrap().unwrap();
+                let db_recipe = db.get_by_uuid(&recipe.uuid).unwrap().unwrap();
+                db.get_by_id(recipe.recipe_id).unwrap().unwrap();
 
                 if recipe != db_recipe {
                     panic!(

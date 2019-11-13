@@ -3,12 +3,14 @@ use std::{
     fs::{File, OpenOptions},
     io::{self, prelude::*, BufReader, Result},
     marker::PhantomData,
+    mem::size_of,
     path::Path,
 };
 
 use bincode::{deserialize, serialize, serialized_size};
-use byteorder::LittleEndian;
+use byteorder::NativeEndian;
 use serde::{de::DeserializeOwned, Serialize};
+use uuid::{self, Uuid};
 use zerocopy::{AsBytes, ByteSlice, FromBytes, LayoutVerified, U64};
 
 use super::mapped_file::MappedFile;
@@ -16,17 +18,24 @@ use super::mapped_file::MappedFile;
 pub struct BincodeDatabase<T> {
     log: File,
     data: MappedFile,
-    index: HashMap<u64, usize>,
+
+    uuid_index: HashMap<Uuid, usize>,
+    id_index: HashMap<u64, usize>,
+
     _marker: PhantomData<T>,
 }
 
-const LOG_ENTRY_LEN: usize = 16;
 const LOG_FILE: &str = "log.bin";
 const DATA_FILE: &str = "data.bin";
 
+pub trait DatabaseRecord {
+    fn get_id(&self) -> u64;
+    fn get_uuid(&self) -> &Uuid;
+}
+
 impl<T> BincodeDatabase<T>
 where
-    T: Serialize + DeserializeOwned,
+    T: Serialize + DeserializeOwned + DatabaseRecord,
 {
     pub fn create<P: AsRef<Path>>(base_dir: P, initial_size: u64) -> Result<Self> {
         let log_path = base_dir.as_ref().join(LOG_FILE);
@@ -61,7 +70,9 @@ where
     }
 
     pub fn open<P: AsRef<Path>>(base_dir: P) -> Result<Self> {
-        let mut index = HashMap::new();
+        let mut id_index = HashMap::new();
+        let mut uuid_index = HashMap::new();
+
         let mut max_offset = 0;
 
         let log = OpenOptions::new()
@@ -70,7 +81,8 @@ where
             .append(true)
             .open(base_dir.as_ref().join(LOG_FILE))?;
 
-        let mut log_reader = BufReader::new(&log);
+        let mut log_reader = BufReader::with_capacity(1000 * LOG_ENTRY_LEN, &log);
+
         loop {
             let buf = log_reader.fill_buf()?;
 
@@ -78,22 +90,34 @@ where
                 break;
             }
 
-            let mut num_bytes_read = 0;
+            let mut bytes_consumed = 0;
             for chunk in buf.chunks_exact(LOG_ENTRY_LEN) {
-                num_bytes_read += LOG_ENTRY_LEN;
+                bytes_consumed += LOG_ENTRY_LEN;
 
                 if let Some(entry) = LayoutVerified::new(chunk) {
                     let slice = LogEntrySlice(entry);
                     // No removals, the offsets are always increasing
                     max_offset = slice.0.offset.get() as usize;
                     // Updates are simply same id, larger offset
-                    index.insert(slice.0.id.get(), max_offset as usize);
+                    uuid_index.insert(Uuid::from_bytes(slice.0.uuid), max_offset as usize);
+                    id_index.insert(slice.0.id.get(), max_offset as usize);
                 } else {
                     return Err(io::Error::new(io::ErrorKind::InvalidData, "Log corrupted!"));
                 }
             }
 
-            log_reader.consume(num_bytes_read);
+            // I expected that consume would truncate the buffer and fill_buf
+            // would fill the new extra space, but when LOG_ENTRY_LEN went
+            // unaligned with the default capacity of 8K the surrounding
+            // loop{} never exited.
+            if bytes_consumed == 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("Unexpected {} bytes left unread", buf.len()),
+                ));
+            }
+
+            log_reader.consume(bytes_consumed);
         }
 
         let datafile = OpenOptions::new()
@@ -125,14 +149,15 @@ where
         }
 
         Ok(BincodeDatabase {
-            index,
             log,
             data,
+            uuid_index,
+            id_index,
             _marker: PhantomData,
         })
     }
 
-    pub fn add(&mut self, id: u64, obj: &T) -> Result<()> {
+    pub fn add(&mut self, obj: &T) -> Result<()> {
         let data = serialize(obj).map_err(|_| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -141,35 +166,60 @@ where
         })?;
 
         let read_offset = self.data.append(data.as_slice())?;
-        let entry = LogEntry {
-            id: U64::new(id),
-            offset: U64::new(read_offset as u64),
-        };
-        self.log.write_all(&entry.as_bytes())?;
 
-        self.index.insert(id, read_offset);
+        let uuid = obj.get_uuid();
+        let id = obj.get_id();
+
+        let entry = LogEntry::new(uuid, id, read_offset);
+        self.log.write_all(entry.as_bytes())?;
+
+        self.uuid_index.insert(*uuid, read_offset);
+        self.id_index.insert(id, read_offset);
         Ok(())
     }
 
-    pub fn get(&self, id: u64) -> Result<Option<T>> {
-        match self.index.get(&id) {
-            None => Ok(None),
+    fn deserialize_at(&self, offset: usize) -> Result<Option<T>> {
+        Ok(Some(deserialize(&self.data[offset..]).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Failed to deserialize stored data",
+            )
+        })?))
+    }
 
-            Some(&offset) => Ok(Some(deserialize(&self.data[offset..]).map_err(|_| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "Failed to deserialize stored data",
-                )
-            })?)),
+    pub fn get_by_id(&self, id: u64) -> Result<Option<T>> {
+        match self.id_index.get(&id) {
+            Some(&offset) => self.deserialize_at(offset),
+            None => Ok(None),
+        }
+    }
+
+    pub fn get_by_uuid(&self, uuid: &Uuid) -> Result<Option<T>> {
+        match self.uuid_index.get(uuid) {
+            Some(&offset) => self.deserialize_at(offset),
+            None => Ok(None),
         }
     }
 }
 
+const LOG_ENTRY_LEN: usize = size_of::<LogEntry>();
+
 #[derive(FromBytes, AsBytes)]
 #[repr(C)]
 struct LogEntry {
-    id: U64<LittleEndian>,
-    offset: U64<LittleEndian>,
+    uuid: uuid::Bytes,
+    id: U64<NativeEndian>,
+    offset: U64<NativeEndian>,
+}
+
+impl LogEntry {
+    fn new(uuid: &Uuid, id: u64, offset: usize) -> Self {
+        Self {
+            id: U64::new(id),
+            uuid: *uuid.as_bytes(),
+            offset: U64::new(offset as u64),
+        }
+    }
 }
 
 struct LogEntrySlice<B: ByteSlice>(LayoutVerified<B, LogEntry>);
@@ -182,8 +232,23 @@ mod tests {
 
     use serde::Deserialize;
 
-    #[derive(Serialize, Deserialize, Debug, PartialEq)]
-    struct Item(u64);
+    #[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Copy)]
+    struct Item(u64, Uuid);
+
+    impl Item {
+        fn new(id: u64) -> Self {
+            Self(id, Uuid::new_v4())
+        }
+    }
+
+    impl DatabaseRecord for Item {
+        fn get_id(&self) -> u64 {
+            self.0
+        }
+        fn get_uuid(&self) -> &Uuid {
+            &self.1
+        }
+    }
 
     fn open_empty() -> Result<BincodeDatabase<Item>> {
         let tmpdir = tempfile::TempDir::new().unwrap();
@@ -197,7 +262,8 @@ mod tests {
 
     #[test]
     fn get_on_empty_works() -> Result<()> {
-        assert_eq!(None, open_empty()?.get(1)?);
+        assert_eq!(None, open_empty()?.get_by_uuid(&Uuid::new_v4())?);
+        assert_eq!(None, open_empty()?.get_by_id(42)?);
         Ok(())
     }
 
@@ -205,18 +271,32 @@ mod tests {
     fn can_add_and_get() -> Result<()> {
         let mut db = open_empty()?;
 
-        let one = Item(1);
-        let two = Item(2);
-        let three = Item(3);
+        let one = Item::new(1);
+        let two = Item::new(2);
+        let three = Item::new(3);
 
-        db.add(1, &one)?;
-        db.add(2, &two)?;
-        db.add(3, &three)?;
+        db.add(&one)?;
+        db.add(&two)?;
+        db.add(&three)?;
 
-        assert_eq!(Some(one), db.get(1)?);
-        assert_eq!(Some(three), db.get(3)?);
-        assert_eq!(Some(two), db.get(2)?);
+        assert_eq!(Some(one), db.get_by_id(1)?);
+        assert_eq!(Some(three), db.get_by_id(3)?);
+        assert_eq!(Some(two), db.get_by_id(2)?);
 
+        Ok(())
+    }
+
+    #[test]
+    fn add_updates_both_indices_correctly() -> Result<()> {
+        let mut db = open_empty()?;
+
+        let item = Item::new(42);
+        db.add(&item)?;
+
+        assert_eq!(
+            db.get_by_id(item.get_id())?,
+            db.get_by_uuid(item.get_uuid())?
+        );
         Ok(())
     }
 
@@ -237,23 +317,28 @@ mod tests {
 
         const DB_SIZE: u64 = 1_000;
 
+        let one = Item::new(1);
+        let two = Item::new(2);
+        let three = Item::new(3);
+
         {
             let mut db = BincodeDatabase::create(&tmpdir, DB_SIZE)?;
 
-            db.add(1, &Item(1))?;
-            db.add(2, &Item(2))?;
+            db.add(&one)?;
+            db.add(&two)?;
         }
 
         {
             let mut db = BincodeDatabase::open(&tmpdir)?;
-            db.add(3, &Item(3))?;
+            db.add(&three)?;
         }
 
         let existing_db = BincodeDatabase::open(&tmpdir)?;
-        assert_eq!(Some(Item(1)), existing_db.get(1)?);
-        assert_eq!(Some(Item(2)), existing_db.get(2)?);
-        assert_eq!(Some(Item(3)), existing_db.get(3)?);
+        assert_eq!(Some(one), existing_db.get_by_uuid(one.get_uuid())?);
+        assert_eq!(Some(two), existing_db.get_by_uuid(two.get_uuid())?);
+        assert_eq!(Some(three), existing_db.get_by_uuid(three.get_uuid())?);
 
+        // Shouldn't have grown from DB_SIZE
         let data_file = OpenOptions::new()
             .read(true)
             .open(tmpdir.path().join(DATA_FILE))?;
