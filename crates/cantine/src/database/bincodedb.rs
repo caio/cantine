@@ -25,7 +25,7 @@ pub struct BincodeDatabase<T> {
     _marker: PhantomData<T>,
 }
 
-const OFFSETS_FILE: &str = "log.bin";
+const OFFSETS_FILE: &str = "offsets.bin";
 const DATA_FILE: &str = "data.bin";
 const DATA_HEADER_SIZE: usize = size_of::<u64>();
 
