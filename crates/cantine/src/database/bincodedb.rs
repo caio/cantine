@@ -95,10 +95,9 @@ where
             }
 
             let mut bytes_consumed = 0;
-            for chunk in buf.chunks_exact(LOG_ENTRY_LEN) {
-                bytes_consumed += LOG_ENTRY_LEN;
-
+            for chunk in buf.chunks(LOG_ENTRY_LEN) {
                 if let Some(entry) = LayoutVerified::new(chunk) {
+                    bytes_consumed += LOG_ENTRY_LEN;
                     let slice = LogEntrySlice(entry);
                     // No removals, the offsets are always increasing
                     max_offset = slice.0.offset.get() as usize;
@@ -110,7 +109,6 @@ where
                 }
             }
 
-            assert_eq!(buf.len(), bytes_consumed);
             log_reader.consume(bytes_consumed);
         }
 
