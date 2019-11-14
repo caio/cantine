@@ -1,13 +1,13 @@
 use std::{
     collections::HashMap,
     fs::{File, OpenOptions},
-    io::{self, prelude::*, BufReader, Result, SeekFrom},
+    io::{self, prelude::*, BufReader, Result},
     marker::PhantomData,
     mem::size_of,
     path::Path,
 };
 
-use bincode::{deserialize, serialize};
+use bincode::{deserialize, serialize, serialized_size};
 use byteorder::NativeEndian;
 use serde::{de::DeserializeOwned, Serialize};
 use uuid::{self, Uuid};
@@ -52,10 +52,17 @@ where
                 "initial_size can't be zero",
             ))
         } else {
-            let mut log = File::create(log_path)?;
-            log.write_all(LogHeader::empty().as_bytes())?;
+            OpenOptions::new()
+                .create(true)
+                .read(true)
+                .append(true)
+                .open(log_path)?;
 
-            let data = File::create(data_path)?;
+            let data = OpenOptions::new()
+                .create(true)
+                .read(true)
+                .append(true)
+                .open(data_path)?;
             data.set_len(initial_size)?;
 
             BincodeDatabase::open(base_dir)
@@ -63,29 +70,19 @@ where
     }
 
     pub fn open<P: AsRef<Path>>(base_dir: P) -> Result<Self> {
-        let mut log = OpenOptions::new()
+        let mut id_index = HashMap::new();
+        let mut uuid_index = HashMap::new();
+
+        let mut max_offset = 0;
+
+        let log = OpenOptions::new()
+            .create(true)
             .read(true)
-            .write(true)
+            .append(true)
             .open(base_dir.as_ref().join(LOG_FILE))?;
 
-        let mut header_buf = vec![0u8; LOG_HEADER_LEN];
-        log.read_exact(&mut header_buf)?;
+        let mut log_reader = BufReader::with_capacity(1000 * LOG_ENTRY_LEN, &log);
 
-        let header = if let Some(verified) = LayoutVerified::new(header_buf.as_slice()) {
-            LogHeaderSlice(verified).0
-        } else {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "No header found in log",
-            ));
-        };
-
-        let expected_index_size = header.unique_items.get() as usize;
-
-        let mut id_index = HashMap::with_capacity(expected_index_size);
-        let mut uuid_index = HashMap::with_capacity(expected_index_size);
-
-        let mut log_reader = BufReader::with_capacity(500 * LOG_ENTRY_LEN, &log);
         loop {
             let buf = log_reader.fill_buf()?;
 
@@ -97,40 +94,59 @@ where
             for chunk in buf.chunks_exact(LOG_ENTRY_LEN) {
                 bytes_consumed += LOG_ENTRY_LEN;
 
-                if let Some(verified) = LayoutVerified::new(chunk) {
-                    let entry = LogEntrySlice(verified).0;
+                if let Some(entry) = LayoutVerified::new(chunk) {
+                    let slice = LogEntrySlice(entry);
                     // No removals, the offsets are always increasing
-                    let read_offset = entry.offset.get() as usize;
+                    max_offset = slice.0.offset.get() as usize;
                     // Updates are simply same id, larger offset
-                    uuid_index.insert(Uuid::from_bytes(entry.uuid), read_offset);
-                    id_index.insert(entry.id.get(), read_offset);
+                    uuid_index.insert(Uuid::from_bytes(slice.0.uuid), max_offset as usize);
+                    id_index.insert(slice.0.id.get(), max_offset as usize);
                 } else {
                     return Err(io::Error::new(io::ErrorKind::InvalidData, "Log corrupted!"));
                 }
             }
-            assert!(bytes_consumed == buf.len());
+
+            // I expected that consume would truncate the buffer and fill_buf
+            // would fill the new extra space, but when LOG_ENTRY_LEN went
+            // unaligned with the default capacity of 8K the surrounding
+            // loop{} never exited.
+            if bytes_consumed == 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("Unexpected {} bytes left unread", buf.len()),
+                ));
+            }
 
             log_reader.consume(bytes_consumed);
         }
 
         let datafile = OpenOptions::new()
+            .create(true)
             .read(true)
             .append(true)
             .open(base_dir.as_ref().join(DATA_FILE))?;
         let mut data = MappedFile::open(datafile)?;
 
-        if id_index.len() != expected_index_size {
+        if max_offset >= data.len() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!(
-                    "Log claims {} unique items, but found {}",
-                    expected_index_size,
-                    id_index.len()
-                ),
+                "index points at unreachable offset",
             ));
         }
 
-        data.set_append_offset(header.data_offset.get() as usize)?;
+        // The data file size might be larger than required
+        // so we need to figure out where to start writing from
+        // XXX Should be able to make this less awkward
+        if max_offset > 0 {
+            let last_item: T = deserialize(&data[max_offset..])
+                .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Failed to deserialize"))?;
+            let item_size =
+                serialized_size(&last_item).expect("size after deserialize doesn't fail") as usize;
+
+            data.set_append_offset(max_offset + item_size)?;
+        } else {
+            data.set_append_offset(0)?;
+        }
 
         Ok(BincodeDatabase {
             log,
@@ -149,31 +165,16 @@ where
             )
         })?;
 
-        let data_len = data.len();
         let read_offset = self.data.append(data.as_slice())?;
 
-        let id = obj.get_id();
         let uuid = obj.get_uuid();
+        let id = obj.get_id();
 
         let entry = LogEntry::new(uuid, id, read_offset);
         self.log.write_all(entry.as_bytes())?;
 
-        self.id_index.insert(id, read_offset);
         self.uuid_index.insert(*uuid, read_offset);
-
-        self.update_header(read_offset + data_len)?;
-
-        Ok(())
-    }
-
-    fn update_header(&mut self, append_offset: usize) -> Result<()> {
-        let new_header = LogHeader::new(self.id_index.len(), append_offset);
-
-        // XXX unix lets me write at offset without fidling with seek
-        self.log.seek(SeekFrom::Start(0))?;
-        self.log.write_all(new_header.as_bytes())?;
-        self.log.seek(SeekFrom::End(0))?;
-
+        self.id_index.insert(id, read_offset);
         Ok(())
     }
 
@@ -181,7 +182,7 @@ where
         Ok(Some(deserialize(&self.data[offset..]).map_err(|_| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("Failed to deserialize data at offset {}", offset),
+                "Failed to deserialize stored data",
             )
         })?))
     }
@@ -201,30 +202,7 @@ where
     }
 }
 
-const LOG_HEADER_LEN: usize = size_of::<LogHeader>();
 const LOG_ENTRY_LEN: usize = size_of::<LogEntry>();
-
-#[derive(FromBytes, AsBytes, Debug)]
-#[repr(C)]
-struct LogHeader {
-    unique_items: U64<NativeEndian>,
-    data_offset: U64<NativeEndian>,
-}
-
-impl LogHeader {
-    fn empty() -> Self {
-        Self::new(0, 0)
-    }
-
-    fn new(num_items: usize, offset: usize) -> Self {
-        Self {
-            unique_items: U64::new(num_items as u64),
-            data_offset: U64::new(offset as u64),
-        }
-    }
-}
-
-struct LogHeaderSlice<B: ByteSlice>(LayoutVerified<B, LogHeader>);
 
 #[derive(FromBytes, AsBytes)]
 #[repr(C)]
@@ -273,7 +251,8 @@ mod tests {
     }
 
     fn open_empty() -> Result<BincodeDatabase<Item>> {
-        BincodeDatabase::create(tempfile::TempDir::new()?, 10)
+        let tmpdir = tempfile::TempDir::new().unwrap();
+        BincodeDatabase::create(tmpdir, 10)
     }
 
     #[test]
