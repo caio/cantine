@@ -1,7 +1,7 @@
 use std::{
     fs::File,
     io::{Error, ErrorKind, Result},
-    ops::Deref,
+    ops::{Deref, DerefMut},
 };
 
 use memmap::{MmapMut, MmapOptions};
@@ -31,6 +31,10 @@ impl MappedFile {
         }
     }
 
+    pub fn offset(&self) -> usize {
+        self.offset
+    }
+
     pub fn len(&self) -> usize {
         self.mmap.len()
     }
@@ -56,6 +60,13 @@ impl Deref for MappedFile {
     #[inline]
     fn deref(&self) -> &[u8] {
         &self.mmap
+    }
+}
+
+impl DerefMut for MappedFile {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut [u8] {
+        &mut self.mmap
     }
 }
 

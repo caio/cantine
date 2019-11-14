@@ -1,14 +1,14 @@
 use std::{
     collections::HashMap,
     fs::{File, OpenOptions},
-    io::{self, prelude::*, BufReader, Result},
+    io::{self, prelude::*, BufReader, Cursor, Result},
     marker::PhantomData,
     mem::size_of,
     path::Path,
 };
 
-use bincode::{deserialize, serialize, serialized_size};
-use byteorder::NativeEndian;
+use bincode::{deserialize, serialize};
+use byteorder::{NativeEndian, ReadBytesExt, WriteBytesExt};
 use serde::{de::DeserializeOwned, Serialize};
 use uuid::{self, Uuid};
 use zerocopy::{AsBytes, ByteSlice, FromBytes, LayoutVerified, U64};
@@ -16,7 +16,7 @@ use zerocopy::{AsBytes, ByteSlice, FromBytes, LayoutVerified, U64};
 use super::mapped_file::MappedFile;
 
 pub struct BincodeDatabase<T> {
-    log: File,
+    offsets: File,
     data: MappedFile,
 
     uuid_index: HashMap<Uuid, usize>,
@@ -25,8 +25,9 @@ pub struct BincodeDatabase<T> {
     _marker: PhantomData<T>,
 }
 
-const LOG_FILE: &str = "log.bin";
+const OFFSETS_FILE: &str = "log.bin";
 const DATA_FILE: &str = "data.bin";
+const DATA_HEADER_SIZE: usize = size_of::<u64>();
 
 pub trait DatabaseRecord {
     fn get_id(&self) -> u64;
@@ -38,50 +39,53 @@ where
     T: Serialize + DeserializeOwned + DatabaseRecord,
 {
     pub fn create<P: AsRef<Path>>(base_dir: P, initial_size: u64) -> Result<Self> {
-        let log_path = base_dir.as_ref().join(LOG_FILE);
+        let offsets_path = base_dir.as_ref().join(OFFSETS_FILE);
         let data_path = base_dir.as_ref().join(DATA_FILE);
 
-        if log_path.exists() || data_path.exists() {
+        if offsets_path.exists() || data_path.exists() {
             Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "database files already exist",
             ))
-        } else if initial_size == 0 {
-            Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "initial_size can't be zero",
-            ))
         } else {
-            OpenOptions::new()
-                .create(true)
-                .read(true)
-                .append(true)
-                .open(log_path)?;
+            File::create(offsets_path)?;
 
-            let data = OpenOptions::new()
-                .create(true)
-                .read(true)
-                .append(true)
-                .open(data_path)?;
+            let mut data = File::create(data_path)?;
             data.set_len(initial_size)?;
+
+            // First u64 is the append offset, in this case
+            // we append'll right after the header
+            data.write_u64::<NativeEndian>(DATA_HEADER_SIZE as u64)?;
 
             BincodeDatabase::open(base_dir)
         }
     }
 
     pub fn open<P: AsRef<Path>>(base_dir: P) -> Result<Self> {
-        let mut id_index = HashMap::new();
-        let mut uuid_index = HashMap::new();
+        let mut max_offset = DATA_HEADER_SIZE;
 
-        let mut max_offset = 0;
-
-        let log = OpenOptions::new()
-            .create(true)
+        let offsets = OpenOptions::new()
             .read(true)
             .append(true)
-            .open(base_dir.as_ref().join(LOG_FILE))?;
+            .open(base_dir.as_ref().join(OFFSETS_FILE))?;
 
-        let mut log_reader = BufReader::with_capacity(1000 * LOG_ENTRY_LEN, &log);
+        let offsets_size = offsets.metadata()?.len() as usize;
+        if offsets_size % LOG_ENTRY_LEN != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "Expected offsets file to size to be a multiple of {}. Got {}",
+                    LOG_ENTRY_LEN, offsets_size
+                ),
+            ));
+        }
+
+        let index_size = offsets_size / LOG_ENTRY_LEN;
+        let mut id_index = HashMap::with_capacity(index_size);
+        let mut uuid_index = HashMap::with_capacity(index_size);
+
+        let mut log_reader =
+            BufReader::with_capacity((8192 / LOG_ENTRY_LEN) * LOG_ENTRY_LEN, &offsets);
 
         loop {
             let buf = log_reader.fill_buf()?;
@@ -99,57 +103,46 @@ where
                     // No removals, the offsets are always increasing
                     max_offset = slice.0.offset.get() as usize;
                     // Updates are simply same id, larger offset
-                    uuid_index.insert(Uuid::from_bytes(slice.0.uuid), max_offset as usize);
-                    id_index.insert(slice.0.id.get(), max_offset as usize);
+                    uuid_index.insert(Uuid::from_bytes(slice.0.uuid), max_offset);
+                    id_index.insert(slice.0.id.get(), max_offset);
                 } else {
                     return Err(io::Error::new(io::ErrorKind::InvalidData, "Log corrupted!"));
                 }
             }
 
-            // I expected that consume would truncate the buffer and fill_buf
-            // would fill the new extra space, but when LOG_ENTRY_LEN went
-            // unaligned with the default capacity of 8K the surrounding
-            // loop{} never exited.
-            if bytes_consumed == 0 {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("Unexpected {} bytes left unread", buf.len()),
-                ));
-            }
-
+            assert_eq!(buf.len(), bytes_consumed);
             log_reader.consume(bytes_consumed);
         }
 
         let datafile = OpenOptions::new()
-            .create(true)
             .read(true)
             .append(true)
             .open(base_dir.as_ref().join(DATA_FILE))?;
         let mut data = MappedFile::open(datafile)?;
 
-        if max_offset >= data.len() {
+        if max_offset > data.len() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "index points at unreachable offset",
+                format!("index points at unreachable offset: {}", max_offset),
             ));
         }
 
-        // The data file size might be larger than required
-        // so we need to figure out where to start writing from
-        // XXX Should be able to make this less awkward
-        if max_offset > 0 {
-            let last_item: T = deserialize(&data[max_offset..])
-                .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Failed to deserialize"))?;
-            let item_size =
-                serialized_size(&last_item).expect("size after deserialize doesn't fail") as usize;
+        let append_offset = {
+            let mut cursor = Cursor::new(&data as &[u8]);
+            cursor.read_u64::<NativeEndian>()? as usize
+        };
 
-            data.set_append_offset(max_offset + item_size)?;
-        } else {
-            data.set_append_offset(0)?;
+        if append_offset < DATA_HEADER_SIZE {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Got weird append offset from data file: {}", append_offset),
+            ));
         }
 
+        data.set_append_offset(append_offset)?;
+
         Ok(BincodeDatabase {
-            log,
+            offsets,
             data,
             uuid_index,
             id_index,
@@ -171,10 +164,14 @@ where
         let id = obj.get_id();
 
         let entry = LogEntry::new(uuid, id, read_offset);
-        self.log.write_all(entry.as_bytes())?;
+        self.offsets.write_all(entry.as_bytes())?;
 
         self.uuid_index.insert(*uuid, read_offset);
         self.id_index.insert(id, read_offset);
+
+        let new_append_offset = U64::<NativeEndian>::new(self.data.offset() as u64);
+        self.data[0..DATA_HEADER_SIZE].copy_from_slice(new_append_offset.as_bytes());
+
         Ok(())
     }
 
