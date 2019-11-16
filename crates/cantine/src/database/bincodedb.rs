@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     fs::{File, OpenOptions},
-    io::{self, prelude::*, BufReader, Cursor, Result},
+    io::{self, BufRead, BufReader, Cursor, Result, Write},
     marker::PhantomData,
     mem::size_of,
     path::Path,
@@ -10,7 +10,7 @@ use std::{
 use bincode::{deserialize, serialize};
 use byteorder::{NativeEndian, ReadBytesExt, WriteBytesExt};
 use serde::{de::DeserializeOwned, Serialize};
-use uuid::{self, Uuid};
+use uuid::Uuid;
 use zerocopy::{AsBytes, ByteSlice, FromBytes, LayoutVerified, U64};
 
 use super::mapped_file::MappedFile;
@@ -95,18 +95,18 @@ where
             }
 
             let mut bytes_consumed = 0;
-            for chunk in buf.chunks(LOG_ENTRY_LEN) {
-                if let Some(entry) = LayoutVerified::new(chunk) {
+            if let Some(slice) = LayoutVerified::new_slice(buf) {
+                let entries: &[LogEntry] = slice.into_slice();
+                for entry in entries {
                     bytes_consumed += LOG_ENTRY_LEN;
-                    let slice = LogEntrySlice(entry);
                     // No removals, the offsets are always increasing
-                    max_offset = slice.0.offset.get() as usize;
+                    max_offset = entry.offset.get() as usize;
                     // Updates are simply same id, larger offset
-                    uuid_index.insert(Uuid::from_bytes(slice.0.uuid), max_offset);
-                    id_index.insert(slice.0.id.get(), max_offset);
-                } else {
-                    return Err(io::Error::new(io::ErrorKind::InvalidData, "Log corrupted!"));
+                    uuid_index.insert(Uuid::from_bytes(entry.uuid), max_offset);
+                    id_index.insert(entry.id.get(), max_offset);
                 }
+            } else {
+                return Err(io::Error::new(io::ErrorKind::InvalidData, "Log corrupted!"));
             }
 
             log_reader.consume(bytes_consumed);
@@ -216,8 +216,6 @@ impl LogEntry {
         }
     }
 }
-
-struct LogEntrySlice<B: ByteSlice>(LayoutVerified<B, LogEntry>);
 
 #[cfg(test)]
 mod tests {
