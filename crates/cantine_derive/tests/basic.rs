@@ -27,3 +27,28 @@ fn reads_inner_type_of_option() {
     let agg_a: Vec<Range<u64>> = agg_query.a;
     let agg_b: Vec<Range<i16>> = agg_query.b;
 }
+
+#[test]
+fn aggregation_result_from_query() {
+    let mut res: FeaturesAggregationResult = FeaturesAggregationQuery::default().into();
+    assert!(res.a.is_empty());
+    assert!(res.b.is_empty());
+
+    res = FeaturesAggregationQuery {
+        a: vec![0..10],
+        ..FeaturesAggregationQuery::default()
+    }
+    .into();
+
+    assert_eq!(vec![0], res.a);
+    assert!(res.b.is_empty());
+
+    res = FeaturesAggregationQuery {
+        a: vec![0..10, 5..15],
+        b: vec![-10..120],
+    }
+    .into();
+
+    assert_eq!(vec![0, 0], res.a);
+    assert_eq!(vec![0], res.b);
+}

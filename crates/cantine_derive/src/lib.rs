@@ -18,11 +18,62 @@ pub fn derive_filter_and_agg(input: TokenStream) -> TokenStream {
 
     let agg_result = make_struct(&input, "AggregationResult", make_vec);
 
+    let froms = make_from_impl(&input);
+
     TokenStream::from(quote! {
         #filter_query
         #agg_query
         #agg_result
+        #froms
     })
+}
+
+fn make_from_impl(input: &DeriveInput) -> TokenStream2 {
+    let aq = format_ident!("{}AggregationQuery", &input.ident);
+    let ar = format_ident!("{}AggregationResult", &input.ident);
+
+    match input.data {
+        Data::Struct(ref data) => match data.fields {
+            Fields::Named(ref fields) => {
+                let declarations = fields
+                    .named
+                    .iter()
+                    .filter(|field| match &field.vis {
+                        Visibility::Public(_) => true,
+                        _ => false,
+                    })
+                    .map(|field| {
+                        let name = &field.ident;
+                        quote_spanned! {
+                            field.span()=>
+                                #name: if src.#name.is_empty() {
+                                    Vec::new()
+                                } else {
+                                    vec![0; src.#name.len()]
+                                }
+                        }
+                    });
+
+                quote! {
+                    impl From<&#aq> for #ar {
+                        fn from(src: &#aq) -> Self {
+                            Self {
+                                #(#declarations),*
+                            }
+                        }
+                    }
+
+                    impl From<#aq> for #ar {
+                        fn from(src: #aq) -> Self {
+                            #ar::from(&src)
+                        }
+                    }
+                }
+            }
+            _ => unimplemented!(),
+        },
+        _ => unimplemented!(),
+    }
 }
 
 fn make_option_range(field: &Field) -> TokenStream2 {
