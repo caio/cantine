@@ -16,7 +16,7 @@ pub fn derive_filter_and_agg(input: TokenStream) -> TokenStream {
 
     let agg_query = make_struct(&input, "AggregationQuery", make_vec_range);
 
-    let agg_result = make_struct(&input, "AggregationResult", make_vec);
+    let agg_result = make_agg_result(&input);
 
     let froms = make_from_impl(&input);
 
@@ -26,6 +26,45 @@ pub fn derive_filter_and_agg(input: TokenStream) -> TokenStream {
         #agg_result
         #froms
     })
+}
+
+fn make_agg_result(input: &DeriveInput) -> TokenStream2 {
+    let agg_result = make_struct(&input, "AggregationResult", make_vec);
+
+    let name = format_ident!("{}AggregationResult", &input.ident);
+
+    let tokens = get_public_struct_fields(&input).map(|field| {
+        let name = &field.ident;
+
+        quote_spanned! {field.span()=>
+            for (idx, tally) in self.#name.iter_mut().enumerate() {
+                *tally += other.#name[idx];
+            }
+        }
+    });
+
+    quote! {
+        #agg_result
+
+        impl #name {
+            pub fn merge_same_size(&mut self, other: &Self) {
+                #(#tokens;)*
+            }
+        }
+    }
+}
+
+fn get_public_struct_fields(input: &DeriveInput) -> impl Iterator<Item = &Field> {
+    match input.data {
+        Data::Struct(ref data) => match data.fields {
+            Fields::Named(ref fields) => fields.named.iter().filter(|field| match &field.vis {
+                Visibility::Public(_) => true,
+                _ => false,
+            }),
+            _ => unimplemented!(),
+        },
+        _ => unimplemented!(),
+    }
 }
 
 fn make_from_impl(input: &DeriveInput) -> TokenStream2 {

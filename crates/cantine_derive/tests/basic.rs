@@ -7,6 +7,7 @@ use cantine_derive::FilterAndAggregation;
 struct Features {
     pub a: u64,
     pub b: Option<i16>,
+    pub c: usize,
 }
 
 #[test]
@@ -46,9 +47,29 @@ fn aggregation_result_from_query() {
     res = FeaturesAggregationQuery {
         a: vec![0..10, 5..15],
         b: vec![-10..120],
+        ..FeaturesAggregationQuery::default()
     }
     .into();
 
     assert_eq!(vec![0, 0], res.a);
     assert_eq!(vec![0], res.b);
+}
+
+#[test]
+fn can_merge_agg_result() {
+    let mut res = FeaturesAggregationResult {
+        a: vec![0, 12, 100],
+        b: vec![37],
+        ..FeaturesAggregationResult::default()
+    };
+
+    res.merge_same_size(&FeaturesAggregationResult {
+        a: vec![10, 3, 900],
+        b: vec![5],
+        ..FeaturesAggregationResult::default()
+    });
+
+    assert_eq!(vec![10, 15, 1000], res.a);
+    assert_eq!(vec![42], res.b);
+    assert!(res.c.is_empty());
 }
