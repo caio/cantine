@@ -4,7 +4,7 @@ use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote, quote_spanned};
 use syn::{
-    parse_macro_input, spanned::Spanned, Data, DeriveInput, Field, Fields, GenericArgument, Ident,
+    parse_macro_input, spanned::Spanned, Data, DeriveInput, Field, Fields, GenericArgument,
     PathArguments, Type, Visibility,
 };
 
@@ -12,16 +12,11 @@ use syn::{
 pub fn derive_filter_and_agg(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
 
-    let filter_query = make_struct(&input.data, &input.ident, "FilterQuery", make_option_range);
+    let filter_query = make_struct(&input, "FilterQuery", make_option_range);
 
-    let agg_query = make_struct(
-        &input.data,
-        &input.ident,
-        "AggregationQuery",
-        make_vec_range,
-    );
+    let agg_query = make_struct(&input, "AggregationQuery", make_vec_range);
 
-    let agg_result = make_struct(&input.data, &input.ident, "AggregationResult", make_vec);
+    let agg_result = make_struct(&input, "AggregationResult", make_vec);
 
     TokenStream::from(quote! {
         #filter_query
@@ -50,14 +45,9 @@ fn make_vec_range(field: &Field) -> TokenStream2 {
     quote_spanned! { field.span()=> pub #name: Vec<std::ops::Range<#ty>> }
 }
 
-fn make_struct(
-    data: &Data,
-    base: &Ident,
-    name: &str,
-    f: fn(&Field) -> TokenStream2,
-) -> TokenStream2 {
-    let struct_name = format_ident!("{}{}", base, name);
-    match data {
+fn make_struct(input: &DeriveInput, name: &str, f: fn(&Field) -> TokenStream2) -> TokenStream2 {
+    let struct_name = format_ident!("{}{}", input.ident, name);
+    match input.data {
         Data::Struct(ref data) => match data.fields {
             Fields::Named(ref fields) => {
                 let struct_fields = fields
