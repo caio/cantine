@@ -37,7 +37,7 @@ fn make_filter_query(input: &DeriveInput) -> TokenStream2 {
     });
 
     quote! {
-        #[derive(serde::Serialize, serde::Deserialize, Default, Debug)]
+        #[derive(serde::Serialize, serde::Deserialize, Default, Debug, Clone)]
         pub struct #name {
             #(#fields),*
         }
@@ -54,7 +54,7 @@ fn make_agg_query(input: &DeriveInput) -> TokenStream2 {
     });
 
     quote! {
-        #[derive(serde::Serialize, serde::Deserialize, Default, Debug)]
+        #[derive(serde::Serialize, serde::Deserialize, Default, Debug, Clone)]
         pub struct #name {
             #(#fields),*
         }
@@ -116,7 +116,7 @@ fn make_agg_result(input: &DeriveInput) -> TokenStream2 {
     });
 
     quote! {
-        #[derive(serde::Serialize, serde::Deserialize, Default, Debug)]
+        #[derive(serde::Serialize, serde::Deserialize, Default, Debug, Clone)]
         pub struct #name {
             #(#fields),*
         }
