@@ -99,7 +99,7 @@ fn make_agg_result(input: &DeriveInput) -> TokenStream2 {
 
         impl #name {
             pub fn merge_same_size(&mut self, other: &Self) {
-                #(#merge_code;)*
+                #(#merge_code);*
             }
         }
 

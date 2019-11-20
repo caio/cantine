@@ -11,13 +11,6 @@ struct Features {
 }
 
 #[test]
-fn compiles_ok() {
-    FeaturesFilterQuery::default();
-    FeaturesAggregationQuery::default();
-    FeaturesAggregationResult::default();
-}
-
-#[test]
 #[allow(unused_variables)]
 fn reads_inner_type_of_option() {
     let filter_query = FeaturesFilterQuery::default();
