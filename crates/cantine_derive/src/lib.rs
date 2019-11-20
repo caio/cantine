@@ -62,6 +62,7 @@ fn make_agg_query(input: &DeriveInput) -> TokenStream2 {
 }
 
 fn make_agg_result(input: &DeriveInput) -> TokenStream2 {
+    let feature = &input.ident;
     let name = format_ident!("{}AggregationResult", &input.ident);
 
     let fields = get_public_struct_fields(&input).map(|field| {
@@ -91,6 +92,29 @@ fn make_agg_result(input: &DeriveInput) -> TokenStream2 {
         }
     });
 
+    let collect_code = get_public_struct_fields(&input).map(|field| {
+        let name = &field.ident;
+        if let Some(_type) = extract_type_if_option(&field.ty) {
+            quote_spanned! { field.span()=>
+                if let Some(feat) = feature.#name {
+                    for (idx, range) in query.#name.iter().enumerate() {
+                        if range.contains(&feat) {
+                            self.#name[idx] += 1;
+                        }
+                    }
+                }
+            }
+        } else {
+            quote_spanned! { field.span()=>
+                for (idx, range) in query.#name.iter().enumerate() {
+                    if range.contains(&feature.#name) {
+                        self.#name[idx] += 1;
+                    }
+                }
+            }
+        }
+    });
+
     quote! {
         #[derive(serde::Serialize, serde::Deserialize, Default, Debug)]
         pub struct #name {
@@ -100,6 +124,10 @@ fn make_agg_result(input: &DeriveInput) -> TokenStream2 {
         impl #name {
             pub fn merge_same_size(&mut self, other: &Self) {
                 #(#merge_code);*
+            }
+
+            pub fn collect(&mut self, query: &#agg_query, feature: &#feature) {
+                #(#collect_code);*
             }
         }
 
