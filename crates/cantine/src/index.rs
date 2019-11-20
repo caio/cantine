@@ -1,6 +1,6 @@
 use std::convert::TryFrom;
 
-use tantivy::schema::{Field, Schema, SchemaBuilder, STORED, TEXT};
+use tantivy::schema::{Field, Schema, SchemaBuilder, FAST, STORED, TEXT};
 
 #[derive(Clone)]
 pub struct IndexFields {
@@ -16,7 +16,7 @@ const FIELD_FEATURES: &str = "features_bincode";
 impl From<&mut SchemaBuilder> for IndexFields {
     fn from(builder: &mut SchemaBuilder) -> Self {
         IndexFields {
-            id: builder.add_u64_field(FIELD_ID, STORED),
+            id: builder.add_u64_field(FIELD_ID, STORED | FAST),
             fulltext: builder.add_text_field(FIELD_FULLTEXT, TEXT),
             features: builder.add_bytes_field(FIELD_FEATURES),
         }
