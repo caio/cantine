@@ -104,12 +104,12 @@ pub struct SearchQuery {
 
 #[derive(Serialize, Deserialize, Debug, Default)]
 pub struct SearchResult {
-    items: Vec<RecipeCard>,
+    pub items: Vec<RecipeCard>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
-    agg: Option<FeaturesAggregationResult>,
+    pub agg: Option<FeaturesAggregationResult>,
 
     // TODO Ref=SearchQuery.after
     #[serde(skip_serializing_if = "Option::is_none")]
-    after: Option<String>,
+    pub after: Option<String>,
 }

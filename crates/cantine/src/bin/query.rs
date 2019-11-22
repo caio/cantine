@@ -1,4 +1,9 @@
-use std::{convert::TryFrom, num::NonZeroUsize, path::PathBuf, sync::Arc};
+use std::{
+    convert::TryFrom,
+    num::NonZeroU8,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use structopt::StructOpt;
 use tantivy::{
@@ -7,13 +12,16 @@ use tantivy::{
     fastfield::FastFieldReader,
     schema::{Field, Value},
     tokenizer::TokenizerManager,
-    DocId, Index, Score, SegmentLocalId, SegmentReader,
+    DocId, Index, IndexReader, Score, SegmentLocalId, SegmentReader,
 };
 
 use cantine::{
     database::BincodeDatabase,
     index::IndexFields,
-    model::{FeaturesAggregationQuery, FeaturesAggregationResult, Recipe, RecipeCard},
+    model::{
+        FeaturesAggregationQuery, FeaturesAggregationResult, Recipe, RecipeCard, SearchQuery,
+        SearchResult,
+    },
 };
 use tique::queryparser::QueryParser;
 use tique::top_collector::ConditionalTopCollector;
@@ -24,7 +32,7 @@ use tique::top_collector::ConditionalTopCollector;
 pub struct QueryOptions {
     /// Maximum number of recipes to retrieve
     #[structopt(short, long, default_value = "3")]
-    num_results: NonZeroUsize,
+    num_results: NonZeroU8,
     /// Path to the data directory that will be queries
     #[structopt(short, long)]
     base_path: PathBuf,
@@ -37,13 +45,13 @@ pub struct QueryOptions {
 //  1. A Feature reader trait to map <doc_id, segment_id> to a Feature
 //  2. A Feature trait that points at the generated aggregation
 //     query/result structs
-pub struct FeatureCollector {
+pub struct Aggregator {
     query: FeaturesAggregationQuery,
     db: Arc<BincodeDatabase<Recipe>>,
     id_field: Field,
 }
 
-impl Collector for FeatureCollector {
+impl Collector for Aggregator {
     type Fruit = FeaturesAggregationResult;
     type Child = FeatureSegmentCollector;
     fn for_segment(
@@ -106,61 +114,102 @@ impl SegmentCollector for FeatureSegmentCollector {
     }
 }
 
+pub struct Cantine {
+    reader: IndexReader,
+    fields: IndexFields,
+    database: Arc<BincodeDatabase<Recipe>>,
+    query_parser: QueryParser,
+}
+
+impl Cantine {
+    pub fn open<P: AsRef<Path>>(base_path: P) -> tantivy::Result<Self> {
+        let index = Index::open_in_dir(base_path.as_ref().join("tantivy"))?;
+
+        let fields = IndexFields::try_from(&index.schema()).unwrap();
+        let reader = index.reader()?;
+
+        let query_parser = QueryParser::new(
+            fields.fulltext,
+            TokenizerManager::default().get("en_stem").unwrap(),
+            true,
+        );
+
+        let database =
+            Arc::new(BincodeDatabase::open(base_path.as_ref().join("database")).unwrap());
+
+        Ok(Self {
+            fields,
+            reader,
+            database,
+            query_parser,
+        })
+    }
+
+    pub fn search(&self, query: &SearchQuery) -> tantivy::Result<SearchResult> {
+        let searcher = self.reader.searcher();
+
+        let agg_query = if let Some(agg) = &query.agg {
+            agg.clone()
+        } else {
+            FeaturesAggregationQuery::default()
+        };
+
+        // TODO total count
+        let agg_collector = Aggregator {
+            id_field: self.fields.id,
+            db: self.database.clone(),
+            query: agg_query.clone(),
+        };
+
+        let plain_query = if let Some(fulltext) = &query.fulltext {
+            fulltext
+        } else {
+            ""
+        };
+
+        // FIXME interpret all
+        let interpreted_query = self.query_parser.parse(plain_query).unwrap().unwrap();
+
+        let (topdocs, agg_result) = searcher.search(
+            &interpreted_query,
+            &(
+                ConditionalTopCollector::with_limit(query.num_items.unwrap_or(10) as usize, true),
+                agg_collector,
+            ),
+        )?;
+
+        let mut items: Vec<RecipeCard> = Vec::with_capacity(topdocs.len());
+        for item in topdocs.iter() {
+            let doc = searcher.doc(item.doc).unwrap();
+            if let Some(&Value::U64(id)) = doc.get_first(self.fields.id) {
+                items.push(self.database.get_by_id(id).unwrap().unwrap().into());
+            } else {
+                panic!("Found document without a stored id");
+            }
+        }
+
+        Ok(SearchResult {
+            items,
+            agg: Some(agg_result),
+            ..SearchResult::default()
+        })
+    }
+}
+
 pub fn main() -> Result<(), String> {
     let options = QueryOptions::from_args();
     println!("Started with {:?}", options);
 
-    let index = Index::open_in_dir(options.base_path.join("tantivy")).unwrap();
-    let fields = IndexFields::try_from(&index.schema())?;
+    let cantine = Cantine::open(options.base_path).unwrap();
 
-    let parser = QueryParser::new(
-        fields.fulltext,
-        TokenizerManager::default().get("en_stem").unwrap(),
-        true,
-    );
-
-    let reader = index.reader().unwrap();
-    let searcher = reader.searcher();
-
-    let db: Arc<BincodeDatabase<Recipe>> =
-        Arc::new(BincodeDatabase::open(options.base_path.join("database")).unwrap());
-
-    let agg_query = FeaturesAggregationQuery {
-        num_ingredients: vec![0..6, 5..11, 10..std::u8::MAX],
-        cook_time: vec![0..30, 30..120],
-        diet_lowcarb: vec![0.5..0.75, 0.75..0.85, 0.85..0.999, 1.0..std::f32::MAX],
-        ..FeaturesAggregationQuery::default()
+    let query = SearchQuery {
+        fulltext: Some(options.query),
+        num_items: Some(options.num_results.get()),
+        ..SearchQuery::default()
     };
 
-    let feat_collector = FeatureCollector {
-        id_field: fields.id,
-        db: db.clone(),
-        query: agg_query,
-    };
+    let result = cantine.search(&query).unwrap();
 
-    let (topdocs, agg_result) = searcher
-        .search(
-            // FIXME errors
-            &parser.parse(&options.query.as_str()).unwrap().unwrap(),
-            &(
-                ConditionalTopCollector::with_limit(options.num_results.get(), true),
-                feat_collector,
-            ),
-        )
-        .unwrap();
-
-    let mut recipes: Vec<RecipeCard> = Vec::new();
-    for item in topdocs.iter() {
-        let doc = searcher.doc(item.doc).unwrap();
-        if let Some(&Value::U64(id)) = doc.get_first(fields.id) {
-            recipes.push(db.get_by_id(id).unwrap().unwrap().into());
-        } else {
-            return Err(format!("Found doc without id: {:?}", doc));
-        }
-    }
-
-    dbg!(recipes);
-    dbg!(agg_result);
-
+    dbg!(result);
     Ok(())
 }
