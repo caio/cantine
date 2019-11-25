@@ -1,8 +1,8 @@
-use std::ops::Range;
+use std::{convert::TryFrom, ops::Range};
+use tantivy::schema::SchemaBuilder;
 
 use cantine_derive::FilterAndAggregation;
 
-#[allow(dead_code)]
 #[derive(FilterAndAggregation, Default)]
 pub struct Feat {
     pub a: u64,
@@ -126,4 +126,12 @@ fn collect_works_as_intended() {
 
     assert_eq!(vec![1, 1], agg.b);
     assert_eq!(vec![2], agg.c);
+}
+
+#[test]
+fn filter_fields_can_read_and_write_from_schema() {
+    let mut builder = SchemaBuilder::new();
+    let original = FeatFilterFields::from(&mut builder);
+    let loaded = FeatFilterFields::try_from(&builder.build()).unwrap();
+    assert_eq!(original, loaded);
 }

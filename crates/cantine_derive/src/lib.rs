@@ -8,6 +8,7 @@ use syn::{
     PathArguments, Type, Visibility,
 };
 
+// TODO split derives
 #[proc_macro_derive(FilterAndAggregation)]
 pub fn derive_filter_and_agg(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
@@ -24,9 +25,10 @@ pub fn derive_filter_and_agg(input: TokenStream) -> TokenStream {
 }
 
 fn make_filter_query(input: &DeriveInput) -> TokenStream2 {
+    let feat = &input.ident;
     let name = format_ident!("{}FilterQuery", &input.ident);
 
-    let fields = get_public_struct_fields(&input).map(|field| {
+    let query_fields = get_public_struct_fields(&input).map(|field| {
         let name = &field.ident;
         let ty = extract_type_if_option(&field.ty).unwrap_or(&field.ty);
 
@@ -36,10 +38,78 @@ fn make_filter_query(input: &DeriveInput) -> TokenStream2 {
         }
     });
 
+    let index_name = format_ident!("{}FilterFields", &input.ident);
+    let index_fields = get_public_struct_fields(&input).map(|field| {
+        let name = &field.ident;
+        quote_spanned! { field.span()=>
+            pub #name: tantivy::schema::Field
+        }
+    });
+
+    let from_decls = get_public_struct_fields(&input).map(|field| {
+        if let Some(name) = &field.ident {
+            let schema_name = format_ident!("_filter_{}", &name);
+            let quoted = format!("\"{}\"", schema_name);
+            // FIXME field is not always u64!!
+            quote_spanned! { field.span()=>
+                #name: builder.add_u64_field(#quoted, tantivy::schema::INDEXED)
+            }
+        } else {
+            unreachable!();
+        }
+    });
+
+    let try_from_decls = get_public_struct_fields(&input).map(|field| {
+        if let Some(name) = &field.ident {
+            let schema_name = format_ident!("_filter_{}", &name);
+            let err_msg = format!("Missing field for {} ({})", name, schema_name);
+            let quoted = format!("\"{}\"", schema_name);
+            quote_spanned! { field.span()=>
+                #name: schema.get_field(#quoted).ok_or(#err_msg)?
+            }
+        } else {
+            unreachable!();
+        }
+    });
+
     quote! {
         #[derive(serde::Serialize, serde::Deserialize, Default, Debug, Clone)]
         pub struct #name {
-            #(#fields),*
+            #(#query_fields),*
+        }
+
+        #[derive(Clone, Debug, PartialEq)]
+        pub struct #index_name {
+            #(#index_fields),*
+        }
+
+        impl std::convert::TryFrom<&tantivy::schema::Schema> for #index_name {
+            // TODO better errors
+            type Error = &'static str;
+
+            fn try_from(schema: &tantivy::schema::Schema) -> std::result::Result<Self, Self::Error> {
+                Ok(Self {
+                    #(#try_from_decls),*
+                })
+            }
+        }
+
+        impl From<&mut tantivy::schema::SchemaBuilder> for #index_name {
+            fn from(builder: &mut tantivy::schema::SchemaBuilder) -> Self {
+                Self {
+                    #(#from_decls),*
+                }
+            }
+        }
+
+        impl #index_name {
+            pub fn interpret(query: &#name) -> Vec<Box<dyn tantivy::query::Query>> {
+                unimplemented!()
+            }
+
+            pub fn add_to_doc(doc: &mut tantivy::Document, feat: &#feat) {
+                unimplemented!()
+            }
         }
     }
 }

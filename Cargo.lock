@@ -140,6 +140,7 @@ dependencies = [
  "quote 1.0.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde 1.0.102 (registry+https://github.com/rust-lang/crates.io-index)",
  "syn 1.0.8 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tantivy 0.10.3 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
