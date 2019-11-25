@@ -11,7 +11,7 @@ use bincode::{deserialize, serialize};
 use byteorder::{NativeEndian, ReadBytesExt, WriteBytesExt};
 use serde::{de::DeserializeOwned, Serialize};
 use uuid::Uuid;
-use zerocopy::{AsBytes, ByteSlice, FromBytes, LayoutVerified, U64};
+use zerocopy::{AsBytes, FromBytes, LayoutVerified, U64};
 
 use super::mapped_file::MappedFile;
 
