@@ -46,10 +46,7 @@ impl QueryParser {
                 match subqueries.len() {
                     0 => None,
                     1 => Some(subqueries.pop().expect("Element always present").1),
-                    _ => {
-                        let bq: BooleanQuery = subqueries.into();
-                        Some(Box::new(bq))
-                    }
+                    _ => Some(Box::new(BooleanQuery::from(subqueries))),
                 }
             }
         })
