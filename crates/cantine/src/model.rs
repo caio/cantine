@@ -105,6 +105,7 @@ pub struct SearchQuery {
 #[derive(Serialize, Deserialize, Debug, Default)]
 pub struct SearchResult {
     pub items: Vec<RecipeCard>,
+    pub total_found: u32,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agg: Option<FeaturesAggregationResult>,

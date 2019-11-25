@@ -41,33 +41,44 @@ pub struct QueryOptions {
     query: String,
 }
 
-// XXX With some cerimony this can be made reusable:
-//  1. A Feature reader trait to map <doc_id, segment_id> to a Feature
-//  2. A Feature trait that points at the generated aggregation
-//     query/result structs
 pub struct Aggregator {
     query: FeaturesAggregationQuery,
     db: Arc<BincodeDatabase<Recipe>>,
     id_field: Field,
 }
 
+pub struct Aggregations {
+    seen: u32,
+    agg: FeaturesAggregationResult,
+}
+
+impl Aggregations {
+    fn merge(&mut self, other: &Self) {
+        self.seen += other.seen;
+        self.agg.merge_same_size(&other.agg);
+    }
+}
+
 impl Collector for Aggregator {
-    type Fruit = FeaturesAggregationResult;
-    type Child = FeatureSegmentCollector;
+    type Fruit = Aggregations;
+    type Child = AggregationsSegmentCollector;
     fn for_segment(
         &self,
         _segment_id: SegmentLocalId,
         reader: &SegmentReader,
     ) -> tantivy::Result<Self::Child> {
-        let agg = FeaturesAggregationResult::from(&self.query);
+        let aggregations = Aggregations {
+            agg: FeaturesAggregationResult::from(&self.query),
+            seen: 0,
+        };
 
         let id_reader = reader
             .fast_fields()
             .u64(self.id_field)
             .expect("id_field is u64 fast field");
 
-        Ok(FeatureSegmentCollector {
-            agg,
+        Ok(AggregationsSegmentCollector {
+            aggregations,
             id_reader,
             query: self.query.clone(),
             db: self.db.clone(),
@@ -82,35 +93,36 @@ impl Collector for Aggregator {
         assert!(!fruits.is_empty());
 
         let mut iter = fruits.into_iter();
-        let mut first: FeaturesAggregationResult = iter.next().expect("fruits is never empty");
+        let mut first = iter.next().expect("fruits is never empty");
 
         for fruit in iter {
-            first.merge_same_size(&fruit);
+            first.merge(&fruit);
         }
 
         Ok(first)
     }
 }
 
-pub struct FeatureSegmentCollector {
+pub struct AggregationsSegmentCollector {
     query: FeaturesAggregationQuery,
-    agg: FeaturesAggregationResult,
+    aggregations: Aggregations,
     db: Arc<BincodeDatabase<Recipe>>,
     id_reader: FastFieldReader<u64>,
 }
 
-impl SegmentCollector for FeatureSegmentCollector {
-    type Fruit = FeaturesAggregationResult;
+impl SegmentCollector for AggregationsSegmentCollector {
+    type Fruit = Aggregations;
 
     fn collect(&mut self, doc: DocId, _score: Score) {
         let id = self.id_reader.get(doc);
         let recipe = self.db.get_by_id(id).unwrap().unwrap();
 
-        self.agg.collect(&self.query, &recipe.features);
+        self.aggregations.seen += 1;
+        self.aggregations.agg.collect(&self.query, &recipe.features);
     }
 
     fn harvest(self) -> Self::Fruit {
-        self.agg
+        self.aggregations
     }
 }
 
@@ -190,7 +202,8 @@ impl Cantine {
 
         Ok(SearchResult {
             items,
-            agg: Some(agg_result),
+            total_found: agg_result.seen,
+            agg: Some(agg_result.agg),
             ..SearchResult::default()
         })
     }
