@@ -10,9 +10,10 @@ use tantivy::{
     self,
     collector::{Collector, SegmentCollector},
     fastfield::FastFieldReader,
+    query::{AllQuery, BooleanQuery, Occur, Query},
     schema::{Field, Value},
     tokenizer::TokenizerManager,
-    DocId, Index, IndexReader, Score, SegmentLocalId, SegmentReader,
+    DocId, Index, IndexReader, Result, Score, SegmentLocalId, SegmentReader,
 };
 
 use cantine::{
@@ -66,7 +67,7 @@ impl Collector for Aggregator {
         &self,
         _segment_id: SegmentLocalId,
         reader: &SegmentReader,
-    ) -> tantivy::Result<Self::Child> {
+    ) -> Result<Self::Child> {
         let aggregations = Aggregations {
             agg: FeaturesAggregationResult::from(&self.query),
             seen: 0,
@@ -89,7 +90,7 @@ impl Collector for Aggregator {
         false
     }
 
-    fn merge_fruits(&self, fruits: Vec<Self::Fruit>) -> tantivy::Result<Self::Fruit> {
+    fn merge_fruits(&self, fruits: Vec<Self::Fruit>) -> Result<Self::Fruit> {
         assert!(!fruits.is_empty());
 
         let mut iter = fruits.into_iter();
@@ -134,7 +135,7 @@ pub struct Cantine {
 }
 
 impl Cantine {
-    pub fn open<P: AsRef<Path>>(base_path: P) -> tantivy::Result<Self> {
+    pub fn open<P: AsRef<Path>>(base_path: P) -> Result<Self> {
         let index = Index::open_in_dir(base_path.as_ref().join("tantivy"))?;
 
         let fields = IndexFields::try_from(&index.schema()).unwrap();
@@ -157,7 +158,25 @@ impl Cantine {
         })
     }
 
-    pub fn search(&self, query: &SearchQuery) -> tantivy::Result<SearchResult> {
+    fn interpret_query(&self, query: &SearchQuery) -> Result<Box<dyn Query>> {
+        let mut subqueries: Vec<(Occur, Box<dyn Query>)> = Vec::new();
+
+        if let Some(fulltext) = &query.fulltext {
+            if let Some(parsed) = self.query_parser.parse(fulltext.as_str())? {
+                subqueries.push((Occur::Must, parsed));
+            }
+        }
+
+        // FIXME interpret all
+
+        match subqueries.len() {
+            0 => Ok(Box::new(AllQuery)),
+            1 => Ok(subqueries.pop().expect("length has been checked").1),
+            _ => Ok(Box::new(BooleanQuery::from(subqueries))),
+        }
+    }
+
+    pub fn search(&self, query: &SearchQuery) -> Result<SearchResult> {
         let searcher = self.reader.searcher();
 
         let agg_query = if let Some(agg) = &query.agg {
@@ -166,21 +185,14 @@ impl Cantine {
             FeaturesAggregationQuery::default()
         };
 
-        // TODO total count
         let agg_collector = Aggregator {
             id_field: self.fields.id,
             db: self.database.clone(),
             query: agg_query.clone(),
         };
 
-        let plain_query = if let Some(fulltext) = &query.fulltext {
-            fulltext
-        } else {
-            ""
-        };
-
-        // FIXME interpret all
-        let interpreted_query = self.query_parser.parse(plain_query).unwrap().unwrap();
+        let interpreted_query = self.interpret_query(query)?;
+        // TODO sort
 
         let (topdocs, agg_result) = searcher.search(
             &interpreted_query,
@@ -209,7 +221,7 @@ impl Cantine {
     }
 }
 
-pub fn main() -> Result<(), String> {
+pub fn main() -> std::result::Result<(), String> {
     let options = QueryOptions::from_args();
     println!("Started with {:?}", options);
 
