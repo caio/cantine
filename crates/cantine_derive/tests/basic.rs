@@ -7,7 +7,7 @@ use cantine_derive::FilterAndAggregation;
 pub struct Feat {
     pub a: u64,
     pub b: Option<i16>,
-    pub c: usize,
+    pub c: f32,
 }
 
 #[test]
@@ -15,7 +15,8 @@ pub struct Feat {
 fn reads_inner_type_of_option() {
     let filter_query = FeatFilterQuery::default();
     let filter_a: Option<Range<u64>> = filter_query.a;
-    let filter_b: Option<Range<i16>> = filter_query.b;
+    let filter_b: Option<Range<i64>> = filter_query.b;
+    let filter_c: Option<Range<f64>> = filter_query.c;
 
     let agg_query = FeatAggregationQuery::default();
     let agg_a: Vec<Range<u64>> = agg_query.a;
@@ -72,7 +73,7 @@ fn collect_works_as_intended() {
     let query = FeatAggregationQuery {
         a: vec![],
         b: vec![-10..0, 0..10],
-        c: vec![42..420],
+        c: vec![42.0..420.0],
     };
 
     let mut agg = FeatAggregationResult::from(&query);
@@ -82,7 +83,7 @@ fn collect_works_as_intended() {
         &Feat {
             a: 10,
             b: None,
-            c: 100,
+            c: 100.0,
         },
     );
 
@@ -94,7 +95,7 @@ fn collect_works_as_intended() {
         &query,
         &Feat {
             b: Some(300),
-            c: 0,
+            c: 0.0,
             ..Feat::default()
         },
     );
@@ -107,7 +108,7 @@ fn collect_works_as_intended() {
         &query,
         &Feat {
             b: Some(-5),
-            c: 0,
+            c: 0.0,
             ..Feat::default()
         },
     );
@@ -119,7 +120,7 @@ fn collect_works_as_intended() {
         &query,
         &Feat {
             b: Some(7),
-            c: 400,
+            c: 400.0,
             ..Feat::default()
         },
     );
@@ -134,4 +135,40 @@ fn filter_fields_can_read_and_write_from_schema() {
     let original = FeatFilterFields::from(&mut builder);
     let loaded = FeatFilterFields::try_from(&builder.build()).unwrap();
     assert_eq!(original, loaded);
+}
+
+#[test]
+fn filter_query_interpretation() {
+    let mut builder = SchemaBuilder::new();
+    let fields = FeatFilterFields::from(&mut builder);
+
+    assert_eq!(
+        0,
+        fields
+            .interpret(FeatFilterQuery {
+                ..FeatFilterQuery::default()
+            })
+            .len()
+    );
+
+    assert_eq!(
+        1,
+        fields
+            .interpret(FeatFilterQuery {
+                a: Some(0..10),
+                ..FeatFilterQuery::default()
+            })
+            .len()
+    );
+
+    assert_eq!(
+        2,
+        fields
+            .interpret(FeatFilterQuery {
+                a: Some(0..10),
+                c: Some(1.1..2.2),
+                ..FeatFilterQuery::default()
+            })
+            .len()
+    );
 }

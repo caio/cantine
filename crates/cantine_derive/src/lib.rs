@@ -28,38 +28,57 @@ fn make_filter_query(input: &DeriveInput) -> TokenStream2 {
     let feat = &input.ident;
     let name = format_ident!("{}FilterQuery", &input.ident);
 
-    let query_fields = get_public_struct_fields(&input).map(|field| {
+    let fields: Vec<_> = get_public_struct_fields(&input).cloned().collect();
+
+    let query_fields = fields.iter().map(|field| {
         let name = &field.ident;
         let ty = extract_type_if_option(&field.ty).unwrap_or(&field.ty);
 
-        quote_spanned! { field.span()=>
-            #[serde(skip_serializing_if = "Option::is_none")]
-            pub #name: Option<std::ops::Range<#ty>>
+        // TODO Avoid upgrating to the larger type
+        match get_field_type(&ty) {
+            FieldType::UNSIGNED => quote_spanned! { field.span()=>
+                #[serde(skip_serializing_if = "Option::is_none")]
+                pub #name: Option<std::ops::Range<u64>>
+            },
+            FieldType::SIGNED => quote_spanned! { field.span()=>
+                #[serde(skip_serializing_if = "Option::is_none")]
+                pub #name: Option<std::ops::Range<i64>>
+            },
+            FieldType::FLOAT => quote_spanned! { field.span()=>
+                #[serde(skip_serializing_if = "Option::is_none")]
+                pub #name: Option<std::ops::Range<f64>>
+            },
         }
     });
 
     let index_name = format_ident!("{}FilterFields", &input.ident);
-    let index_fields = get_public_struct_fields(&input).map(|field| {
+    let index_fields = fields.iter().map(|field| {
         let name = &field.ident;
         quote_spanned! { field.span()=>
             pub #name: tantivy::schema::Field
         }
     });
 
-    let from_decls = get_public_struct_fields(&input).map(|field| {
-        if let Some(name) = &field.ident {
-            let schema_name = format_ident!("_filter_{}", &name);
-            let quoted = format!("\"{}\"", schema_name);
-            // FIXME field is not always u64!!
-            quote_spanned! { field.span()=>
+    let from_decls = fields.iter().map(|field| {
+        let name = field.ident.as_ref().unwrap();
+        let schema_name = format_ident!("_filter_{}", &name);
+        let quoted = format!("\"{}\"", schema_name);
+        let ty = extract_type_if_option(&field.ty).unwrap_or(&field.ty);
+
+        match get_field_type(&ty) {
+            FieldType::UNSIGNED => quote_spanned! { field.span()=>
                 #name: builder.add_u64_field(#quoted, tantivy::schema::INDEXED)
-            }
-        } else {
-            unreachable!();
+            },
+            FieldType::SIGNED => quote_spanned! { field.span()=>
+                #name: builder.add_i64_field(#quoted, tantivy::schema::INDEXED)
+            },
+            FieldType::FLOAT => quote_spanned! { field.span()=>
+                #name: builder.add_f64_field(#quoted, tantivy::schema::INDEXED)
+            },
         }
     });
 
-    let try_from_decls = get_public_struct_fields(&input).map(|field| {
+    let try_from_decls = fields.iter().map(|field| {
         if let Some(name) = &field.ident {
             let schema_name = format_ident!("_filter_{}", &name);
             let err_msg = format!("Missing field for {} ({})", name, schema_name);
@@ -69,6 +88,32 @@ fn make_filter_query(input: &DeriveInput) -> TokenStream2 {
             }
         } else {
             unreachable!();
+        }
+    });
+
+    let interpret_code = fields.iter().map(|field| {
+        let name = &field.ident;
+        let ty = extract_type_if_option(&field.ty).unwrap_or(&field.ty);
+
+        match get_field_type(&ty) {
+            FieldType::UNSIGNED => quote_spanned! { field.span()=>
+                if let Some(range) = query.#name {
+                    let query = tantivy::query::RangeQuery::new_u64(self.#name, range);
+                    result.push(Box::new(query));
+                }
+            },
+            FieldType::SIGNED => quote_spanned! { field.span()=>
+                if let Some(range) = query.#name {
+                    let query = tantivy::query::RangeQuery::new_i64(self.#name, range);
+                    result.push(Box::new(query));
+                }
+            },
+            FieldType::FLOAT => quote_spanned! { field.span()=>
+                if let Some(range) = query.#name {
+                    let query = tantivy::query::RangeQuery::new_f64(self.#name, range);
+                    result.push(Box::new(query));
+                }
+            },
         }
     });
 
@@ -103,8 +148,10 @@ fn make_filter_query(input: &DeriveInput) -> TokenStream2 {
         }
 
         impl #index_name {
-            pub fn interpret(query: &#name) -> Vec<Box<dyn tantivy::query::Query>> {
-                unimplemented!()
+            pub fn interpret(&self, query: #name) -> Vec<Box<dyn tantivy::query::Query>> {
+                let mut result : Vec<Box<dyn tantivy::query::Query>> = Vec::new();
+                #(#interpret_code);*
+                result
             }
 
             pub fn add_to_doc(doc: &mut tantivy::Document, feat: &#feat) {
@@ -229,6 +276,43 @@ fn get_public_struct_fields(input: &DeriveInput) -> impl Iterator<Item = &Field>
         },
         _ => unimplemented!(),
     }
+}
+
+enum FieldType {
+    UNSIGNED,
+    SIGNED,
+    FLOAT,
+}
+
+const SUPPORTED_UNSIGNED: [&str; 4] = ["u8", "u16", "u32", "u64"];
+const SUPPORTED_SIGNED: [&str; 4] = ["i8", "i16", "i32", "i64"];
+const SUPPORTED_FLOAT: [&str; 2] = ["f32", "f64"];
+
+fn get_field_type(ty: &Type) -> FieldType {
+    if let Type::Path(tp) = ty {
+        if tp.path.segments.len() == 1 {
+            let ident = &tp.path.segments.first().unwrap().ident;
+
+            for name in SUPPORTED_SIGNED.iter() {
+                if ident == name {
+                    return FieldType::SIGNED;
+                }
+            }
+
+            for name in SUPPORTED_UNSIGNED.iter() {
+                if ident == name {
+                    return FieldType::UNSIGNED;
+                }
+            }
+
+            for name in SUPPORTED_FLOAT.iter() {
+                if ident == name {
+                    return FieldType::FLOAT;
+                }
+            }
+        }
+    }
+    unimplemented!()
 }
 
 fn extract_type_if_option(ty: &Type) -> Option<&Type> {
