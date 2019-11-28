@@ -34,20 +34,9 @@ fn make_filter_query(input: &DeriveInput) -> TokenStream2 {
         let name = &field.ident;
         let ty = extract_type_if_option(&field.ty).unwrap_or(&field.ty);
 
-        // TODO Avoid upgrating to the larger type
-        match get_field_type(&ty) {
-            FieldType::UNSIGNED => quote_spanned! { field.span()=>
-                #[serde(skip_serializing_if = "Option::is_none")]
-                pub #name: Option<std::ops::Range<u64>>
-            },
-            FieldType::SIGNED => quote_spanned! { field.span()=>
-                #[serde(skip_serializing_if = "Option::is_none")]
-                pub #name: Option<std::ops::Range<i64>>
-            },
-            FieldType::FLOAT => quote_spanned! { field.span()=>
-                #[serde(skip_serializing_if = "Option::is_none")]
-                pub #name: Option<std::ops::Range<f64>>
-            },
+        quote_spanned! { field.span()=>
+            #[serde(skip_serializing_if = "Option::is_none")]
+            pub #name: Option<std::ops::Range<#ty>>
         }
     });
 
@@ -94,26 +83,81 @@ fn make_filter_query(input: &DeriveInput) -> TokenStream2 {
     let interpret_code = fields.iter().map(|field| {
         let name = &field.ident;
         let ty = extract_type_if_option(&field.ty).unwrap_or(&field.ty);
+        let is_largest = is_largest_type(&ty);
 
+        // FIXME The only difference between matches is the reference
+        //       to their largest type, so the only "special" tokens
+        //       are the largest type calls:
+        //         * u64::from
+        //         * RangeQuery::new_u64
+        //       And the `is_largest` check is purely to avoid the
+        //       identity_conversion clippy warning
+        //       Shirley there's a better way, no?
         match get_field_type(&ty) {
-            FieldType::UNSIGNED => quote_spanned! { field.span()=>
-                if let Some(range) = query.#name {
-                    let query = tantivy::query::RangeQuery::new_u64(self.#name, range);
-                    result.push(Box::new(query));
+            FieldType::UNSIGNED => {
+                let range_code = if is_largest {
+                    quote! {
+                        let range = rr.clone();
+                    }
+                } else {
+                    quote! {
+                    let range = std::ops::Range {
+                        start: u64::from(rr.start),
+                        end: u64::from(rr.end),
+                    };
+                    }
+                };
+                quote_spanned! { field.span()=>
+                    if let Some(ref rr) = query.#name {
+                        #range_code
+                        let query = tantivy::query::RangeQuery::new_u64(self.#name, range);
+                        result.push(Box::new(query));
+                    }
                 }
-            },
-            FieldType::SIGNED => quote_spanned! { field.span()=>
-                if let Some(range) = query.#name {
-                    let query = tantivy::query::RangeQuery::new_i64(self.#name, range);
-                    result.push(Box::new(query));
+            }
+            FieldType::SIGNED => {
+                let range_code = if is_largest {
+                    quote! {
+                        let range = rr.clone();
+                    }
+                } else {
+                    quote! {
+                    let range = std::ops::Range {
+                        start: i64::from(rr.start),
+                        end: i64::from(rr.end),
+                    };
+                    }
+                };
+
+                quote_spanned! { field.span()=>
+                    if let Some(ref rr) = query.#name {
+                        #range_code
+                        let query = tantivy::query::RangeQuery::new_i64(self.#name, range);
+                        result.push(Box::new(query));
+                    }
                 }
-            },
-            FieldType::FLOAT => quote_spanned! { field.span()=>
-                if let Some(range) = query.#name {
-                    let query = tantivy::query::RangeQuery::new_f64(self.#name, range);
-                    result.push(Box::new(query));
+            }
+            FieldType::FLOAT => {
+                let range_code = if is_largest {
+                    quote! {
+                        let range = rr.clone();
+                    }
+                } else {
+                    quote! {
+                    let range = std::ops::Range {
+                        start: f64::from(rr.start),
+                        end: f64::from(rr.end),
+                    };
+                    }
+                };
+                quote_spanned! { field.span()=>
+                    if let Some(ref rr) = query.#name {
+                        #range_code
+                        let query = tantivy::query::RangeQuery::new_f64(self.#name, range);
+                        result.push(Box::new(query));
+                    }
                 }
-            },
+            }
         }
     });
 
@@ -148,7 +192,7 @@ fn make_filter_query(input: &DeriveInput) -> TokenStream2 {
         }
 
         impl #index_name {
-            pub fn interpret(&self, query: #name) -> Vec<Box<dyn tantivy::query::Query>> {
+            pub fn interpret(&self, query: &#name) -> Vec<Box<dyn tantivy::query::Query>> {
                 let mut result : Vec<Box<dyn tantivy::query::Query>> = Vec::new();
                 #(#interpret_code);*
                 result
@@ -287,6 +331,23 @@ enum FieldType {
 const SUPPORTED_UNSIGNED: [&str; 4] = ["u8", "u16", "u32", "u64"];
 const SUPPORTED_SIGNED: [&str; 4] = ["i8", "i16", "i32", "i64"];
 const SUPPORTED_FLOAT: [&str; 2] = ["f32", "f64"];
+
+const LARGEST_TYPE: [&str; 3] = ["u64", "i64", "f64"];
+
+fn is_largest_type(ty: &Type) -> bool {
+    if let Type::Path(tp) = ty {
+        if tp.path.segments.len() == 1 {
+            let ident = &tp.path.segments.first().unwrap().ident;
+
+            for name in LARGEST_TYPE.iter() {
+                if ident == name {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
 
 fn get_field_type(ty: &Type) -> FieldType {
     if let Type::Path(tp) = ty {
