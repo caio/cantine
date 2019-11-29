@@ -1,5 +1,9 @@
 use std::{convert::TryFrom, ops::Range};
-use tantivy::schema::SchemaBuilder;
+
+use tantivy::{
+    schema::{SchemaBuilder, Value},
+    Document,
+};
 
 use cantine_derive::FilterAndAggregation;
 
@@ -174,4 +178,28 @@ fn filter_query_interpretation() {
             })
             .len()
     );
+}
+
+#[test]
+fn add_to_doc_sets_fields_properly() {
+    let mut builder = SchemaBuilder::new();
+    let fields = FeatFilterFields::from(&mut builder);
+
+    let mut doc = Document::new();
+
+    fields.add_to_doc(
+        &mut doc,
+        &Feat {
+            a: 10,
+            d: Some(0.42),
+            ..Feat::default()
+        },
+    );
+
+    // Set values are filled properly
+    assert_eq!(Some(&Value::U64(10)), doc.get_first(fields.a));
+    assert_eq!(Some(&Value::F64(0.0)), doc.get_first(fields.c));
+    assert_eq!(Some(&Value::F64(0.42)), doc.get_first(fields.d));
+    // Unsed optional values aren't added
+    assert_eq!(None, doc.get_first(fields.b));
 }

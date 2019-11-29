@@ -161,6 +161,57 @@ fn make_filter_query(input: &DeriveInput) -> TokenStream2 {
         }
     });
 
+    let add_to_doc_code = fields.iter().map(|field| {
+        let name = &field.ident;
+
+        let opt_type = extract_type_if_option(&field.ty);
+        let is_optional = opt_type.is_some();
+
+        let ty = opt_type.unwrap_or(&field.ty);
+        let is_largest = is_largest_type(&ty);
+
+        let field_type = get_field_type(&ty);
+
+        let convert_code = if is_largest {
+            quote_spanned! { field.span()=>
+                let value = value;
+            }
+        } else {
+            match field_type {
+                FieldType::UNSIGNED => quote_spanned! { field.span()=>
+                    let value = u64::from(value);
+                },
+                FieldType::SIGNED => quote_spanned! { field.span()=>
+                    let value = i64::from(value);
+                },
+                FieldType::FLOAT => quote_spanned! { field.span()=>
+                    let value = f64::from(value);
+                },
+            }
+        };
+
+        let add_code = match field_type {
+            FieldType::UNSIGNED => quote!(doc.add_u64(self.#name, value);),
+            FieldType::SIGNED => quote!(doc.add_i64(self.#name, value);),
+            FieldType::FLOAT => quote!(doc.add_f64(self.#name, value);),
+        };
+
+        if is_optional {
+            quote_spanned! { field.span()=>
+                if let Some(value) = feat.#name {
+                    #convert_code
+                    #add_code
+                }
+            }
+        } else {
+            quote_spanned! { field.span()=>
+                let value = feat.#name;
+                #convert_code
+                #add_code
+            }
+        }
+    });
+
     quote! {
         #[derive(serde::Serialize, serde::Deserialize, Default, Debug, Clone)]
         pub struct #name {
@@ -198,8 +249,8 @@ fn make_filter_query(input: &DeriveInput) -> TokenStream2 {
                 result
             }
 
-            pub fn add_to_doc(doc: &mut tantivy::Document, feat: &#feat) {
-                unimplemented!()
+            pub fn add_to_doc(&self, doc: &mut tantivy::Document, feat: &#feat) {
+                #(#add_to_doc_code);*
             }
         }
     }
