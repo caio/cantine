@@ -20,8 +20,8 @@ use cantine::{
     database::BincodeDatabase,
     index::IndexFields,
     model::{
-        FeaturesAggregationQuery, FeaturesAggregationResult, Recipe, RecipeCard, SearchQuery,
-        SearchResult,
+        FeaturesAggregationQuery, FeaturesAggregationResult, FeaturesFilterQuery, Recipe,
+        RecipeCard, SearchQuery, SearchResult,
     },
 };
 use tique::queryparser::QueryParser;
@@ -167,7 +167,11 @@ impl Cantine {
             }
         }
 
-        // FIXME interpret all
+        if let Some(filters) = &query.filters {
+            for query in self.fields.features.interpret(filters).into_iter() {
+                subqueries.push((Occur::Must, query));
+            }
+        }
 
         match subqueries.len() {
             0 => Ok(Box::new(AllQuery)),
@@ -230,6 +234,10 @@ pub fn main() -> std::result::Result<(), String> {
     let query = SearchQuery {
         fulltext: Some(options.query),
         num_items: Some(options.num_results.get()),
+        filters: Some(FeaturesFilterQuery {
+            num_ingredients: Some(0..5),
+            ..FeaturesFilterQuery::default()
+        }),
         ..SearchQuery::default()
     };
 
