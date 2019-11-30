@@ -84,79 +84,41 @@ fn make_filter_query(input: &DeriveInput) -> TokenStream2 {
         let name = &field.ident;
         let ty = extract_type_if_option(&field.ty).unwrap_or(&field.ty);
         let is_largest = is_largest_type(&ty);
+        let field_type = get_field_type(&ty);
 
-        // FIXME The only difference between matches is the reference
-        //       to their largest type, so the only "special" tokens
-        //       are the largest type calls:
-        //         * u64::from
-        //         * RangeQuery::new_u64
-        //       And the `is_largest` check is purely to avoid the
-        //       identity_conversion clippy warning
-        //       Shirley there's a better way, no?
-        match get_field_type(&ty) {
-            FieldType::UNSIGNED => {
-                let range_code = if is_largest {
-                    quote! {
-                        let range = rr.clone();
-                    }
-                } else {
-                    quote! {
-                    let range = std::ops::Range {
-                        start: u64::from(rr.start),
-                        end: u64::from(rr.end),
-                    };
-                    }
-                };
-                quote_spanned! { field.span()=>
-                    if let Some(ref rr) = query.#name {
-                        #range_code
-                        let query = tantivy::query::RangeQuery::new_u64(self.#name, range);
-                        result.push(Box::new(query));
-                    }
-                }
-            }
-            FieldType::SIGNED => {
-                let range_code = if is_largest {
-                    quote! {
-                        let range = rr.clone();
-                    }
-                } else {
-                    quote! {
-                    let range = std::ops::Range {
-                        start: i64::from(rr.start),
-                        end: i64::from(rr.end),
-                    };
-                    }
-                };
+        let (from_code, query_code) = match field_type {
+            FieldType::UNSIGNED => (
+                quote!(u64::from),
+                quote!(tantivy::query::RangeQuery::new_u64),
+            ),
+            FieldType::SIGNED => (
+                quote!(i64::from),
+                quote!(tantivy::query::RangeQuery::new_i64),
+            ),
+            FieldType::FLOAT => (
+                quote!(f64::from),
+                quote!(tantivy::query::RangeQuery::new_f64),
+            ),
+        };
 
-                quote_spanned! { field.span()=>
-                    if let Some(ref rr) = query.#name {
-                        #range_code
-                        let query = tantivy::query::RangeQuery::new_i64(self.#name, range);
-                        result.push(Box::new(query));
-                    }
-                }
+        let range_code = if is_largest {
+            quote! {
+                let range = rr.clone();
             }
-            FieldType::FLOAT => {
-                let range_code = if is_largest {
-                    quote! {
-                        let range = rr.clone();
-                    }
-                } else {
-                    quote! {
-                    let range = std::ops::Range {
-                        start: f64::from(rr.start),
-                        end: f64::from(rr.end),
-                    };
-                    }
+        } else {
+            quote! {
+                let range = std::ops::Range {
+                    start: #from_code(rr.start),
+                    end: #from_code(rr.end),
                 };
-                quote_spanned! { field.span()=>
-                    if let Some(ref rr) = query.#name {
-                        #range_code
-                        let query = tantivy::query::RangeQuery::new_f64(self.#name, range);
-                        result.push(Box::new(query));
-                    }
-                }
+            }
+        };
+
+        quote_spanned! { field.span()=>
+            if let Some(ref rr) = query.#name {
+                #range_code
+                let query = #query_code(self.#name, range);
+                result.push(Box::new(query));
             }
         }
     });
