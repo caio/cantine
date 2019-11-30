@@ -2,23 +2,24 @@ use std::convert::TryFrom;
 
 use tantivy::schema::{Field, Schema, SchemaBuilder, FAST, STORED, TEXT};
 
+use crate::model::FeaturesFilterFields;
+
 #[derive(Clone)]
 pub struct IndexFields {
     pub id: Field,
     pub fulltext: Field,
-    pub features: Field,
+    pub features: FeaturesFilterFields,
 }
 
 const FIELD_ID: &str = "id";
 const FIELD_FULLTEXT: &str = "fulltext";
-const FIELD_FEATURES: &str = "features_bincode";
 
 impl From<&mut SchemaBuilder> for IndexFields {
     fn from(builder: &mut SchemaBuilder) -> Self {
         IndexFields {
             id: builder.add_u64_field(FIELD_ID, STORED | FAST),
             fulltext: builder.add_text_field(FIELD_FULLTEXT, TEXT),
-            features: builder.add_bytes_field(FIELD_FEATURES),
+            features: FeaturesFilterFields::from(builder),
         }
     }
 }
@@ -32,13 +33,10 @@ impl TryFrom<&Schema> for IndexFields {
         let fulltext = schema
             .get_field(FIELD_FULLTEXT)
             .ok_or("missing fulltext field")?;
-        let features = schema
-            .get_field(FIELD_FEATURES)
-            .ok_or("missing features field")?;
         Ok(IndexFields {
             id,
             fulltext,
-            features,
+            features: FeaturesFilterFields::try_from(schema)?,
         })
     }
 }
