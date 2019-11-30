@@ -53,15 +53,22 @@ fn make_filter_query(input: &DeriveInput) -> TokenStream2 {
         let schema_name = format_ident!("_filter_{}", &name);
         let quoted = format!("\"{}\"", schema_name);
         let ty = extract_type_if_option(&field.ty).unwrap_or(&field.ty);
+        let field_type = get_field_type(&ty);
 
-        let method = match get_field_type(&ty) {
+        let method = match field_type {
             FieldType::UNSIGNED => quote!(add_u64_field),
             FieldType::SIGNED => quote!(add_i64_field),
             FieldType::FLOAT => quote!(add_f64_field),
         };
 
-        quote_spanned! { field.span()=>
-            #name: builder.#method(#quoted, tantivy::schema::INDEXED | tantivy::schema::FAST)
+        match field_type {
+            // FIXME tantivy 0.11+
+            FieldType::FLOAT => quote_spanned! { field.span()=>
+                #name: builder.#method(#quoted, tantivy::schema::INDEXED)
+            },
+            _ => quote_spanned! { field.span()=>
+                #name: builder.#method(#quoted, tantivy::schema::INDEXED | tantivy::schema::FAST)
+            },
         }
     });
 
