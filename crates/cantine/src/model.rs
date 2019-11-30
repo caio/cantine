@@ -82,6 +82,7 @@ pub struct Features {
 pub enum Sort {
     Relevance,
     NumIngredients,
+    InstructionsLength,
     TotalTime,
     CookTime,
     PrepTime,

@@ -21,11 +21,13 @@ use cantine::{
     index::IndexFields,
     model::{
         FeaturesAggregationQuery, FeaturesAggregationResult, FeaturesFilterQuery, Recipe,
-        RecipeCard, SearchQuery, SearchResult,
+        RecipeCard, SearchQuery, SearchResult, Sort,
     },
 };
-use tique::queryparser::QueryParser;
-use tique::top_collector::ConditionalTopCollector;
+use tique::{
+    queryparser::QueryParser,
+    top_collector::{ordered_by_u64_fast_field, ConditionalTopCollector},
+};
 
 /// Queries data generated via `load`
 #[derive(Debug, StructOpt)]
@@ -196,25 +198,56 @@ impl Cantine {
         };
 
         let interpreted_query = self.interpret_query(query)?;
-        // TODO sort
+        let limit = query.num_items.unwrap_or(10) as usize;
 
-        let (topdocs, agg_result) = searcher.search(
-            &interpreted_query,
-            &(
-                ConditionalTopCollector::with_limit(query.num_items.unwrap_or(10) as usize, true),
-                agg_collector,
-            ),
-        )?;
+        macro_rules! collect_unsigned {
+            ($field:ident) => {{
+                let top_collector =
+                    ordered_by_u64_fast_field(self.fields.features.$field, limit, true);
 
-        let mut items: Vec<RecipeCard> = Vec::with_capacity(topdocs.len());
-        for item in topdocs.iter() {
-            let doc = searcher.doc(item.doc).unwrap();
-            if let Some(&Value::U64(id)) = doc.get_first(self.fields.id) {
-                items.push(self.database.get_by_id(id).unwrap().unwrap().into());
-            } else {
-                panic!("Found document without a stored id");
-            }
+                let (topdocs, agg_result) =
+                    searcher.search(&interpreted_query, &(top_collector, agg_collector))?;
+
+                let mut items: Vec<RecipeCard> = Vec::with_capacity(topdocs.len());
+                for item in topdocs.iter() {
+                    let doc = searcher.doc(item.doc).unwrap();
+                    if let Some(&Value::U64(id)) = doc.get_first(self.fields.id) {
+                        items.push(self.database.get_by_id(id).unwrap().unwrap().into());
+                    } else {
+                        panic!("Found document without a stored id");
+                    }
+                }
+
+                (items, agg_result)
+            }};
         }
+
+        let (items, agg_result) = match query.sort.as_ref().unwrap_or(&Sort::Relevance) {
+            Sort::Relevance => {
+                let top_collector = ConditionalTopCollector::with_limit(limit, true);
+
+                let (topdocs, agg_result) =
+                    searcher.search(&interpreted_query, &(top_collector, agg_collector))?;
+
+                let mut items: Vec<RecipeCard> = Vec::with_capacity(topdocs.len());
+                for item in topdocs.iter() {
+                    let doc = searcher.doc(item.doc).unwrap();
+                    if let Some(&Value::U64(id)) = doc.get_first(self.fields.id) {
+                        items.push(self.database.get_by_id(id).unwrap().unwrap().into());
+                    } else {
+                        panic!("Found document without a stored id");
+                    }
+                }
+
+                (items, agg_result)
+            }
+            Sort::NumIngredients => collect_unsigned!(num_ingredients),
+            Sort::InstructionsLength => collect_unsigned!(instructions_length),
+            Sort::TotalTime => collect_unsigned!(total_time),
+            Sort::CookTime => collect_unsigned!(cook_time),
+            Sort::PrepTime => collect_unsigned!(prep_time),
+            _ => unimplemented!(),
+        };
 
         Ok(SearchResult {
             items,
@@ -235,9 +268,10 @@ pub fn main() -> std::result::Result<(), String> {
         fulltext: Some(options.query),
         num_items: Some(options.num_results.get()),
         filters: Some(FeaturesFilterQuery {
-            num_ingredients: Some(0..5),
+            num_ingredients: Some(0..50),
             ..FeaturesFilterQuery::default()
         }),
+        sort: Some(Sort::InstructionsLength),
         ..SearchQuery::default()
     };
 
