@@ -40,7 +40,7 @@ pub struct RecipeCard {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total_time: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub calories: Option<f32>,
+    pub calories: Option<u32>,
 }
 
 impl From<Recipe> for RecipeCard {
@@ -66,7 +66,7 @@ pub struct Features {
     pub total_time: Option<u32>,
     pub cook_time: Option<u32>,
 
-    pub calories: Option<f32>,
+    pub calories: Option<u32>,
     pub fat_content: Option<f32>,
     pub carbohydrate_content: Option<f32>,
     pub protein_content: Option<f32>,
