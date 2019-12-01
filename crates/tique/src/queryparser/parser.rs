@@ -59,8 +59,6 @@ mod tests {
 
     use super::Token::*;
 
-    use quickcheck::quickcheck;
-
     #[test]
     fn term_extraction() {
         assert_eq!(parse_term("gula"), Ok(("", Term("gula"))));
@@ -118,29 +116,4 @@ mod tests {
     fn garbage_is_extracted_as_term() {
         assert_eq!(parse_query("- \""), Ok(("", vec![Term("-"), Term("\"")])));
     }
-
-    macro_rules! check_does_not_crash {
-        // The first ident here because it doesn't look like I can
-        // use concat_idents! in function declaration scope, so
-        // we need to make the name of the prop function explicit
-        ($t: ident, $f: ident) => {
-            #[allow(unused_must_use)]
-            fn $t(input: String) -> bool {
-                $f(input.as_str());
-                true
-            }
-
-            quickcheck($t as fn(String) -> bool);
-        };
-    }
-
-    #[test]
-    fn parsers_dont_crash_easily() {
-        check_does_not_crash!(prop_phrase, parse_phrase);
-        check_does_not_crash!(prop_term, parse_term);
-        check_does_not_crash!(prop_not_term, parse_not_term);
-        check_does_not_crash!(prop_not_phrase, parse_not_phrase);
-        check_does_not_crash!(prop_parse_all, parse_query);
-    }
-
 }

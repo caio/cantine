@@ -118,8 +118,6 @@ mod tests {
 
     use tantivy::tokenizer::TokenizerManager;
 
-    use quickcheck::quickcheck;
-
     fn test_parser() -> QueryParser {
         QueryParser::new(
             Field(0),
@@ -231,16 +229,5 @@ mod tests {
         assert!(parser.parse("'").unwrap().is_none());
         // And here would be a BooleanQuery with each term
         assert!(parser.parse("' <  !").unwrap().is_none());
-    }
-
-    #[allow(unused_must_use)]
-    fn can_handle_arbitrary_input_without_crashing(input: String) -> bool {
-        test_parser().parse(input.as_str());
-        true
-    }
-
-    #[test]
-    fn prop_tests() {
-        quickcheck(can_handle_arbitrary_input_without_crashing as fn(String) -> bool);
     }
 }
