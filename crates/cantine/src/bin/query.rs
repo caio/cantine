@@ -5,13 +5,13 @@ use std::{
     sync::Arc,
 };
 
+use serde_json;
 use structopt::StructOpt;
 use tantivy::{
     self,
     collector::{Collector, SegmentCollector},
-    fastfield::FastFieldReader,
     query::{AllQuery, BooleanQuery, Occur, Query},
-    schema::{Field, Value},
+    schema::Value,
     tokenizer::TokenizerManager,
     DocId, Index, IndexReader, Result, Score, SegmentLocalId, SegmentReader,
 };
@@ -19,10 +19,7 @@ use tantivy::{
 use cantine::{
     database::BincodeDatabase,
     index::IndexFields,
-    model::{
-        FeaturesAggregationQuery, FeaturesAggregationResult, FeaturesFilterQuery, Recipe,
-        RecipeCard, SearchQuery, SearchResult, Sort,
-    },
+    model::{FeaturesCollector, Recipe, RecipeCard, SearchQuery, SearchResult, Sort},
 };
 use tique::{
     queryparser::QueryParser,
@@ -44,48 +41,14 @@ pub struct QueryOptions {
     query: String,
 }
 
-pub struct Aggregator {
-    query: FeaturesAggregationQuery,
-    db: Arc<BincodeDatabase<Recipe>>,
-    id_field: Field,
-}
+pub struct CountCollector;
 
-pub struct Aggregations {
-    seen: u32,
-    agg: FeaturesAggregationResult,
-}
+impl Collector for CountCollector {
+    type Fruit = u32;
+    type Child = CountSegmentCollector;
 
-impl Aggregations {
-    fn merge(&mut self, other: &Self) {
-        self.seen += other.seen;
-        self.agg.merge_same_size(&other.agg);
-    }
-}
-
-impl Collector for Aggregator {
-    type Fruit = Aggregations;
-    type Child = AggregationsSegmentCollector;
-    fn for_segment(
-        &self,
-        _segment_id: SegmentLocalId,
-        reader: &SegmentReader,
-    ) -> Result<Self::Child> {
-        let aggregations = Aggregations {
-            agg: FeaturesAggregationResult::from(&self.query),
-            seen: 0,
-        };
-
-        let id_reader = reader
-            .fast_fields()
-            .u64(self.id_field)
-            .expect("id_field is u64 fast field");
-
-        Ok(AggregationsSegmentCollector {
-            aggregations,
-            id_reader,
-            query: self.query.clone(),
-            db: self.db.clone(),
-        })
+    fn for_segment(&self, _id: SegmentLocalId, _reader: &SegmentReader) -> Result<Self::Child> {
+        Ok(CountSegmentCollector(0))
     }
 
     fn requires_scoring(&self) -> bool {
@@ -93,39 +56,21 @@ impl Collector for Aggregator {
     }
 
     fn merge_fruits(&self, fruits: Vec<Self::Fruit>) -> Result<Self::Fruit> {
-        assert!(!fruits.is_empty());
-
-        let mut iter = fruits.into_iter();
-        let mut first = iter.next().expect("fruits is never empty");
-
-        for fruit in iter {
-            first.merge(&fruit);
-        }
-
-        Ok(first)
+        Ok(fruits.iter().sum())
     }
 }
 
-pub struct AggregationsSegmentCollector {
-    query: FeaturesAggregationQuery,
-    aggregations: Aggregations,
-    db: Arc<BincodeDatabase<Recipe>>,
-    id_reader: FastFieldReader<u64>,
-}
+pub struct CountSegmentCollector(u32);
 
-impl SegmentCollector for AggregationsSegmentCollector {
-    type Fruit = Aggregations;
+impl SegmentCollector for CountSegmentCollector {
+    type Fruit = u32;
 
-    fn collect(&mut self, doc: DocId, _score: Score) {
-        let id = self.id_reader.get(doc);
-        let recipe = self.db.get_by_id(id).unwrap().unwrap();
-
-        self.aggregations.seen += 1;
-        self.aggregations.agg.collect(&self.query, &recipe.features);
+    fn collect(&mut self, _doc: DocId, _score: Score) {
+        self.0 += 1;
     }
 
     fn harvest(self) -> Self::Fruit {
-        self.aggregations
+        self.0
     }
 }
 
@@ -185,17 +130,7 @@ impl Cantine {
     pub fn search(&self, query: &SearchQuery) -> Result<SearchResult> {
         let searcher = self.reader.searcher();
 
-        let agg_query = if let Some(agg) = &query.agg {
-            agg.clone()
-        } else {
-            FeaturesAggregationQuery::default()
-        };
-
-        let agg_collector = Aggregator {
-            id_field: self.fields.id,
-            db: self.database.clone(),
-            query: agg_query.clone(),
-        };
+        let count_collector = CountCollector;
 
         let interpreted_query = self.interpret_query(query)?;
         let limit = query.num_items.unwrap_or(10) as usize;
@@ -205,8 +140,8 @@ impl Cantine {
                 let top_collector =
                     ordered_by_u64_fast_field(self.fields.features.$field, limit, true);
 
-                let (topdocs, agg_result) =
-                    searcher.search(&interpreted_query, &(top_collector, agg_collector))?;
+                let (topdocs, total_found) =
+                    searcher.search(&interpreted_query, &(top_collector, count_collector))?;
 
                 let mut items: Vec<RecipeCard> = Vec::with_capacity(topdocs.len());
                 for item in topdocs.iter() {
@@ -218,16 +153,16 @@ impl Cantine {
                     }
                 }
 
-                (items, agg_result)
+                (items, total_found)
             }};
         }
 
-        let (items, agg_result) = match query.sort.as_ref().unwrap_or(&Sort::Relevance) {
+        let (items, total_found) = match query.sort.as_ref().unwrap_or(&Sort::Relevance) {
             Sort::Relevance => {
                 let top_collector = ConditionalTopCollector::with_limit(limit, true);
 
-                let (topdocs, agg_result) =
-                    searcher.search(&interpreted_query, &(top_collector, agg_collector))?;
+                let (topdocs, total_found) =
+                    searcher.search(&interpreted_query, &(top_collector, count_collector))?;
 
                 let mut items: Vec<RecipeCard> = Vec::with_capacity(topdocs.len());
                 for item in topdocs.iter() {
@@ -239,7 +174,7 @@ impl Cantine {
                     }
                 }
 
-                (items, agg_result)
+                (items, total_found)
             }
             Sort::NumIngredients => collect_unsigned!(num_ingredients),
             Sort::InstructionsLength => collect_unsigned!(instructions_length),
@@ -249,10 +184,38 @@ impl Cantine {
             _ => unimplemented!(),
         };
 
+        let agg = if let Some(agg_query) = &query.agg {
+            // TODO extract threshold
+            if total_found <= 100_000 {
+                let id_field = self.fields.id;
+                let db = self.database.clone();
+                let collector =
+                    FeaturesCollector::new(agg_query.clone(), move |reader: &SegmentReader| {
+                        let db = db.clone();
+                        let id_reader = reader
+                            .fast_fields()
+                            .u64(id_field)
+                            .expect("id is a u64 fast field");
+
+                        move |doc: DocId| {
+                            let recipe_id = id_reader.get(doc);
+                            let recipe = db.get_by_id(recipe_id).unwrap().unwrap();
+                            recipe.features
+                        }
+                    });
+
+                Some(searcher.search(&interpreted_query, &collector)?)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         Ok(SearchResult {
             items,
-            total_found: agg_result.seen,
-            agg: Some(agg_result.agg),
+            total_found,
+            agg,
             ..SearchResult::default()
         })
     }
@@ -260,23 +223,23 @@ impl Cantine {
 
 pub fn main() -> std::result::Result<(), String> {
     let options = QueryOptions::from_args();
-    println!("Started with {:?}", options);
+    eprintln!("Started with {:?}", options);
 
     let cantine = Cantine::open(options.base_path).unwrap();
 
-    let query = SearchQuery {
-        fulltext: Some(options.query),
-        num_items: Some(options.num_results.get()),
-        filters: Some(FeaturesFilterQuery {
-            num_ingredients: Some(0..50),
-            ..FeaturesFilterQuery::default()
-        }),
-        sort: Some(Sort::InstructionsLength),
-        ..SearchQuery::default()
+    let query = if let Ok(query) = serde_json::from_str(options.query.as_str()) {
+        query
+    } else {
+        SearchQuery {
+            fulltext: Some(options.query),
+            num_items: Some(options.num_results.get()),
+            ..SearchQuery::default()
+        }
     };
 
+    eprintln!("Executing query {:?}", &query);
     let result = cantine.search(&query).unwrap();
 
-    dbg!(result);
+    println!("{}", serde_json::to_string(&result).unwrap());
     Ok(())
 }
