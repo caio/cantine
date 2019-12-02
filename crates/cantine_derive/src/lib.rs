@@ -322,7 +322,10 @@ fn make_agg_query(input: &DeriveInput) -> TokenStream2 {
     let fields = get_public_struct_fields(&input).map(|field| {
         let name = &field.ident;
         let ty = extract_type_if_option(&field.ty).unwrap_or(&field.ty);
-        quote_spanned! { field.span()=> pub #name: Vec<std::ops::Range<#ty>> }
+        quote_spanned! { field.span()=>
+            #[serde(default = "Vec::new")]
+            pub #name: Vec<std::ops::Range<#ty>>
+        }
     });
 
     quote! {
@@ -339,7 +342,10 @@ fn make_agg_result(input: &DeriveInput) -> TokenStream2 {
 
     let fields = get_public_struct_fields(&input).map(|field| {
         let name = &field.ident;
-        quote_spanned! { field.span()=> pub #name: Vec<u32> }
+        quote_spanned! { field.span()=>
+            #[serde(skip_serializing_if = "Vec::is_empty")]
+            pub #name: Vec<u32>
+        }
     });
 
     let merge_code = get_public_struct_fields(&input).map(|field| {
