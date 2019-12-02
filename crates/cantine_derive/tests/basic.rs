@@ -1,8 +1,14 @@
-use std::{convert::TryFrom, ops::Range};
+use std::{
+    collections::HashMap,
+    convert::TryFrom,
+    ops::Range,
+    sync::{Arc, Mutex},
+};
 
 use tantivy::{
+    query::AllQuery,
     schema::{SchemaBuilder, Value},
-    Document,
+    DocId, Document, Index, SegmentReader,
 };
 
 use cantine_derive::FilterAndAggregation;
@@ -202,4 +208,87 @@ fn add_to_doc_sets_fields_properly() {
     assert_eq!(Some(&Value::F64(0.42)), doc.get_first(fields.d));
     // Unsed optional values aren't added
     assert_eq!(None, doc.get_first(fields.b));
+}
+
+#[test]
+fn collector_integration() -> tantivy::Result<()> {
+    let mut builder = SchemaBuilder::new();
+
+    let id_field = builder.add_u64_field("id", tantivy::schema::FAST);
+    let fields = FeatFilterFields::from(&mut builder);
+
+    let index = Index::create_in_ram(builder.build());
+
+    let mut writer = index.writer_with_num_threads(1, 50_000_000)?;
+    let mut db = HashMap::new();
+
+    let mut add_feat = |id: u64, feat| {
+        let mut doc = Document::new();
+
+        doc.add_u64(id_field, id);
+        fields.add_to_doc(&mut doc, &feat);
+        writer.add_document(doc);
+
+        db.insert(id, feat);
+    };
+
+    add_feat(
+        1,
+        Feat {
+            a: 1,
+            c: 1.0,
+            ..Feat::default()
+        },
+    );
+
+    add_feat(
+        2,
+        Feat {
+            a: 2,
+            b: Some(2),
+            c: 2.0,
+            ..Feat::default()
+        },
+    );
+
+    add_feat(
+        3,
+        Feat {
+            a: 3,
+            b: Some(3),
+            c: 3.0,
+            d: Some(3.0),
+        },
+    );
+
+    writer.commit()?;
+
+    let query = FeatAggregationQuery {
+        a: vec![0..1, 2..4],
+        b: vec![0..3],
+        c: vec![0.0..0.1, 1.0..3.1],
+        d: vec![42.0..100.0],
+    };
+
+    let db = Arc::new(Mutex::new(db));
+    let collector = FeatCollector::new(query, move |seg_reader: &SegmentReader| {
+        let id_reader = seg_reader.fast_fields().u64(id_field).unwrap();
+        let db = db.clone();
+        move |doc: DocId| {
+            let id = id_reader.get(doc);
+            db.lock().unwrap().remove(&id).unwrap()
+        }
+    });
+
+    let reader = index.reader()?;
+    let searcher = reader.searcher();
+
+    let agg_result = searcher.search(&AllQuery, &collector)?;
+
+    assert_eq!(vec![0, 2], agg_result.a);
+    assert_eq!(vec![1], agg_result.b);
+    assert_eq!(vec![0, 3], agg_result.c);
+    assert_eq!(vec![0], agg_result.d);
+
+    Ok(())
 }

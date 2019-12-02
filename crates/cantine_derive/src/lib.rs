@@ -14,14 +14,107 @@ pub fn derive_filter_and_agg(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
 
     let filter_query = make_filter_query(&input);
+
     let agg_query = make_agg_query(&input);
     let agg_result = make_agg_result(&input);
+    let collector = make_collector(&input);
 
     TokenStream::from(quote! {
         #filter_query
+
         #agg_query
         #agg_result
+        #collector
     })
+}
+
+fn make_collector(input: &DeriveInput) -> TokenStream2 {
+    let meta = &input.ident;
+    let agg = format_ident!("{}AggregationResult", meta);
+    let query = format_ident!("{}AggregationQuery", meta);
+
+    let collector = format_ident!("{}Collector", meta);
+    let segment_collector = format_ident!("{}SegmentColletor", meta);
+
+    quote! {
+        pub struct #collector<F> {
+            agg: #agg,
+            query: #query,
+            reader_factory: F,
+        }
+
+        impl<F, R> #collector<F>
+        where
+            F: 'static + Sync + Fn(&tantivy::SegmentReader) -> R,
+            R: 'static + Fn(tantivy::DocId) -> #meta,
+        {
+            pub fn new(query: #query, reader_factory: F) -> Self {
+                let agg = <#agg>::from(&query);
+                Self {
+                    agg, query, reader_factory
+                }
+            }
+        }
+
+        pub struct #segment_collector<F> {
+            agg: #agg,
+            query: #query,
+            reader: F,
+        }
+
+        impl<F, R> tantivy::collector::Collector for #collector<F>
+        where
+            F: 'static + Sync + Fn(&tantivy::SegmentReader) -> R,
+            R: 'static + Fn(tantivy::DocId) -> #meta,
+        {
+            type Fruit = #agg;
+            type Child = #segment_collector<R>;
+
+            fn for_segment(
+                &self,
+                _segment_id: tantivy::SegmentLocalId,
+                segment_reader: &tantivy::SegmentReader,
+            ) -> tantivy::Result<Self::Child> {
+                Ok(#segment_collector {
+                    agg: self.agg.clone(),
+                    query: self.query.clone(),
+                    reader: (self.reader_factory)(segment_reader),
+                })
+            }
+
+            fn requires_scoring(&self) -> bool {
+                false
+            }
+
+            fn merge_fruits(&self, fruits: Vec<Self::Fruit>) -> tantivy::Result<Self::Fruit> {
+                let mut iter = fruits.into_iter();
+
+                let mut first = iter.next().expect("Always at least one fruit");
+
+                for fruit in iter {
+                    first.merge_same_size(&fruit);
+                }
+
+                Ok(first)
+            }
+        }
+
+        impl<F> tantivy::collector::SegmentCollector for #segment_collector<F>
+        where
+            F: 'static + Fn(tantivy::DocId) -> #meta,
+        {
+            type Fruit = #agg;
+
+            fn collect(&mut self, doc: tantivy::DocId, _score: tantivy::Score) {
+                let item = (self.reader)(doc);
+                self.agg.collect(&self.query, &item);
+            }
+
+            fn harvest(self) -> Self::Fruit {
+                self.agg
+            }
+        }
+    }
 }
 
 fn make_filter_query(input: &DeriveInput) -> TokenStream2 {
