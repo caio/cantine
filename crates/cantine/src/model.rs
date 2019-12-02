@@ -57,7 +57,7 @@ impl From<Recipe> for RecipeCard {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Default, PartialEq, FilterAndAggregation)]
+#[derive(FilterAndAggregation, Serialize, Deserialize, Debug, Default, PartialEq)]
 pub struct Features {
     pub num_ingredients: u8,
     pub instructions_length: u32,
@@ -97,7 +97,7 @@ pub struct SearchQuery {
     pub fulltext: Option<String>,
     pub sort: Option<Sort>,
     pub num_items: Option<u8>,
-    pub filters: Option<FeaturesFilterQuery>,
+    pub filter: Option<FeaturesFilterQuery>,
     pub agg: Option<FeaturesAggregationQuery>,
     // TODO decide how to expose After<score,@id>
     pub after: Option<String>,

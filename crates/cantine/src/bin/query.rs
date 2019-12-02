@@ -169,8 +169,8 @@ impl Cantine {
             }
         }
 
-        if let Some(filters) = &query.filters {
-            for query in self.fields.features.interpret(filters).into_iter() {
+        if let Some(filter) = &query.filter {
+            for query in self.fields.features.interpret(filter).into_iter() {
                 subqueries.push((Occur::Must, query));
             }
         }
