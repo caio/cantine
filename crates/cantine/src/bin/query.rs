@@ -37,9 +37,6 @@ pub struct QueryOptions {
     /// Path to the data directory that will be queries
     #[structopt(short, long)]
     base_path: PathBuf,
-
-    /// What to search for
-    query: String,
 }
 
 pub struct CountCollector;
@@ -219,25 +216,33 @@ impl Cantine {
     }
 }
 
+use std::io::stdin;
+use std::io::{BufRead, BufReader};
+
 pub fn main() -> std::result::Result<(), String> {
     let options = QueryOptions::from_args();
-    eprintln!("Started with {:?}", options);
-
     let cantine = Cantine::open(options.base_path).unwrap();
 
-    let query = if let Ok(query) = serde_json::from_str(options.query.as_str()) {
-        query
-    } else {
-        SearchQuery {
-            fulltext: Some(options.query),
-            num_items: Some(options.num_results.get()),
-            ..SearchQuery::default()
-        }
-    };
+    let stdin = stdin();
+    let reader = BufReader::new(stdin.lock());
 
-    eprintln!("Executing query {:?}", &query);
-    let result = cantine.search(&query).unwrap();
+    for line in reader.lines() {
+        let line = line.unwrap();
+        let query = if let Ok(query) = serde_json::from_str(line.as_str()) {
+            query
+        } else {
+            SearchQuery {
+                fulltext: Some(line),
+                num_items: Some(options.num_results.get()),
+                ..SearchQuery::default()
+            }
+        };
 
-    println!("{}", serde_json::to_string(&result).unwrap());
+        eprintln!("Executing query {:?}", &query);
+        let result = cantine.search(&query).unwrap();
+
+        println!("{}", serde_json::to_string(&result).unwrap());
+    }
+
     Ok(())
 }
