@@ -177,6 +177,7 @@ impl Cantine {
 
                 (items, total_found)
             }
+            Sort::Calories => collect_unsigned!(calories),
             Sort::NumIngredients => collect_unsigned!(num_ingredients),
             Sort::InstructionsLength => collect_unsigned!(instructions_length),
             Sort::TotalTime => collect_unsigned!(total_time),
