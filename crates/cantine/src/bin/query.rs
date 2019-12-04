@@ -5,6 +5,7 @@ use std::{
     sync::Arc,
 };
 
+use bincode;
 use serde_json;
 use structopt::StructOpt;
 use tantivy::{
@@ -187,20 +188,17 @@ impl Cantine {
         let agg = if let Some(agg_query) = &query.agg {
             // TODO extract threshold
             if total_found <= 100_000 {
-                let id_field = self.fields.id;
-                let db = self.database.clone();
+                let features_field = self.fields.features_bincode;
                 let collector =
                     FeaturesCollector::new(agg_query.clone(), move |reader: &SegmentReader| {
-                        let db = db.clone();
-                        let id_reader = reader
+                        let features_reader = reader
                             .fast_fields()
-                            .u64(id_field)
-                            .expect("id is a u64 fast field");
+                            .bytes(features_field)
+                            .expect("bytes field is indexed");
 
                         move |doc: DocId| {
-                            let recipe_id = id_reader.get(doc);
-                            let recipe = db.get_by_id(recipe_id).unwrap().unwrap();
-                            recipe.features
+                            let buf = features_reader.get_bytes(doc);
+                            bincode::deserialize(buf).unwrap()
                         }
                     });
 

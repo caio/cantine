@@ -8,6 +8,7 @@ use std::{
     time::Instant,
 };
 
+use bincode;
 use crossbeam_channel::unbounded;
 use serde_json;
 use structopt::StructOpt;
@@ -61,6 +62,11 @@ fn make_document(fields: &IndexFields, recipe: &Recipe) -> Document {
         fulltext.push(instruction.as_str());
     }
     doc.add_text(fields.fulltext, fulltext.join("\n").as_str());
+
+    doc.add_bytes(
+        fields.features_bincode,
+        bincode::serialize(&recipe.features).unwrap(),
+    );
 
     fields.features.add_to_doc(&mut doc, &recipe.features);
     doc
