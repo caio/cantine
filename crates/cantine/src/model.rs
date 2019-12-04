@@ -79,6 +79,7 @@ pub struct Features {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "snake_case")]
 pub enum Sort {
     Relevance,
     NumIngredients,
