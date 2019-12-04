@@ -4,8 +4,8 @@ use tantivy::{
 };
 
 use super::{
-    CollectCondition, CollectConditionFactory, ConditionalTopCollector,
-    ConditionalTopSegmentCollector, SearchMarker,
+    CollectCondition, CollectConditionFactory, CollectionResult, ConditionalTopCollector,
+    ConditionalTopSegmentCollector,
 };
 
 pub struct CustomScoreTopCollector<T, C, F>
@@ -55,7 +55,7 @@ where
     C: CollectConditionFactory<T> + Sync,
     F: 'static + DocScorerFactory<T>,
 {
-    type Fruit = Vec<SearchMarker<T>>;
+    type Fruit = CollectionResult<T>;
     type Child = CustomScoreTopSegmentCollector<T, C::Type, F::Type>;
 
     fn requires_scoring(&self) -> bool {
@@ -109,7 +109,7 @@ where
     C: CollectCondition<T>,
     F: DocScorer<T>,
 {
-    type Fruit = Vec<SearchMarker<T>>;
+    type Fruit = CollectionResult<T>;
 
     fn collect(&mut self, doc: DocId, _: Score) {
         let score = self.scorer.score(doc);
@@ -117,7 +117,7 @@ where
     }
 
     fn harvest(self) -> Self::Fruit {
-        self.collector.into_vec()
+        self.collector.into_collection_result()
     }
 }
 
@@ -148,9 +148,9 @@ mod tests {
         // So that whatever we provide as a score
         collector.collect(1, 42.0);
         let res = collector.harvest();
-        assert_eq!(1, res.len());
+        assert_eq!(1, res.total);
 
-        let got = &res[0];
+        let got = &res.items[0];
         // Is disregarded and doc_id is used instead
         assert_eq!(got.doc.1, got.score)
     }
@@ -177,13 +177,14 @@ mod tests {
             |doc_id: DocId| doc_id * 10
         });
 
-        let topdocs = searcher.search(&AllQuery, &colletor)?;
+        let result = searcher.search(&AllQuery, &colletor)?;
 
-        assert_eq!(2, topdocs.len());
+        assert_eq!(100, result.total);
+        assert_eq!(2, result.items.len());
 
         // So we expect that the highest score is 990
-        assert_eq!(topdocs[0].score, 990);
-        assert_eq!(topdocs[1].score, 980);
+        assert_eq!(result.items[0].score, 990);
+        assert_eq!(result.items[1].score, 980);
 
         Ok(())
     }

@@ -4,7 +4,7 @@ mod field;
 mod topk;
 
 pub use conditional_collector::{
-    CollectCondition, CollectConditionFactory, ConditionalTopCollector,
+    CollectCondition, CollectConditionFactory, CollectionResult, ConditionalTopCollector,
     ConditionalTopSegmentCollector, SearchMarker,
 };
 pub use custom_score::CustomScoreTopCollector;

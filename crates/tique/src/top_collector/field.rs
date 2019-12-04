@@ -1,6 +1,6 @@
 use tantivy::{collector::Collector, schema::Field, SegmentReader};
 
-use super::{CollectConditionFactory, CustomScoreTopCollector, SearchMarker};
+use super::{CollectConditionFactory, CollectionResult, CustomScoreTopCollector};
 
 macro_rules! fast_field_custom_score_collector {
     ($name: ident, $type: ty, $reader: ident) => {
@@ -8,7 +8,7 @@ macro_rules! fast_field_custom_score_collector {
             field: Field,
             limit: usize,
             condition_factory: C,
-        ) -> impl Collector<Fruit = Vec<SearchMarker<$type>>>
+        ) -> impl Collector<Fruit = CollectionResult<$type>>
         where
             C: CollectConditionFactory<$type> + Sync,
         {
@@ -68,11 +68,11 @@ mod tests {
         let (top_u64, top_i64) =
             searcher.search(&AllQuery, &(top_u64_collector, top_i64_collector))?;
 
-        let sorted_u64_scores: Vec<u64> = top_u64.into_iter().map(|r| r.score).collect();
+        let sorted_u64_scores: Vec<u64> = top_u64.items.into_iter().map(|r| r.score).collect();
 
         assert_eq!(vec![20, 10], sorted_u64_scores);
 
-        let sorted_i64_scores: Vec<i64> = top_i64.into_iter().map(|r| r.score).collect();
+        let sorted_i64_scores: Vec<i64> = top_i64.items.into_iter().map(|r| r.score).collect();
 
         assert_eq!(vec![-10, -20], sorted_i64_scores);
 

@@ -86,16 +86,8 @@ where
         }
     }
 
-    pub fn merge_many(&self, children: Vec<Vec<SearchMarker<T>>>) -> Vec<SearchMarker<T>> {
-        let mut topk = TopK::new(self.limit);
-
-        for child_fruit in children {
-            for Scored { score, doc } in child_fruit {
-                topk.visit(score, doc);
-            }
-        }
-
-        topk.into_sorted_vec()
+    pub fn merge_many(&self, children: Vec<CollectionResult<T>>) -> CollectionResult<T> {
+        CollectionResult::merge_many(self.limit, children)
     }
 }
 
@@ -103,7 +95,7 @@ impl<F> Collector for ConditionalTopCollector<Score, F>
 where
     F: CollectConditionFactory<Score> + Sync,
 {
-    type Fruit = Vec<SearchMarker<Score>>;
+    type Fruit = CollectionResult<Score>;
     type Child = ConditionalTopSegmentCollector<Score, F::Type>;
 
     fn requires_scoring(&self) -> bool {
@@ -133,6 +125,8 @@ where
 {
     segment_id: SegmentLocalId,
     collected: TopK<T, DocId>,
+    visited: usize,
+    total: usize,
     condition: F,
 }
 
@@ -146,6 +140,8 @@ where
             collected: TopK::new(limit),
             segment_id,
             condition,
+            visited: 0,
+            total: 0,
         }
     }
 
@@ -156,21 +152,30 @@ where
 
     #[inline(always)]
     pub fn visit(&mut self, doc: DocId, score: T) {
+        self.total += 1;
         if self.condition.check(self.segment_id, doc, score) {
+            self.visited += 1;
             self.collected.visit(score, doc);
         }
     }
 
-    pub fn into_vec(self) -> Vec<SearchMarker<T>> {
+    pub fn into_collection_result(self) -> CollectionResult<T> {
         let segment_id = self.segment_id;
-        self.collected
+        let items = self
+            .collected
             .into_vec()
             .into_iter()
             .map(|Scored { score, doc }| Scored {
                 score,
                 doc: DocAddress(segment_id, doc),
             })
-            .collect()
+            .collect();
+
+        CollectionResult {
+            total: self.total,
+            visited: self.visited,
+            items,
+        }
     }
 }
 
@@ -178,14 +183,44 @@ impl<F> SegmentCollector for ConditionalTopSegmentCollector<Score, F>
 where
     F: CollectCondition<Score>,
 {
-    type Fruit = Vec<SearchMarker<Score>>;
+    type Fruit = CollectionResult<Score>;
 
     fn collect(&mut self, doc: DocId, score: Score) {
         self.visit(doc, score);
     }
 
     fn harvest(self) -> Self::Fruit {
-        self.into_vec()
+        self.into_collection_result()
+    }
+}
+
+#[derive(Debug)]
+pub struct CollectionResult<T> {
+    pub total: usize,
+    pub visited: usize,
+    pub items: Vec<SearchMarker<T>>,
+}
+
+impl<T: PartialOrd> CollectionResult<T> {
+    pub fn merge_many(limit: usize, items: Vec<CollectionResult<T>>) -> CollectionResult<T> {
+        let mut topk = TopK::new(limit);
+        let mut total = 0;
+        let mut visited = 0;
+
+        for item in items {
+            total += item.total;
+            visited += item.visited;
+
+            for Scored { score, doc } in item.items {
+                topk.visit(score, doc);
+            }
+        }
+
+        CollectionResult {
+            total,
+            visited,
+            items: topk.into_sorted_vec(),
+        }
     }
 }
 
@@ -216,7 +251,10 @@ mod tests {
         assert_eq!(2, just_odds.len());
 
         // Verify that the collected items respect the condition
-        for scored in just_odds.harvest() {
+        let result = just_odds.harvest();
+        assert_eq!(4, result.total);
+        assert_eq!(2, result.visited);
+        for scored in result.items {
             let DocAddress(seg_id, doc_id) = scored.doc;
             assert!(condition(seg_id, doc_id, scored.score))
         }
@@ -257,19 +295,31 @@ mod tests {
         let merged = collector
             .merge_fruits(vec![
                 // S0
-                vec![Scored::new(0.5, DocAddress(0, 1))],
+                CollectionResult {
+                    total: 1,
+                    visited: 1,
+                    items: vec![Scored::new(0.5, DocAddress(0, 1))],
+                },
                 // S1 has a doc that scored the same as S0, so
                 // it should only appear *after* the one in S0
-                vec![
-                    Scored::new(0.5, DocAddress(1, 1)),
-                    Scored::new(0.6, DocAddress(1, 2)),
-                ],
+                CollectionResult {
+                    total: 1,
+                    visited: 1,
+                    items: vec![
+                        Scored::new(0.5, DocAddress(1, 1)),
+                        Scored::new(0.6, DocAddress(1, 2)),
+                    ],
+                },
                 // S2 has two evenly scored docs, the one with
                 // the lowest internal id should appear first
-                vec![
-                    Scored::new(0.2, DocAddress(2, 2)),
-                    Scored::new(0.2, DocAddress(2, 1)),
-                ],
+                CollectionResult {
+                    total: 1,
+                    visited: 1,
+                    items: vec![
+                        Scored::new(0.2, DocAddress(2, 2)),
+                        Scored::new(0.2, DocAddress(2, 1)),
+                    ],
+                },
             ])
             .unwrap();
 
@@ -281,7 +331,7 @@ mod tests {
                 Scored::new(0.2, DocAddress(2, 1)),
                 Scored::new(0.2, DocAddress(2, 2))
             ],
-            merged
+            merged.items
         );
     }
 
@@ -322,7 +372,7 @@ mod tests {
             &ConditionalTopCollector::with_limit(NUM_DOCS as usize, condition_factory),
         )?;
 
-        assert_eq!(5, results.len());
+        assert_eq!(5, results.items.len());
 
         Ok(())
     }
