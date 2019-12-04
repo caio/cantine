@@ -1,5 +1,6 @@
 use std::{
     convert::TryFrom,
+    io::{stdin, BufRead, BufReader},
     num::NonZeroU8,
     path::{Path, PathBuf},
     sync::Arc,
@@ -218,9 +219,6 @@ impl Cantine {
         })
     }
 }
-
-use std::io::stdin;
-use std::io::{BufRead, BufReader};
 
 pub fn main() -> std::result::Result<(), String> {
     let options = QueryOptions::from_args();
