@@ -37,6 +37,9 @@ pub struct QueryOptions {
     /// Path to the data directory that will be queries
     #[structopt(short, long)]
     base_path: PathBuf,
+    /// Only aggregate when found less recipes than given threshold
+    #[structopt(short, long)]
+    agg_threshold: Option<u32>,
 }
 
 pub struct CountCollector;
@@ -125,7 +128,7 @@ impl Cantine {
         }
     }
 
-    pub fn search(&self, query: &SearchQuery) -> Result<SearchResult> {
+    pub fn search(&self, query: &SearchQuery, agg_threshold: Option<u32>) -> Result<SearchResult> {
         let searcher = self.reader.searcher();
 
         let count_collector = CountCollector;
@@ -183,8 +186,7 @@ impl Cantine {
         };
 
         let agg = if let Some(agg_query) = &query.agg {
-            // TODO extract threshold
-            if total_found <= 100_000 {
+            if total_found <= agg_threshold.unwrap_or(std::u32::MAX) {
                 let features_field = self.fields.features_bincode;
                 let collector =
                     FeaturesCollector::new(agg_query.clone(), move |reader: &SegmentReader| {
@@ -239,7 +241,7 @@ pub fn main() -> std::result::Result<(), String> {
         };
 
         eprintln!("Executing query {:?}", &query);
-        let result = cantine.search(&query).unwrap();
+        let result = cantine.search(&query, options.agg_threshold).unwrap();
 
         println!("{}", serde_json::to_string(&result).unwrap());
     }
