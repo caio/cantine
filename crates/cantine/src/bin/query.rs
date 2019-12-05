@@ -145,8 +145,8 @@ impl Cantine {
 
                         let recipe_id = id_reader.get(doc_id);
                         match after_score.partial_cmp(&score) {
-                            Some(Ordering::Less) => true,
-                            Some(Ordering::Equal) => recipe_id > after_id,
+                            Some(Ordering::Greater) => true,
+                            Some(Ordering::Equal) => after_id < recipe_id,
                             _ => false,
                         }
                     }
