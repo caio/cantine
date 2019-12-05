@@ -1,4 +1,5 @@
 use std::{
+    cmp::Ordering,
     convert::TryFrom,
     io::{stdin, BufRead, BufReader},
     num::NonZeroU8,
@@ -22,7 +23,7 @@ use cantine::{
     index::IndexFields,
     model::{
         FeaturesAggregationQuery, FeaturesAggregationResult, FeaturesCollector, Recipe,
-        SearchQuery, SearchResult, Sort,
+        SearchCursor, SearchQuery, SearchResult, Sort,
     },
 };
 use tique::{
@@ -84,6 +85,13 @@ pub struct Cantine {
     query_parser: QueryParser,
 }
 
+pub type CantineSearchResult = (
+    usize,
+    Vec<u64>,
+    Option<SearchCursor>,
+    Option<FeaturesAggregationResult>,
+);
+
 impl Cantine {
     pub fn open<P: AsRef<Path>>(base_path: P) -> Result<Self> {
         let index = Index::open_in_dir(base_path.as_ref())?;
@@ -132,12 +140,14 @@ impl Cantine {
         interpreted_query: &dyn Query,
         limit: usize,
         sort: Sort,
-    ) -> Result<(usize, Vec<u64>)> {
+        after: SearchCursor,
+    ) -> Result<(usize, Vec<u64>, Option<SearchCursor>)> {
         let count_collector = CountCollector;
 
         macro_rules! tantivy_addresses_to_ids {
             ($topdocs:ident) => {{
                 let mut items = Vec::with_capacity($topdocs.len());
+
                 for item in $topdocs.iter() {
                     let doc = searcher.doc(item.doc)?;
                     if let Some(&Value::U64(id)) = doc.get_first(self.fields.id) {
@@ -146,34 +156,85 @@ impl Cantine {
                         panic!("Found document without a stored id");
                     }
                 }
+
                 items
+            }};
+        }
+
+        macro_rules! condition_from_score {
+            ($score:expr) => {{
+                let after_score = $score;
+                let after_id = after.recipe_id();
+                let is_start = after.is_start();
+
+                let id_field = self.fields.id;
+                move |reader: &SegmentReader| {
+                    let id_reader = reader
+                        .fast_fields()
+                        .u64(id_field)
+                        .expect("id field is indexed with the FAST flag");
+
+                    move |_segment_id, doc_id, score| {
+                        if is_start {
+                            return true;
+                        }
+
+                        let recipe_id = id_reader.get(doc_id);
+                        match after_score.partial_cmp(&score) {
+                            Some(Ordering::Less) => true,
+                            Some(Ordering::Equal) => recipe_id > after_id,
+                            _ => false,
+                        }
+                    }
+                }
             }};
         }
 
         macro_rules! collect_unsigned {
             ($field:ident) => {{
+                let condition = condition_from_score!(after.score());
                 let top_collector =
-                    ordered_by_u64_fast_field(self.fields.features.$field, limit, true);
+                    ordered_by_u64_fast_field(self.fields.features.$field, limit, condition);
 
                 let (topdocs, total_found) =
                     searcher.search(interpreted_query, &(top_collector, count_collector))?;
 
                 let items = tantivy_addresses_to_ids!(topdocs);
 
-                Ok((total_found, items))
+                let num_items = items.len();
+                let cursor = if num_items > 0 && total_found > limit {
+                    let last_score = topdocs[num_items - 1].score;
+                    let last_id = items[num_items - 1];
+                    Some(SearchCursor::new(last_score, last_id))
+                } else {
+                    None
+                };
+
+                Ok((total_found, items, cursor))
             }};
         }
 
         match sort {
             Sort::Relevance => {
-                let top_collector = ConditionalTopCollector::with_limit(limit, true);
+                let condition = condition_from_score!(after.score_f32());
+                let top_collector = ConditionalTopCollector::with_limit(limit, condition);
 
                 let (topdocs, total_found) =
                     searcher.search(interpreted_query, &(top_collector, count_collector))?;
 
                 let items = tantivy_addresses_to_ids!(topdocs);
 
-                Ok((total_found, items))
+                // TODO we can be smarter with more information from the collector
+                let num_items = items.len();
+                let cursor = if num_items > 0 && total_found > limit {
+                    let last_score = topdocs[num_items - 1].score;
+                    let last_id = items[num_items - 1];
+                    Some(SearchCursor::from_f32(last_score, last_id))
+                } else {
+                    None
+                };
+
+                Ok((total_found, items, cursor))
             }
             Sort::Calories => collect_unsigned!(calories),
             Sort::NumIngredients => collect_unsigned!(num_ingredients),
@@ -211,17 +272,18 @@ impl Cantine {
         &self,
         query: SearchQuery,
         agg_threshold: Option<usize>,
-    ) -> Result<(usize, Vec<u64>, Option<FeaturesAggregationResult>)> {
+    ) -> Result<CantineSearchResult> {
         let searcher = self.reader.searcher();
 
         let interpreted_query = self.interpret_query(&query)?;
         let limit = query.num_items.unwrap_or(10) as usize;
 
-        let (total_found, items) = self.basic_search(
+        let (total_found, items, after) = self.basic_search(
             &searcher,
             &interpreted_query,
             limit,
             query.sort.unwrap_or(Sort::Relevance),
+            query.after.unwrap_or(SearchCursor::START),
         )?;
 
         let agg = if let Some(agg_query) = query.agg {
@@ -234,7 +296,7 @@ impl Cantine {
             None
         };
 
-        Ok((total_found, items, agg))
+        Ok((total_found, items, after, agg))
     }
 }
 
@@ -260,7 +322,7 @@ pub fn main() -> Result<()> {
         };
 
         eprintln!("Executing query {:?}", &query);
-        let (total_found, recipe_ids, agg) = cantine.search(query, options.agg_threshold).unwrap();
+        let (total_found, recipe_ids, after, agg) = cantine.search(query, options.agg_threshold)?;
 
         let mut items = Vec::new();
         for recipe_id in recipe_ids {
@@ -275,7 +337,7 @@ pub fn main() -> Result<()> {
             total_found,
             items,
             agg,
-            after: None,
+            after,
         };
 
         println!("{}", serde_json::to_string(&result).unwrap());

@@ -100,8 +100,7 @@ pub struct SearchQuery {
     pub num_items: Option<u8>,
     pub filter: Option<FeaturesFilterQuery>,
     pub agg: Option<FeaturesAggregationQuery>,
-    // TODO decide how to expose After<score,@id>
-    pub after: Option<String>,
+    pub after: Option<SearchCursor>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Default)]
@@ -112,7 +111,39 @@ pub struct SearchResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agg: Option<FeaturesAggregationResult>,
 
-    // TODO Ref=SearchQuery.after
+    // XXX Maybe wrap the cursor so that we translate uuid<->id
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub after: Option<String>,
+    pub after: Option<SearchCursor>,
+}
+
+// FIXME Saner serialization
+#[derive(Serialize, Deserialize, Debug, Default)]
+pub struct SearchCursor(u64, u64);
+
+impl SearchCursor {
+    pub const START: Self = Self(0, 0);
+
+    pub fn new(score: u64, recipe_id: u64) -> Self {
+        Self(score, recipe_id)
+    }
+
+    pub fn from_f32(score: f32, recipe_id: u64) -> Self {
+        Self(score.to_bits() as u64, recipe_id)
+    }
+
+    pub fn is_start(&self) -> bool {
+        self.0 == 0 && self.1 == 0
+    }
+
+    pub fn recipe_id(&self) -> u64 {
+        self.1
+    }
+
+    pub fn score(&self) -> u64 {
+        self.0
+    }
+
+    pub fn score_f32(&self) -> f32 {
+        f32::from_bits(self.0 as u32)
+    }
 }
