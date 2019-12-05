@@ -11,11 +11,10 @@ use serde_json;
 use structopt::StructOpt;
 use tantivy::{
     self,
-    collector::{Collector, SegmentCollector},
     query::{AllQuery, BooleanQuery, Occur, Query},
     schema::Value,
     tokenizer::TokenizerManager,
-    DocId, Index, IndexReader, Result, Score, Searcher, SegmentLocalId, SegmentReader,
+    DocId, Index, IndexReader, Result, Searcher, SegmentReader,
 };
 
 use cantine::{
@@ -44,39 +43,6 @@ pub struct QueryOptions {
     /// Only aggregate when found less recipes than given threshold
     #[structopt(short, long)]
     agg_threshold: Option<usize>,
-}
-
-pub struct CountCollector;
-
-impl Collector for CountCollector {
-    type Fruit = usize;
-    type Child = CountSegmentCollector;
-
-    fn for_segment(&self, _id: SegmentLocalId, _reader: &SegmentReader) -> Result<Self::Child> {
-        Ok(CountSegmentCollector(0))
-    }
-
-    fn requires_scoring(&self) -> bool {
-        false
-    }
-
-    fn merge_fruits(&self, fruits: Vec<Self::Fruit>) -> Result<Self::Fruit> {
-        Ok(fruits.iter().sum())
-    }
-}
-
-pub struct CountSegmentCollector(usize);
-
-impl SegmentCollector for CountSegmentCollector {
-    type Fruit = usize;
-
-    fn collect(&mut self, _doc: DocId, _score: Score) {
-        self.0 += 1;
-    }
-
-    fn harvest(self) -> Self::Fruit {
-        self.0
-    }
 }
 
 pub struct Cantine {
@@ -142,10 +108,8 @@ impl Cantine {
         sort: Sort,
         after: SearchCursor,
     ) -> Result<(usize, Vec<u64>, Option<SearchCursor>)> {
-        let count_collector = CountCollector;
-
         macro_rules! tantivy_addresses_to_ids {
-            ($topdocs:ident) => {{
+            ($topdocs:expr) => {{
                 let mut items = Vec::with_capacity($topdocs.len());
 
                 for item in $topdocs.iter() {
@@ -196,21 +160,19 @@ impl Cantine {
                 let top_collector =
                     ordered_by_u64_fast_field(self.fields.features.$field, limit, condition);
 
-                let (topdocs, total_found) =
-                    searcher.search(interpreted_query, &(top_collector, count_collector))?;
-
-                let items = tantivy_addresses_to_ids!(topdocs);
+                let result = searcher.search(interpreted_query, &top_collector)?;
+                let items = tantivy_addresses_to_ids!(result.items);
 
                 let num_items = items.len();
-                let cursor = if num_items > 0 && total_found > limit {
-                    let last_score = topdocs[num_items - 1].score;
+                let cursor = if num_items > 0 && result.total > limit {
+                    let last_score = result.items[num_items - 1].score;
                     let last_id = items[num_items - 1];
                     Some(SearchCursor::new(last_score, last_id))
                 } else {
                     None
                 };
 
-                Ok((total_found, items, cursor))
+                Ok((result.total, items, cursor))
             }};
         }
 
@@ -219,22 +181,20 @@ impl Cantine {
                 let condition = condition_from_score!(after.score_f32());
                 let top_collector = ConditionalTopCollector::with_limit(limit, condition);
 
-                let (topdocs, total_found) =
-                    searcher.search(interpreted_query, &(top_collector, count_collector))?;
-
-                let items = tantivy_addresses_to_ids!(topdocs);
+                let result = searcher.search(interpreted_query, &top_collector)?;
+                let items = tantivy_addresses_to_ids!(result.items);
 
                 // TODO we can be smarter with more information from the collector
                 let num_items = items.len();
-                let cursor = if num_items > 0 && total_found > limit {
-                    let last_score = topdocs[num_items - 1].score;
+                let cursor = if num_items > 0 && result.total > limit {
+                    let last_score = result.items[num_items - 1].score;
                     let last_id = items[num_items - 1];
                     Some(SearchCursor::from_f32(last_score, last_id))
                 } else {
                     None
                 };
 
-                Ok((total_found, items, cursor))
+                Ok((result.total, items, cursor))
             }
             Sort::Calories => collect_unsigned!(calories),
             Sort::NumIngredients => collect_unsigned!(num_ingredients),
