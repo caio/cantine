@@ -94,6 +94,7 @@ pub enum Sort {
 }
 
 #[derive(Serialize, Deserialize, Debug, Default)]
+#[serde(deny_unknown_fields)]
 pub struct SearchQuery {
     pub fulltext: Option<String>,
     pub sort: Option<Sort>,
