@@ -3,7 +3,6 @@ use std::{
     io::{stdin, BufRead, BufReader},
     num::NonZeroU8,
     path::{Path, PathBuf},
-    sync::Arc,
 };
 
 use bincode;
@@ -15,13 +14,16 @@ use tantivy::{
     query::{AllQuery, BooleanQuery, Occur, Query},
     schema::Value,
     tokenizer::TokenizerManager,
-    DocId, Index, IndexReader, Result, Score, SegmentLocalId, SegmentReader,
+    DocId, Index, IndexReader, Result, Score, Searcher, SegmentLocalId, SegmentReader,
 };
 
 use cantine::{
     database::BincodeDatabase,
     index::IndexFields,
-    model::{FeaturesCollector, Recipe, RecipeCard, SearchQuery, SearchResult, Sort},
+    model::{
+        FeaturesAggregationQuery, FeaturesAggregationResult, FeaturesCollector, Recipe,
+        SearchQuery, SearchResult, Sort,
+    },
 };
 use tique::{
     queryparser::QueryParser,
@@ -40,13 +42,13 @@ pub struct QueryOptions {
     base_path: PathBuf,
     /// Only aggregate when found less recipes than given threshold
     #[structopt(short, long)]
-    agg_threshold: Option<u32>,
+    agg_threshold: Option<usize>,
 }
 
 pub struct CountCollector;
 
 impl Collector for CountCollector {
-    type Fruit = u32;
+    type Fruit = usize;
     type Child = CountSegmentCollector;
 
     fn for_segment(&self, _id: SegmentLocalId, _reader: &SegmentReader) -> Result<Self::Child> {
@@ -62,10 +64,10 @@ impl Collector for CountCollector {
     }
 }
 
-pub struct CountSegmentCollector(u32);
+pub struct CountSegmentCollector(usize);
 
 impl SegmentCollector for CountSegmentCollector {
-    type Fruit = u32;
+    type Fruit = usize;
 
     fn collect(&mut self, _doc: DocId, _score: Score) {
         self.0 += 1;
@@ -79,13 +81,12 @@ impl SegmentCollector for CountSegmentCollector {
 pub struct Cantine {
     reader: IndexReader,
     fields: IndexFields,
-    database: Arc<BincodeDatabase<Recipe>>,
     query_parser: QueryParser,
 }
 
 impl Cantine {
     pub fn open<P: AsRef<Path>>(base_path: P) -> Result<Self> {
-        let index = Index::open_in_dir(base_path.as_ref().join("tantivy"))?;
+        let index = Index::open_in_dir(base_path.as_ref())?;
 
         let fields = IndexFields::try_from(&index.schema()).unwrap();
         let reader = index.reader()?;
@@ -96,13 +97,9 @@ impl Cantine {
             true,
         );
 
-        let database =
-            Arc::new(BincodeDatabase::open(base_path.as_ref().join("database")).unwrap());
-
         Ok(Self {
             fields,
             reader,
-            database,
             query_parser,
         })
     }
@@ -129,13 +126,29 @@ impl Cantine {
         }
     }
 
-    pub fn search(&self, query: &SearchQuery, agg_threshold: Option<u32>) -> Result<SearchResult> {
-        let searcher = self.reader.searcher();
-
+    fn basic_search(
+        &self,
+        searcher: &Searcher,
+        interpreted_query: &dyn Query,
+        limit: usize,
+        sort: Sort,
+    ) -> Result<(usize, Vec<u64>)> {
         let count_collector = CountCollector;
 
-        let interpreted_query = self.interpret_query(query)?;
-        let limit = query.num_items.unwrap_or(10) as usize;
+        macro_rules! tantivy_addresses_to_ids {
+            ($topdocs:ident) => {{
+                let mut items = Vec::with_capacity($topdocs.len());
+                for item in $topdocs.iter() {
+                    let doc = searcher.doc(item.doc)?;
+                    if let Some(&Value::U64(id)) = doc.get_first(self.fields.id) {
+                        items.push(id);
+                    } else {
+                        panic!("Found document without a stored id");
+                    }
+                }
+                items
+            }};
+        }
 
         macro_rules! collect_unsigned {
             ($field:ident) => {{
@@ -143,40 +156,24 @@ impl Cantine {
                     ordered_by_u64_fast_field(self.fields.features.$field, limit, true);
 
                 let (topdocs, total_found) =
-                    searcher.search(&interpreted_query, &(top_collector, count_collector))?;
+                    searcher.search(interpreted_query, &(top_collector, count_collector))?;
 
-                let mut items: Vec<RecipeCard> = Vec::with_capacity(topdocs.len());
-                for item in topdocs.iter() {
-                    let doc = searcher.doc(item.doc).unwrap();
-                    if let Some(&Value::U64(id)) = doc.get_first(self.fields.id) {
-                        items.push(self.database.get_by_id(id).unwrap().unwrap().into());
-                    } else {
-                        panic!("Found document without a stored id");
-                    }
-                }
+                let items = tantivy_addresses_to_ids!(topdocs);
 
-                (items, total_found)
+                Ok((total_found, items))
             }};
         }
 
-        let (items, total_found) = match query.sort.as_ref().unwrap_or(&Sort::Relevance) {
+        match sort {
             Sort::Relevance => {
                 let top_collector = ConditionalTopCollector::with_limit(limit, true);
 
                 let (topdocs, total_found) =
-                    searcher.search(&interpreted_query, &(top_collector, count_collector))?;
+                    searcher.search(interpreted_query, &(top_collector, count_collector))?;
 
-                let mut items: Vec<RecipeCard> = Vec::with_capacity(topdocs.len());
-                for item in topdocs.iter() {
-                    let doc = searcher.doc(item.doc).unwrap();
-                    if let Some(&Value::U64(id)) = doc.get_first(self.fields.id) {
-                        items.push(self.database.get_by_id(id).unwrap().unwrap().into());
-                    } else {
-                        panic!("Found document without a stored id");
-                    }
-                }
+                let items = tantivy_addresses_to_ids!(topdocs);
 
-                (items, total_found)
+                Ok((total_found, items))
             }
             Sort::Calories => collect_unsigned!(calories),
             Sort::NumIngredients => collect_unsigned!(num_ingredients),
@@ -185,25 +182,51 @@ impl Cantine {
             Sort::CookTime => collect_unsigned!(cook_time),
             Sort::PrepTime => collect_unsigned!(prep_time),
             _ => unimplemented!(),
-        };
+        }
+    }
 
-        let agg = if let Some(agg_query) = &query.agg {
-            if total_found <= agg_threshold.unwrap_or(std::u32::MAX) {
-                let features_field = self.fields.features_bincode;
-                let collector =
-                    FeaturesCollector::new(agg_query.clone(), move |reader: &SegmentReader| {
-                        let features_reader = reader
-                            .fast_fields()
-                            .bytes(features_field)
-                            .expect("bytes field is indexed");
+    fn compute_aggregations(
+        &self,
+        searcher: &Searcher,
+        interpreted_query: &dyn Query,
+        agg_query: FeaturesAggregationQuery,
+    ) -> Result<FeaturesAggregationResult> {
+        let features_field = self.fields.features_bincode;
+        let collector = FeaturesCollector::new(agg_query, move |reader: &SegmentReader| {
+            let features_reader = reader
+                .fast_fields()
+                .bytes(features_field)
+                .expect("bytes field is indexed");
 
-                        move |doc: DocId| {
-                            let buf = features_reader.get_bytes(doc);
-                            bincode::deserialize(buf).unwrap()
-                        }
-                    });
+            move |doc: DocId| {
+                let buf = features_reader.get_bytes(doc);
+                bincode::deserialize(buf).unwrap()
+            }
+        });
 
-                Some(searcher.search(&interpreted_query, &collector)?)
+        Ok(searcher.search(interpreted_query, &collector)?)
+    }
+
+    pub fn search(
+        &self,
+        query: SearchQuery,
+        agg_threshold: Option<usize>,
+    ) -> Result<(usize, Vec<u64>, Option<FeaturesAggregationResult>)> {
+        let searcher = self.reader.searcher();
+
+        let interpreted_query = self.interpret_query(&query)?;
+        let limit = query.num_items.unwrap_or(10) as usize;
+
+        let (total_found, items) = self.basic_search(
+            &searcher,
+            &interpreted_query,
+            limit,
+            query.sort.unwrap_or(Sort::Relevance),
+        )?;
+
+        let agg = if let Some(agg_query) = query.agg {
+            if total_found <= agg_threshold.unwrap_or(std::usize::MAX) {
+                Some(self.compute_aggregations(&searcher, &interpreted_query, agg_query)?)
             } else {
                 None
             }
@@ -211,18 +234,15 @@ impl Cantine {
             None
         };
 
-        Ok(SearchResult {
-            items,
-            total_found,
-            agg,
-            ..SearchResult::default()
-        })
+        Ok((total_found, items, agg))
     }
 }
 
-pub fn main() -> std::result::Result<(), String> {
+pub fn main() -> Result<()> {
     let options = QueryOptions::from_args();
-    let cantine = Cantine::open(options.base_path).unwrap();
+
+    let cantine = Cantine::open(options.base_path.join("tantivy"))?;
+    let database = BincodeDatabase::open(options.base_path.join("database")).unwrap();
 
     let stdin = stdin();
     let reader = BufReader::new(stdin.lock());
@@ -240,7 +260,23 @@ pub fn main() -> std::result::Result<(), String> {
         };
 
         eprintln!("Executing query {:?}", &query);
-        let result = cantine.search(&query, options.agg_threshold).unwrap();
+        let (total_found, recipe_ids, agg) = cantine.search(query, options.agg_threshold).unwrap();
+
+        let mut items = Vec::new();
+        for recipe_id in recipe_ids {
+            let recipe: Recipe = database
+                .get_by_id(recipe_id)
+                .expect("db operational")
+                .expect("item in the index always present in the db");
+            items.push(recipe.into());
+        }
+
+        let result = SearchResult {
+            total_found,
+            items,
+            agg,
+            after: None,
+        };
 
         println!("{}", serde_json::to_string(&result).unwrap());
     }
