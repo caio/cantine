@@ -2,7 +2,6 @@ use std::{
     cmp::Ordering,
     convert::TryFrom,
     io::{stdin, BufRead, BufReader},
-    num::NonZeroU8,
     path::{Path, PathBuf},
 };
 
@@ -34,9 +33,6 @@ use tique::{
 #[derive(Debug, StructOpt)]
 #[structopt(name = "query")]
 pub struct QueryOptions {
-    /// Maximum number of recipes to retrieve
-    #[structopt(short, long, default_value = "3")]
-    num_results: NonZeroU8,
     /// Path to the data directory that will be queries
     #[structopt(short, long)]
     base_path: PathBuf,
@@ -270,15 +266,7 @@ pub fn main() -> Result<()> {
 
     for line in reader.lines() {
         let line = line.unwrap();
-        let query = if let Ok(query) = serde_json::from_str(line.as_str()) {
-            query
-        } else {
-            SearchQuery {
-                fulltext: Some(line),
-                num_items: Some(options.num_results.get()),
-                ..SearchQuery::default()
-            }
-        };
+        let query = serde_json::from_str(line.as_str()).expect("valid SearchQuery json");
 
         eprintln!("Executing query {:?}", &query);
         let (total_found, recipe_ids, after, agg) = cantine.search(query, options.agg_threshold)?;
