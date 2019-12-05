@@ -1,7 +1,7 @@
-.idea/
-.vscode/
-/target/
-**/*.rs.bk
 flamegraph.svg
+.idea
 perf.data*
+**/*.rs.bk
 tags
+/target
+.vscode
