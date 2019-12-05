@@ -164,7 +164,7 @@ impl Cantine {
                 let items = tantivy_addresses_to_ids!(result.items);
 
                 let num_items = items.len();
-                let cursor = if num_items > 0 && result.total > limit {
+                let cursor = if result.visited.saturating_sub(num_items) > 0 {
                     let last_score = result.items[num_items - 1].score;
                     let last_id = items[num_items - 1];
                     Some(SearchCursor::new(last_score, last_id))
@@ -184,9 +184,8 @@ impl Cantine {
                 let result = searcher.search(interpreted_query, &top_collector)?;
                 let items = tantivy_addresses_to_ids!(result.items);
 
-                // TODO we can be smarter with more information from the collector
                 let num_items = items.len();
-                let cursor = if num_items > 0 && result.total > limit {
+                let cursor = if result.visited.saturating_sub(num_items) > 0 {
                     let last_score = result.items[num_items - 1].score;
                     let last_id = items[num_items - 1];
                     Some(SearchCursor::from_f32(last_score, last_id))
