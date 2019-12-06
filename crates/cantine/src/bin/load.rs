@@ -8,12 +8,11 @@ use std::{
     time::Instant,
 };
 
-use bincode;
 use crossbeam_channel::unbounded;
 use serde_json;
 use structopt::StructOpt;
 
-use tantivy::{self, directory::MmapDirectory, schema::SchemaBuilder, Document, Index};
+use tantivy::{self, directory::MmapDirectory, schema::SchemaBuilder, Index};
 
 use cantine::database::BincodeDatabase;
 use cantine::index::IndexFields;
@@ -46,30 +45,6 @@ fn does_not_exist(dir_path: String) -> StdResult<(), String> {
     } else {
         Ok(())
     }
-}
-
-fn make_document(fields: &IndexFields, recipe: &Recipe) -> Document {
-    let mut doc = Document::new();
-    doc.add_u64(fields.id, recipe.recipe_id);
-
-    let mut fulltext = Vec::new();
-
-    fulltext.push(recipe.name.as_str());
-    for ingredient in &recipe.ingredients {
-        fulltext.push(ingredient.as_str());
-    }
-    for instruction in &recipe.instructions {
-        fulltext.push(instruction.as_str());
-    }
-    doc.add_text(fields.fulltext, fulltext.join("\n").as_str());
-
-    doc.add_bytes(
-        fields.features_bincode,
-        bincode::serialize(&recipe.features).unwrap(),
-    );
-
-    fields.features.add_to_doc(&mut doc, &recipe.features);
-    doc
 }
 
 fn load(options: LoadOptions) -> Result<()> {
@@ -113,7 +88,7 @@ fn load(options: LoadOptions) -> Result<()> {
                 writer
                     .read()
                     .unwrap()
-                    .add_document(make_document(&fields, &recipe));
+                    .add_document(fields.make_document(&recipe));
 
                 recipe_sender.send(recipe).unwrap();
             }
