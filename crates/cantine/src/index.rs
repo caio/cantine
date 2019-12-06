@@ -5,8 +5,7 @@ use tantivy::{
     self,
     query::{AllQuery, BooleanQuery, Occur, Query},
     schema::{Field, Schema, SchemaBuilder, Value, FAST, STORED, TEXT},
-    tokenizer::TokenizerManager,
-    DocId, Document, Index, IndexReader, Result, Searcher, SegmentReader, TantivyError,
+    DocId, Document, Index, Result, Searcher, SegmentReader, TantivyError,
 };
 
 use crate::model::{
@@ -69,7 +68,6 @@ impl From<&mut SchemaBuilder> for IndexFields {
 }
 
 impl TryFrom<&Schema> for IndexFields {
-    // TODO better error
     type Error = TantivyError;
 
     fn try_from(schema: &Schema) -> Result<Self> {
@@ -95,7 +93,6 @@ impl TryFrom<&Schema> for IndexFields {
 }
 
 pub struct Cantine {
-    reader: IndexReader,
     fields: IndexFields,
     query_parser: QueryParser,
 }
@@ -108,23 +105,11 @@ pub type CantineSearchResult = (
 );
 
 impl Cantine {
-    pub fn open<P: AsRef<Path>>(base_path: P) -> Result<Self> {
+    pub fn open<P: AsRef<Path>>(base_path: P) -> Result<(Index, Self)> {
         let index = Index::open_in_dir(base_path.as_ref())?;
+        let cantine = Self::try_from(&index)?;
 
-        let fields = IndexFields::try_from(&index.schema()).unwrap();
-        let reader = index.reader()?;
-
-        let query_parser = QueryParser::new(
-            fields.fulltext,
-            TokenizerManager::default().get("en_stem").unwrap(),
-            true,
-        );
-
-        Ok(Self {
-            fields,
-            reader,
-            query_parser,
-        })
+        Ok((index, cantine))
     }
 
     pub fn interpret_query(&self, query: &SearchQuery) -> Result<Box<dyn Query>> {
@@ -168,7 +153,7 @@ impl Cantine {
         Ok(items)
     }
 
-    fn basic_search(
+    pub fn search(
         &self,
         searcher: &Searcher,
         interpreted_query: &dyn Query,
@@ -256,7 +241,7 @@ impl Cantine {
         }
     }
 
-    fn compute_aggregations(
+    pub fn aggregate_features(
         &self,
         searcher: &Searcher,
         interpreted_query: &dyn Query,
@@ -277,35 +262,22 @@ impl Cantine {
 
         Ok(searcher.search(interpreted_query, &collector)?)
     }
+}
 
-    pub fn search(
-        &self,
-        query: SearchQuery,
-        agg_threshold: Option<usize>,
-    ) -> Result<CantineSearchResult> {
-        let searcher = self.reader.searcher();
+impl TryFrom<&Index> for Cantine {
+    type Error = TantivyError;
+    fn try_from(index: &Index) -> Result<Self> {
+        let fields = IndexFields::try_from(&index.schema())?;
 
-        let interpreted_query = self.interpret_query(&query)?;
-        let limit = query.num_items.unwrap_or(10) as usize;
+        let query_parser = QueryParser::new(
+            fields.fulltext,
+            index.tokenizer_for_field(fields.fulltext)?,
+            true,
+        );
 
-        let (total_found, items, after) = self.basic_search(
-            &searcher,
-            &interpreted_query,
-            limit,
-            query.sort.unwrap_or(Sort::Relevance),
-            query.after.unwrap_or(SearchCursor::START),
-        )?;
-
-        let agg = if let Some(agg_query) = query.agg {
-            if total_found <= agg_threshold.unwrap_or(std::usize::MAX) {
-                Some(self.compute_aggregations(&searcher, &interpreted_query, agg_query)?)
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        Ok((total_found, items, after, agg))
+        Ok(Self {
+            fields,
+            query_parser,
+        })
     }
 }
