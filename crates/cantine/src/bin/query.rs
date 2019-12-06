@@ -26,7 +26,7 @@ use cantine::{
 };
 use tique::{
     queryparser::QueryParser,
-    top_collector::{ordered_by_u64_fast_field, ConditionalTopCollector},
+    top_collector::{ordered_by_u64_fast_field, ConditionalTopCollector, SearchMarker},
 };
 
 /// Queries data generated via `load`
@@ -96,6 +96,25 @@ impl Cantine {
         }
     }
 
+    fn addresses_to_ids<T>(
+        &self,
+        searcher: &Searcher,
+        addresses: &[SearchMarker<T>],
+    ) -> Result<Vec<u64>> {
+        let mut items = Vec::with_capacity(addresses.len());
+
+        for addr in addresses.iter() {
+            let doc = searcher.doc(addr.doc)?;
+            if let Some(&Value::U64(id)) = doc.get_first(self.fields.id) {
+                items.push(id);
+            } else {
+                panic!("Found document without a stored id");
+            }
+        }
+
+        Ok(items)
+    }
+
     fn basic_search(
         &self,
         searcher: &Searcher,
@@ -104,23 +123,6 @@ impl Cantine {
         sort: Sort,
         after: SearchCursor,
     ) -> Result<(usize, Vec<u64>, Option<SearchCursor>)> {
-        macro_rules! tantivy_addresses_to_ids {
-            ($topdocs:expr) => {{
-                let mut items = Vec::with_capacity($topdocs.len());
-
-                for item in $topdocs.iter() {
-                    let doc = searcher.doc(item.doc)?;
-                    if let Some(&Value::U64(id)) = doc.get_first(self.fields.id) {
-                        items.push(id);
-                    } else {
-                        panic!("Found document without a stored id");
-                    }
-                }
-
-                items
-            }};
-        }
-
         macro_rules! condition_from_score {
             ($score:expr) => {{
                 let after_score = $score;
@@ -157,7 +159,7 @@ impl Cantine {
                     ordered_by_u64_fast_field(self.fields.features.$field, limit, condition);
 
                 let result = searcher.search(interpreted_query, &top_collector)?;
-                let items = tantivy_addresses_to_ids!(result.items);
+                let items = self.addresses_to_ids(&searcher, &result.items)?;
 
                 let num_items = items.len();
                 let cursor = if result.visited.saturating_sub(num_items) > 0 {
@@ -178,7 +180,7 @@ impl Cantine {
                 let top_collector = ConditionalTopCollector::with_limit(limit, condition);
 
                 let result = searcher.search(interpreted_query, &top_collector)?;
-                let items = tantivy_addresses_to_ids!(result.items);
+                let items = self.addresses_to_ids(&searcher, &result.items)?;
 
                 let num_items = items.len();
                 let cursor = if result.visited.saturating_sub(num_items) > 0 {
