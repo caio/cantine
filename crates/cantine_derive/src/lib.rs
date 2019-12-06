@@ -171,7 +171,8 @@ fn make_filter_query(input: &DeriveInput) -> TokenStream2 {
             let err_msg = format!("Missing field for {} ({})", name, schema_name);
             let quoted = format!("\"{}\"", schema_name);
             quote_spanned! { field.span()=>
-                #name: schema.get_field(#quoted).ok_or(#err_msg)?
+                #name: schema.get_field(#quoted).ok_or_else(
+                    || tantivy::TantivyError::SchemaError(#err_msg.to_string()))?
             }
         } else {
             unreachable!();
@@ -285,7 +286,7 @@ fn make_filter_query(input: &DeriveInput) -> TokenStream2 {
 
         impl std::convert::TryFrom<&tantivy::schema::Schema> for #index_name {
             // TODO better errors
-            type Error = &'static str;
+            type Error = tantivy::TantivyError;
 
             fn try_from(schema: &tantivy::schema::Schema) -> std::result::Result<Self, Self::Error> {
                 Ok(Self {
