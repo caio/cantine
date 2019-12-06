@@ -8,7 +8,7 @@ use cantine_derive::FilterAndAggregation;
 pub struct Recipe {
     pub uuid: Uuid,
 
-    pub recipe_id: u64,
+    pub recipe_id: RecipeId,
     pub name: String,
     pub crawl_url: String,
 
@@ -20,6 +20,8 @@ pub struct Recipe {
 
     pub features: Features,
 }
+
+pub type RecipeId = u64;
 
 impl DatabaseRecord for Recipe {
     fn get_id(&self) -> u64 {
@@ -119,16 +121,16 @@ pub struct SearchResult {
 
 // FIXME Saner serialization
 #[derive(Serialize, Deserialize, Debug, Default)]
-pub struct SearchCursor(u64, u64);
+pub struct SearchCursor(u64, RecipeId);
 
 impl SearchCursor {
     pub const START: Self = Self(0, 0);
 
-    pub fn new(score: u64, recipe_id: u64) -> Self {
+    pub fn new(score: u64, recipe_id: RecipeId) -> Self {
         Self(score, recipe_id)
     }
 
-    pub fn from_f32(score: f32, recipe_id: u64) -> Self {
+    pub fn from_f32(score: f32, recipe_id: RecipeId) -> Self {
         Self(score.to_bits() as u64, recipe_id)
     }
 
@@ -136,7 +138,7 @@ impl SearchCursor {
         self.0 == 0 && self.1 == 0
     }
 
-    pub fn recipe_id(&self) -> u64 {
+    pub fn recipe_id(&self) -> RecipeId {
         self.1
     }
 

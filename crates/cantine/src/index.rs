@@ -11,7 +11,7 @@ use tantivy::{
 
 use crate::model::{
     FeaturesAggregationQuery, FeaturesAggregationResult, FeaturesCollector, FeaturesFilterFields,
-    Recipe, SearchCursor, SearchQuery, Sort,
+    Recipe, RecipeId, SearchCursor, SearchQuery, Sort,
 };
 
 use tique::{
@@ -102,7 +102,7 @@ pub struct Cantine {
 
 pub type CantineSearchResult = (
     usize,
-    Vec<u64>,
+    Vec<RecipeId>,
     Option<SearchCursor>,
     Option<FeaturesAggregationResult>,
 );
@@ -127,7 +127,7 @@ impl Cantine {
         })
     }
 
-    fn interpret_query(&self, query: &SearchQuery) -> Result<Box<dyn Query>> {
+    pub fn interpret_query(&self, query: &SearchQuery) -> Result<Box<dyn Query>> {
         let mut subqueries: Vec<(Occur, Box<dyn Query>)> = Vec::new();
 
         if let Some(fulltext) = &query.fulltext {
@@ -153,7 +153,7 @@ impl Cantine {
         &self,
         searcher: &Searcher,
         addresses: &[SearchMarker<T>],
-    ) -> Result<Vec<u64>> {
+    ) -> Result<Vec<RecipeId>> {
         let mut items = Vec::with_capacity(addresses.len());
 
         for addr in addresses.iter() {
@@ -175,7 +175,7 @@ impl Cantine {
         limit: usize,
         sort: Sort,
         after: SearchCursor,
-    ) -> Result<(usize, Vec<u64>, Option<SearchCursor>)> {
+    ) -> Result<(usize, Vec<RecipeId>, Option<SearchCursor>)> {
         macro_rules! condition_from_score {
             ($score:expr) => {{
                 let after_score = $score;
