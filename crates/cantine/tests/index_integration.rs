@@ -1,7 +1,10 @@
 use serde_json;
 
 use once_cell::sync::Lazy;
-use std::{collections::HashMap, convert::TryFrom};
+use std::{
+    collections::{HashMap, HashSet},
+    convert::TryFrom,
+};
 use tantivy::{query::AllQuery, schema::SchemaBuilder, Index, Result};
 
 use cantine::{
@@ -57,19 +60,8 @@ fn pagination_works() -> Result<()> {
     let reader = GLOBAL.index.reader()?;
     let searcher = reader.searcher();
 
-    let (total, found_ids, next) = GLOBAL.cantine.search(
-        &searcher,
-        &AllQuery,
-        10,
-        Sort::Relevance,
-        SearchCursor::START,
-    )?;
-
-    assert_eq!(INDEX_SIZE, total);
-    assert!(next.is_some());
-
-    let mut after = next.unwrap();
-    let mut total_found = found_ids.len();
+    let mut after = SearchCursor::START;
+    let mut seen = HashSet::with_capacity(INDEX_SIZE);
 
     loop {
         let (_total, found_ids, next) =
@@ -77,7 +69,9 @@ fn pagination_works() -> Result<()> {
                 .cantine
                 .search(&searcher, &AllQuery, 10, Sort::Relevance, after)?;
 
-        total_found += found_ids.len();
+        for id in found_ids {
+            seen.insert(id);
+        }
 
         if let Some(new_after) = next {
             after = new_after;
@@ -86,7 +80,7 @@ fn pagination_works() -> Result<()> {
         }
     }
 
-    assert_eq!(INDEX_SIZE, total_found);
+    assert_eq!(INDEX_SIZE, seen.len());
 
     Ok(())
 }
