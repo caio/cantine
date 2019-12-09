@@ -378,4 +378,106 @@ mod tests {
 
         Ok(())
     }
+
+    struct Db<T> {
+        data: Vec<u8>,
+        index: HashMap<u64, usize>,
+        _config: PhantomData<T>,
+    }
+
+    use std::borrow::Cow;
+
+    trait Config<'a> {
+        type Item: 'a;
+        fn to_bytes(item: &'a Self::Item) -> Option<Cow<'a, [u8]>>;
+        fn from_bytes(src: &'a [u8]) -> Option<Self::Item>;
+    }
+
+    struct BincodeConfig<T>(PhantomData<T>);
+
+    impl<'a, T: 'a> Config<'a> for BincodeConfig<T>
+    where
+        T: Deserialize<'a> + Serialize + Clone,
+    {
+        type Item = T;
+
+        fn from_bytes(src: &'a [u8]) -> Option<T> {
+            deserialize(src).ok()
+        }
+
+        fn to_bytes(item: &'a T) -> Option<Cow<[u8]>> {
+            serialize(item).map(Cow::Owned).ok()
+        }
+    }
+
+    impl<T> Db<T> {
+        fn new() -> Self {
+            Self {
+                data: Vec::new(),
+                index: HashMap::new(),
+                _config: PhantomData,
+            }
+        }
+
+        fn add<'a, TEncoder>(&mut self, id: u64, item: &'a TEncoder::Item) -> Result<()>
+        where
+            TEncoder: Config<'a>,
+        {
+            if let Some(encoded) = TEncoder::to_bytes(item) {
+                let start_offset = self.data.len();
+                self.data.extend(encoded.iter());
+                self.index.insert(id, start_offset);
+                Ok(())
+            } else {
+                Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "to_bytes() fail",
+                ))
+            }
+        }
+
+        fn get<'a, TDecoder>(&self, id: u64) -> Result<Option<TDecoder::Item>>
+        where
+            TDecoder: Config<'a>,
+        {
+            if let Some(&offset) = self.index.get(&id) {
+                let data = self.data[offset..].as_ptr();
+                let len = self.data.len() - offset;
+                if let Some(decoded) =
+                    TDecoder::from_bytes(unsafe { std::slice::from_raw_parts(data, len) })
+                {
+                    Ok(Some(decoded))
+                } else {
+                    Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "to_bytes() fail",
+                    ))
+                }
+            } else {
+                Ok(None)
+            }
+        }
+    }
+
+    #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
+    struct Named<'a>(&'a str, &'a str);
+
+    // TODO Cannot remap now that I want to return references
+    //      So create a DatabaseWriter that writes straight to the file
+    //      And optionally truncates from a max_size? (maybe store
+    //      length in the LogEntry)
+    //      And the database only holds the memory map
+    #[test]
+    fn item_db_functional() {
+        let mut db: Db<BincodeConfig<Named>> = Db::new();
+
+        let first = Named("caio", "romao");
+        let second = Named("costa", "nasciment");
+
+        db.add::<BincodeConfig<Named>>(0, &first);
+        db.add::<BincodeConfig<Named>>(1, &second);
+
+        assert_eq!(Some(first), db.get::<BincodeConfig<Named>>(0));
+        assert_eq!(Some(second), db.get::<BincodeConfig<Named>>(1));
+    }
 }
