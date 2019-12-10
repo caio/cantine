@@ -421,72 +421,84 @@ mod tests {
         }
     }
 
-    struct ConfigDb<'a, T, TDecoder>
+    use memmap::{MmapMut, MmapOptions};
+    use std::fs::File;
+
+    struct MmapDatabase<'a, T, TDecoder>
     where
         T: 'a,
         TDecoder: Decoder<'a, Item = T>,
     {
-        data: Vec<u8>,
-        index: HashMap<u64, usize>,
+        data: MmapMut,
+        _file: File,
         _config: TDecoder,
         _marker: PhantomData<&'a T>,
     }
 
-    impl<'a, T> ConfigDb<'a, T, BincodeConfig<T>>
-    where
-        T: 'a + Clone + Deserialize<'a>,
-    {
-        pub fn new_bincode() -> Self {
-            Self::with_config(BincodeConfig::new())
-        }
-    }
-
-    impl<'a, T: 'a, TDecoder> ConfigDb<'a, T, TDecoder>
+    impl<'a, T: 'a, TDecoder> MmapDatabase<'a, T, TDecoder>
     where
         TDecoder: Decoder<'a, Item = T>,
     {
-        pub fn with_config(_config: TDecoder) -> Self {
-            Self {
-                data: Vec::new(),
-                index: HashMap::new(),
-                _marker: PhantomData,
+        pub fn with_config<P: AsRef<Path>>(path: P, _config: TDecoder) -> Result<Self> {
+            let file = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(path.as_ref())?;
+
+            Ok(Self {
+                data: unsafe { MmapOptions::new().map_mut(&file)? },
+                _file: file,
                 _config,
-            }
+                _marker: PhantomData,
+            })
         }
 
-        fn get(&self, id: u64) -> Result<Option<TDecoder::Item>> {
-            if let Some(&offset) = self.index.get(&id) {
-                let data = self.data[offset..].as_ptr();
-                let len = self.data.len() - offset;
-                if let Some(decoded) =
-                    TDecoder::from_bytes(unsafe { std::slice::from_raw_parts(data, len) })
-                {
-                    Ok(Some(decoded))
-                } else {
-                    Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "to_bytes() fail",
-                    ))
-                }
-            } else {
-                Ok(None)
-            }
+        pub fn capacity(&self) -> usize {
+            self.data.len()
         }
 
-        fn add<'b, TEncoder: Encoder<'b, Item = T>>(
-            &mut self,
-            id: u64,
-            item: &'b TEncoder::Item,
-        ) -> Result<()> {
-            if let Some(encoded) = TEncoder::to_bytes(item) {
-                let start_offset = self.data.len();
-                self.data.extend(encoded.iter());
-                self.index.insert(id, start_offset);
-                Ok(())
+        pub fn get(&self, offset: usize) -> Result<TDecoder::Item> {
+            if offset >= self.data.len() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "Offset too large",
+                ));
+            }
+
+            let data = self.data[offset..].as_ptr();
+            let len = self.data.len() - offset;
+            if let Some(decoded) =
+                TDecoder::from_bytes(unsafe { std::slice::from_raw_parts(data, len) })
+            {
+                Ok(decoded)
             } else {
                 Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "to_bytes() fail",
+                ))
+            }
+        }
+
+        pub fn add<'b, TEncoder: Encoder<'b, Item = T>>(
+            &mut self,
+            offset: usize,
+            item: &'b TEncoder::Item,
+        ) -> Result<usize> {
+            if let Some(encoded) = TEncoder::to_bytes(item) {
+                let end = encoded.len() + offset;
+                if end > self.data.len() {
+                    Err(io::Error::new(
+                        io::ErrorKind::Other,
+                        "Would write beyond the memory map",
+                    ))
+                } else {
+                    self.data[offset..end].copy_from_slice(&encoded);
+                    Ok(end)
+                }
+            } else {
+                Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "Failure encoding input",
                 ))
             }
         }
@@ -495,24 +507,27 @@ mod tests {
     #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
     struct Named<'a>(&'a str, &'a str);
 
-    // TODO Cannot remap now that I want to return references
-    //      So create a DatabaseWriter that writes straight to the file
-    //      And optionally truncates from a max_size? (maybe store
-    //      length in the LogEntry)
-    //      And the database only holds the memory map
-
     #[test]
     fn less_awkward_api() -> Result<()> {
-        let mut db = ConfigDb::new_bincode();
+        let basedir = tempfile::tempdir()?;
+
+        let datapath = basedir.path().join("data.bin");
+
+        let datafile = File::create(&datapath)?;
+        datafile.set_len(1000)?;
+
+        let mut db = MmapDatabase::with_config(datapath, BincodeConfig::<Named>::new())?;
+
+        assert_eq!(1000, db.capacity());
 
         let first = Named("caio", "romao");
         let second = Named("costa", "nasciment");
 
-        db.add::<BincodeConfig<Named>>(0, &first)?;
-        db.add::<BincodeConfig<Named>>(1, &second)?;
+        let next_add_offset = db.add::<BincodeConfig<Named>>(0, &first)?;
+        db.add::<BincodeConfig<Named>>(next_add_offset, &second)?;
 
-        assert_eq!(Some(first), db.get(0)?);
-        assert_eq!(Some(second), db.get(1)?);
+        assert_eq!(first, db.get(0)?);
+        assert_eq!(second, db.get(next_add_offset)?);
 
         Ok(())
     }
