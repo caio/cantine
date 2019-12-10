@@ -1,7 +1,8 @@
 use std::{
+    borrow::Cow,
     collections::HashMap,
     fs::{File, OpenOptions},
-    io::{self, BufRead, BufReader, Cursor, Result, Write},
+    io::{self, BufRead, BufReader, BufWriter, Cursor, Result, Seek, SeekFrom, Write},
     marker::PhantomData,
     mem::size_of,
     path::Path,
@@ -9,6 +10,7 @@ use std::{
 
 use bincode::{deserialize, serialize};
 use byteorder::{NativeEndian, ReadBytesExt, WriteBytesExt};
+use memmap::Mmap;
 use serde::{de::DeserializeOwned, Serialize};
 use uuid::Uuid;
 use zerocopy::{AsBytes, FromBytes, LayoutVerified, U64};
@@ -176,6 +178,14 @@ impl LogEntry {
             offset: U64::new(offset as u64),
         }
     }
+
+    fn new_(uuid: uuid::Bytes, id: u64, offset: usize) -> Self {
+        Self {
+            uuid,
+            id: U64::new(id),
+            offset: U64::new(offset as u64),
+        }
+    }
 }
 
 struct StructuredLog<T> {
@@ -217,7 +227,7 @@ where
     }
 
     fn len(&self) -> Result<usize> {
-        Ok(self.file.metadata()?.len() as usize)
+        Ok(self.file.metadata()?.len() as usize / size_of::<T>())
     }
 
     fn for_each_entry<F>(&self, mut each_entry: F) -> std::io::Result<()>
@@ -379,8 +389,6 @@ mod tests {
         Ok(())
     }
 
-    use std::borrow::Cow;
-
     pub trait Encoder<'a> {
         type Item: 'a;
         fn to_bytes(item: &'a Self::Item) -> Option<Cow<'a, [u8]>>;
@@ -421,15 +429,12 @@ mod tests {
         }
     }
 
-    use memmap::{MmapMut, MmapOptions};
-    use std::fs::File;
-
     struct MmapDatabase<'a, T, TDecoder>
     where
         T: 'a,
         TDecoder: Decoder<'a, Item = T>,
     {
-        data: MmapMut,
+        data: Mmap,
         _file: File,
         _config: TDecoder,
         _marker: PhantomData<&'a T>,
@@ -446,19 +451,15 @@ mod tests {
                 .open(path.as_ref())?;
 
             Ok(Self {
-                data: unsafe { MmapOptions::new().map_mut(&file)? },
+                data: unsafe { Mmap::map(&file)? },
                 _file: file,
                 _config,
                 _marker: PhantomData,
             })
         }
 
-        pub fn capacity(&self) -> usize {
-            self.data.len()
-        }
-
         pub fn get(&self, offset: usize) -> Result<TDecoder::Item> {
-            if offset >= self.data.len() {
+            if offset > self.data.len() {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
                     "Offset too large",
@@ -474,27 +475,86 @@ mod tests {
             } else {
                 Err(io::Error::new(
                     io::ErrorKind::InvalidData,
-                    "to_bytes() fail",
+                    format!("Failure decoding bytes at offset {}", offset),
                 ))
             }
         }
+    }
 
-        pub fn add<'b, TEncoder: Encoder<'b, Item = T>>(
+    pub struct DbReader<'a, T, TDecoder: Decoder<'a, Item = T>> {
+        data: MmapDatabase<'a, T, TDecoder>,
+        uuid_index: HashMap<Uuid, usize>,
+        id_index: HashMap<u64, usize>,
+    }
+
+    impl<'a, T, TDecoder: Decoder<'a, Item = T>> DbReader<'a, T, TDecoder> {
+        pub fn open<P: AsRef<Path>>(base_dir: P, config: TDecoder) -> Result<Self> {
+            let log = StructuredLog::new(base_dir.as_ref().join(OFFSETS_FILE))?;
+            let num_items = log.len()?;
+
+            let mut id_index = HashMap::with_capacity(num_items);
+            let mut uuid_index = HashMap::with_capacity(num_items);
+
+            log.for_each_entry(|entry: &LogEntry| {
+                let offset = entry.offset.get() as usize;
+                uuid_index.insert(Uuid::from_bytes(entry.uuid), offset);
+                id_index.insert(entry.id.get(), offset);
+            })?;
+
+            Ok(Self {
+                id_index,
+                uuid_index,
+                data: MmapDatabase::with_config(base_dir.as_ref().join(DATA_FILE), config)?,
+            })
+        }
+
+        pub fn find_by_id(&self, id: u64) -> Result<Option<TDecoder::Item>> {
+            if let Some(&offset) = self.id_index.get(&id) {
+                Ok(Some(self.data.get(offset)?))
+            } else {
+                Ok(None)
+            }
+        }
+
+        pub fn find_by_uuid(&self, uuid: &Uuid) -> Result<Option<TDecoder::Item>> {
+            if let Some(&offset) = self.uuid_index.get(&uuid) {
+                Ok(Some(self.data.get(offset)?))
+            } else {
+                Ok(None)
+            }
+        }
+    }
+
+    pub struct DbWriter<TEntry> {
+        log: StructuredLog<LogEntry>,
+        writer: BufWriter<File>,
+        _marker: PhantomData<TEntry>,
+    }
+
+    impl<T> DbWriter<T>
+    where
+        T: DbRecord + Serialize,
+    {
+        pub fn new<P: AsRef<Path>>(base_dir: P) -> Result<Self> {
+            let data = File::create(base_dir.as_ref().join(DATA_FILE))?;
+            Ok(Self {
+                writer: BufWriter::new(data),
+                log: StructuredLog::new(base_dir.as_ref().join(OFFSETS_FILE))?,
+                _marker: PhantomData,
+            })
+        }
+
+        pub fn append<'a, TEncoder: Encoder<'a, Item = T>>(
             &mut self,
-            offset: usize,
-            item: &'b TEncoder::Item,
-        ) -> Result<usize> {
+            item: &'a TEncoder::Item,
+        ) -> Result<()> {
             if let Some(encoded) = TEncoder::to_bytes(item) {
-                let end = encoded.len() + offset;
-                if end > self.data.len() {
-                    Err(io::Error::new(
-                        io::ErrorKind::Other,
-                        "Would write beyond the memory map",
-                    ))
-                } else {
-                    self.data[offset..end].copy_from_slice(&encoded);
-                    Ok(end)
-                }
+                let offset = self.writer.seek(SeekFrom::Current(0))?;
+                self.writer.write_all(&encoded)?;
+
+                let entry = LogEntry::new_(item.get_uuid(), item.get_id(), offset as usize);
+                self.log.append(&entry)?;
+                Ok(())
             } else {
                 Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
@@ -505,29 +565,53 @@ mod tests {
     }
 
     #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
-    struct Named<'a>(&'a str, &'a str);
+    struct Named<'a>(u64, Uuid, &'a str);
+
+    pub trait DbRecord {
+        fn get_id(&self) -> u64;
+        fn get_uuid(&self) -> uuid::Bytes;
+    }
+
+    impl<'a> DbRecord for Named<'a> {
+        fn get_id(&self) -> u64 {
+            self.0
+        }
+
+        fn get_uuid(&self) -> uuid::Bytes {
+            *self.1.as_bytes()
+        }
+    }
 
     #[test]
     fn less_awkward_api() -> Result<()> {
         let basedir = tempfile::tempdir()?;
 
-        let datapath = basedir.path().join("data.bin");
+        let mut db_writer = DbWriter::new(basedir.path())?;
 
-        let datafile = File::create(&datapath)?;
-        datafile.set_len(1000)?;
+        let entries = vec![
+            Named(0, Uuid::new_v4(), "a"),
+            Named(1, Uuid::new_v4(), "b"),
+            Named(2, Uuid::new_v4(), "c"),
+            Named(3, Uuid::new_v4(), "d"),
+        ];
 
-        let mut db = MmapDatabase::with_config(datapath, BincodeConfig::<Named>::new())?;
+        for entry in entries.iter() {
+            db_writer.append::<BincodeConfig<Named>>(entry)?;
+        }
 
-        assert_eq!(1000, db.capacity());
+        // So it flushes
+        drop(db_writer);
 
-        let first = Named("caio", "romao");
-        let second = Named("costa", "nasciment");
+        let db_reader = DbReader::open(basedir, BincodeConfig::<Named>::new())?;
 
-        let next_add_offset = db.add::<BincodeConfig<Named>>(0, &first)?;
-        db.add::<BincodeConfig<Named>>(next_add_offset, &second)?;
+        for entry in entries.into_iter() {
+            let id = entry.get_id();
+            let uuid = Uuid::from_bytes(entry.get_uuid());
+            let entry = Some(entry);
 
-        assert_eq!(first, db.get(0)?);
-        assert_eq!(second, db.get(next_add_offset)?);
+            assert_eq!(entry, db_reader.find_by_id(id)?);
+            assert_eq!(entry, db_reader.find_by_uuid(&uuid)?);
+        }
 
         Ok(())
     }
