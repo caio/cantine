@@ -382,7 +382,7 @@ mod tests {
     struct Db<T> {
         data: Vec<u8>,
         index: HashMap<u64, usize>,
-        _config: PhantomData<T>,
+        _marker: PhantomData<T>,
     }
 
     use std::borrow::Cow;
@@ -394,6 +394,12 @@ mod tests {
     }
 
     struct BincodeConfig<T>(PhantomData<T>);
+
+    impl<T> BincodeConfig<T> {
+        fn new() -> Self {
+            Self(PhantomData)
+        }
+    }
 
     impl<'a, T: 'a> Config<'a> for BincodeConfig<T>
     where
@@ -410,12 +416,69 @@ mod tests {
         }
     }
 
+    struct ConfigDb<'a, T: 'a, TConfig>
+    where
+        TConfig: Config<'a, Item = T>,
+    {
+        data: Vec<u8>,
+        index: HashMap<u64, usize>,
+        _config: TConfig,
+        _marker: PhantomData<&'a T>,
+    }
+
+    impl<'a, T: 'a, TConfig> ConfigDb<'a, T, TConfig>
+    where
+        TConfig: Config<'a, Item = T>,
+    {
+        fn new(_config: TConfig) -> Self {
+            Self {
+                data: Vec::new(),
+                index: HashMap::new(),
+                _marker: PhantomData,
+                _config,
+            }
+        }
+
+        fn add(&mut self, id: u64, item: &'a TConfig::Item) -> Result<()> {
+            if let Some(encoded) = TConfig::to_bytes(item) {
+                let start_offset = self.data.len();
+                self.data.extend(encoded.iter());
+                self.index.insert(id, start_offset);
+                Ok(())
+            } else {
+                Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "to_bytes() fail",
+                ))
+            }
+        }
+
+        fn get(&self, id: u64) -> Result<Option<TConfig::Item>> {
+            if let Some(&offset) = self.index.get(&id) {
+                let data = self.data[offset..].as_ptr();
+                let len = self.data.len() - offset;
+                if let Some(decoded) =
+                    TConfig::from_bytes(unsafe { std::slice::from_raw_parts(data, len) })
+                {
+                    Ok(Some(decoded))
+                } else {
+                    Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "to_bytes() fail",
+                    ))
+                }
+            } else {
+                Ok(None)
+            }
+        }
+    }
+
     impl<T> Db<T> {
         fn new() -> Self {
             Self {
                 data: Vec::new(),
                 index: HashMap::new(),
-                _config: PhantomData,
+                _marker: PhantomData,
             }
         }
 
@@ -468,16 +531,36 @@ mod tests {
     //      length in the LogEntry)
     //      And the database only holds the memory map
     #[test]
-    fn item_db_functional() {
+    fn item_db_functional() -> Result<()> {
         let mut db: Db<BincodeConfig<Named>> = Db::new();
 
         let first = Named("caio", "romao");
         let second = Named("costa", "nasciment");
 
-        db.add::<BincodeConfig<Named>>(0, &first);
-        db.add::<BincodeConfig<Named>>(1, &second);
+        db.add::<BincodeConfig<Named>>(0, &first)?;
+        db.add::<BincodeConfig<Named>>(1, &second)?;
 
-        assert_eq!(Some(first), db.get::<BincodeConfig<Named>>(0));
-        assert_eq!(Some(second), db.get::<BincodeConfig<Named>>(1));
+        assert_eq!(Some(first), db.get::<BincodeConfig<Named>>(0)?);
+        assert_eq!(Some(second), db.get::<BincodeConfig<Named>>(1)?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn less_awkward_api() -> Result<()> {
+        let mut db = ConfigDb::new(BincodeConfig::<Named>::new());
+
+        let first = Named("caio", "romao");
+        let second = Named("costa", "nasciment");
+
+        db.add(0, &first)?;
+        db.add(1, &second)?;
+
+        // drop(second);
+
+        assert_eq!(first, db.get(0)?.unwrap());
+        assert_eq!(second, db.get(1)?.unwrap());
+
+        Ok(())
     }
 }
