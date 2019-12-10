@@ -12,7 +12,7 @@ use crossbeam_channel::unbounded;
 use serde_json;
 use structopt::StructOpt;
 
-use cantine::database::BincodeDatabase;
+use cantine::database::{BincodeConfig, DatabaseReader};
 use cantine::model::Recipe;
 
 /// Checks data generated via `load` against a stream of recipes
@@ -43,7 +43,8 @@ fn check(options: CheckOptions) -> Result<()> {
     // Nothing to check at the tantivy index atm
 
     println!("Loading database");
-    let db = Arc::new(BincodeDatabase::open(db_path.as_path())?);
+    let database = DatabaseReader::open(db_path, BincodeConfig::<Recipe>::new())?;
+    let db = Arc::new(database);
 
     let mut workers = Vec::new();
     let (line_sender, line_receiver) = unbounded::<String>();
@@ -58,8 +59,8 @@ fn check(options: CheckOptions) -> Result<()> {
                 let recipe: Recipe =
                     serde_json::from_str(line.as_ref()).expect("valid recipe json");
 
-                let db_recipe = db.get_by_uuid(&recipe.uuid).unwrap().unwrap();
-                db.get_by_id(recipe.recipe_id).unwrap().unwrap();
+                let db_recipe = db.find_by_uuid(&recipe.uuid).unwrap().unwrap();
+                db.find_by_id(recipe.recipe_id).unwrap().unwrap();
 
                 if recipe != db_recipe {
                     panic!(

@@ -14,7 +14,7 @@ use structopt::StructOpt;
 
 use tantivy::{self, directory::MmapDirectory, schema::SchemaBuilder, Index};
 
-use cantine::database::BincodeDatabase;
+use cantine::database::{BincodeConfig, DatabaseWriter};
 use cantine::index::IndexFields;
 use cantine::model::Recipe;
 
@@ -96,15 +96,14 @@ fn load(options: LoadOptions) -> Result<()> {
     }
 
     let disk_writer = spawn(move || {
-        let mut db =
-            BincodeDatabase::create(db_path, options.database_size.get() * 1024 * 1024).unwrap();
+        let mut db = DatabaseWriter::new(db_path).unwrap();
 
         let cur = Instant::now();
         let mut num_recipes = 0;
 
         for recipe in recipe_receiver {
             num_recipes += 1;
-            db.add(&recipe).unwrap();
+            db.append::<BincodeConfig<Recipe>>(&recipe).unwrap();
 
             if num_recipes % options.commit_every.get() == 0 {
                 writer.write().unwrap().commit().unwrap();

@@ -1,4 +1,4 @@
 mod bincodedb;
 mod mapped_file;
 
-pub use bincodedb::{BincodeDatabase, DatabaseRecord};
+pub use bincodedb::{BincodeConfig, DatabaseReader, DatabaseRecord, DatabaseWriter};
