@@ -379,17 +379,15 @@ mod tests {
         Ok(())
     }
 
-    struct Db<T> {
-        data: Vec<u8>,
-        index: HashMap<u64, usize>,
-        _marker: PhantomData<T>,
-    }
-
     use std::borrow::Cow;
 
-    trait Config<'a> {
+    pub trait Encoder<'a> {
         type Item: 'a;
         fn to_bytes(item: &'a Self::Item) -> Option<Cow<'a, [u8]>>;
+    }
+
+    pub trait Decoder<'a> {
+        type Item: 'a;
         fn from_bytes(src: &'a [u8]) -> Option<Self::Item>;
     }
 
@@ -401,36 +399,53 @@ mod tests {
         }
     }
 
-    impl<'a, T: 'a> Config<'a> for BincodeConfig<T>
+    impl<'a, T: 'a> Encoder<'a> for BincodeConfig<T>
     where
-        T: Deserialize<'a> + Serialize + Clone,
+        T: Serialize,
     {
         type Item = T;
-
-        fn from_bytes(src: &'a [u8]) -> Option<T> {
-            deserialize(src).ok()
-        }
 
         fn to_bytes(item: &'a T) -> Option<Cow<[u8]>> {
             serialize(item).map(Cow::Owned).ok()
         }
     }
 
-    struct ConfigDb<'a, T: 'a, TConfig>
+    impl<'a, T: 'a> Decoder<'a> for BincodeConfig<T>
     where
-        TConfig: Config<'a, Item = T>,
+        T: Deserialize<'a> + Clone,
+    {
+        type Item = T;
+
+        fn from_bytes(src: &'a [u8]) -> Option<T> {
+            deserialize(src).ok()
+        }
+    }
+
+    struct ConfigDb<'a, T, TDecoder>
+    where
+        T: 'a,
+        TDecoder: Decoder<'a, Item = T>,
     {
         data: Vec<u8>,
         index: HashMap<u64, usize>,
-        _config: TConfig,
+        _config: TDecoder,
         _marker: PhantomData<&'a T>,
     }
 
-    impl<'a, T: 'a, TConfig> ConfigDb<'a, T, TConfig>
+    impl<'a, T> ConfigDb<'a, T, BincodeConfig<T>>
     where
-        TConfig: Config<'a, Item = T>,
+        T: 'a + Clone + Deserialize<'a>,
     {
-        fn new(_config: TConfig) -> Self {
+        pub fn new_bincode() -> Self {
+            Self::with_config(BincodeConfig::new())
+        }
+    }
+
+    impl<'a, T: 'a, TDecoder> ConfigDb<'a, T, TDecoder>
+    where
+        TDecoder: Decoder<'a, Item = T>,
+    {
+        pub fn with_config(_config: TDecoder) -> Self {
             Self {
                 data: Vec::new(),
                 index: HashMap::new(),
@@ -439,70 +454,7 @@ mod tests {
             }
         }
 
-        fn add(&mut self, id: u64, item: &'a TConfig::Item) -> Result<()> {
-            if let Some(encoded) = TConfig::to_bytes(item) {
-                let start_offset = self.data.len();
-                self.data.extend(encoded.iter());
-                self.index.insert(id, start_offset);
-                Ok(())
-            } else {
-                Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "to_bytes() fail",
-                ))
-            }
-        }
-
-        fn get(&self, id: u64) -> Result<Option<TConfig::Item>> {
-            if let Some(&offset) = self.index.get(&id) {
-                let data = self.data[offset..].as_ptr();
-                let len = self.data.len() - offset;
-                if let Some(decoded) =
-                    TConfig::from_bytes(unsafe { std::slice::from_raw_parts(data, len) })
-                {
-                    Ok(Some(decoded))
-                } else {
-                    Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "to_bytes() fail",
-                    ))
-                }
-            } else {
-                Ok(None)
-            }
-        }
-    }
-
-    impl<T> Db<T> {
-        fn new() -> Self {
-            Self {
-                data: Vec::new(),
-                index: HashMap::new(),
-                _marker: PhantomData,
-            }
-        }
-
-        fn add<'a, TEncoder>(&mut self, id: u64, item: &'a TEncoder::Item) -> Result<()>
-        where
-            TEncoder: Config<'a>,
-        {
-            if let Some(encoded) = TEncoder::to_bytes(item) {
-                let start_offset = self.data.len();
-                self.data.extend(encoded.iter());
-                self.index.insert(id, start_offset);
-                Ok(())
-            } else {
-                Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "to_bytes() fail",
-                ))
-            }
-        }
-
-        fn get<'a, TDecoder>(&self, id: u64) -> Result<Option<TDecoder::Item>>
-        where
-            TDecoder: Config<'a>,
-        {
+        fn get(&self, id: u64) -> Result<Option<TDecoder::Item>> {
             if let Some(&offset) = self.index.get(&id) {
                 let data = self.data[offset..].as_ptr();
                 let len = self.data.len() - offset;
@@ -520,6 +472,24 @@ mod tests {
                 Ok(None)
             }
         }
+
+        fn add<'b, TEncoder: Encoder<'b, Item = T>>(
+            &mut self,
+            id: u64,
+            item: &'b TEncoder::Item,
+        ) -> Result<()> {
+            if let Some(encoded) = TEncoder::to_bytes(item) {
+                let start_offset = self.data.len();
+                self.data.extend(encoded.iter());
+                self.index.insert(id, start_offset);
+                Ok(())
+            } else {
+                Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "to_bytes() fail",
+                ))
+            }
+        }
     }
 
     #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
@@ -530,9 +500,10 @@ mod tests {
     //      And optionally truncates from a max_size? (maybe store
     //      length in the LogEntry)
     //      And the database only holds the memory map
+
     #[test]
-    fn item_db_functional() -> Result<()> {
-        let mut db: Db<BincodeConfig<Named>> = Db::new();
+    fn less_awkward_api() -> Result<()> {
+        let mut db = ConfigDb::new_bincode();
 
         let first = Named("caio", "romao");
         let second = Named("costa", "nasciment");
@@ -540,26 +511,8 @@ mod tests {
         db.add::<BincodeConfig<Named>>(0, &first)?;
         db.add::<BincodeConfig<Named>>(1, &second)?;
 
-        assert_eq!(Some(first), db.get::<BincodeConfig<Named>>(0)?);
-        assert_eq!(Some(second), db.get::<BincodeConfig<Named>>(1)?);
-
-        Ok(())
-    }
-
-    #[test]
-    fn less_awkward_api() -> Result<()> {
-        let mut db = ConfigDb::new(BincodeConfig::<Named>::new());
-
-        let first = Named("caio", "romao");
-        let second = Named("costa", "nasciment");
-
-        db.add(0, &first)?;
-        db.add(1, &second)?;
-
-        // drop(second);
-
-        assert_eq!(first, db.get(0)?.unwrap());
-        assert_eq!(second, db.get(1)?.unwrap());
+        assert_eq!(Some(first), db.get(0)?);
+        assert_eq!(Some(second), db.get(1)?);
 
         Ok(())
     }
