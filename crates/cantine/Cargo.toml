@@ -16,9 +16,10 @@ memmap = "0.7"
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 structopt = { version = "0.3", default-features = false }
-tantivy = "0.10"
 uuid = { version = "0.8", features = ["serde"]  }
 zerocopy = "0.2"
+
+tantivy = { git = "https://github.com/tantivy-search/tantivy" }
 
 [dev-dependencies]
 # v4 feature added to generate test uuids
