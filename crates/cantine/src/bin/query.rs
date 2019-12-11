@@ -19,7 +19,7 @@ use cantine::{
 #[derive(Debug, StructOpt)]
 #[structopt(name = "query")]
 pub struct QueryOptions {
-    /// Path to the data directory that will be queries
+    /// Path to the data directory that will be queried
     #[structopt(short, long)]
     base_path: PathBuf,
     /// Only aggregate when found less recipes than given threshold
