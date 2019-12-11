@@ -15,7 +15,9 @@ use crate::model::{
 
 use tique::{
     queryparser::QueryParser,
-    top_collector::{ordered_by_u64_fast_field, ConditionalTopCollector, SearchMarker},
+    top_collector::{
+        ordered_by_f64_fast_field, ordered_by_u64_fast_field, ConditionalTopCollector, SearchMarker,
+    },
 };
 
 #[derive(Clone)]
@@ -212,6 +214,28 @@ impl Cantine {
             }};
         }
 
+        macro_rules! collect_float {
+            ($field:ident) => {{
+                let condition = condition_from_score!(after.score_f64());
+                let top_collector =
+                    ordered_by_f64_fast_field(self.fields.features.$field, limit, condition);
+
+                let result = searcher.search(interpreted_query, &top_collector)?;
+                let items = self.addresses_to_ids(&searcher, &result.items)?;
+
+                let num_items = items.len();
+                let cursor = if result.visited.saturating_sub(num_items) > 0 {
+                    let last_score = result.items[num_items - 1].score;
+                    let last_id = items[num_items - 1];
+                    Some(SearchCursor::from_f64(last_score, last_id))
+                } else {
+                    None
+                };
+
+                Ok((result.total, items, cursor))
+            }};
+        }
+
         match sort {
             Sort::Relevance => {
                 let condition = condition_from_score!(after.score_f32());
@@ -231,13 +255,15 @@ impl Cantine {
 
                 Ok((result.total, items, cursor))
             }
-            Sort::Calories => collect_unsigned!(calories),
             Sort::NumIngredients => collect_unsigned!(num_ingredients),
             Sort::InstructionsLength => collect_unsigned!(instructions_length),
             Sort::TotalTime => collect_unsigned!(total_time),
             Sort::CookTime => collect_unsigned!(cook_time),
             Sort::PrepTime => collect_unsigned!(prep_time),
-            _ => unimplemented!(),
+            Sort::Calories => collect_unsigned!(calories),
+            Sort::FatContent => collect_float!(fat_content),
+            Sort::CarbContent => collect_float!(carbohydrate_content),
+            Sort::ProteinContent => collect_float!(protein_content),
         }
     }
 

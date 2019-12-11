@@ -134,6 +134,10 @@ impl SearchCursor {
         Self(score.to_bits() as u64, recipe_id)
     }
 
+    pub fn from_f64(score: f64, recipe_id: RecipeId) -> Self {
+        Self(score.to_bits(), recipe_id)
+    }
+
     pub fn is_start(&self) -> bool {
         self.0 == 0 && self.1 == 0
     }
@@ -148,5 +152,9 @@ impl SearchCursor {
 
     pub fn score_f32(&self) -> f32 {
         f32::from_bits(self.0 as u32)
+    }
+
+    pub fn score_f64(&self) -> f64 {
+        f64::from_bits(self.0)
     }
 }

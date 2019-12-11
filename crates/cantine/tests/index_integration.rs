@@ -108,3 +108,30 @@ fn sort_works() -> Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn float_field_sorting() -> Result<()> {
+    let reader = GLOBAL.index.reader()?;
+    let searcher = reader.searcher();
+
+    let (_total, found_ids, _next) = GLOBAL.cantine.search(
+        &searcher,
+        &AllQuery,
+        INDEX_SIZE,
+        Sort::ProteinContent,
+        SearchCursor::START,
+    )?;
+
+    let mut last_protein = std::f32::MAX;
+    for id in found_ids {
+        let recipe = GLOBAL.db.get(&id).unwrap();
+        if let Some(protein_content) = recipe.features.protein_content {
+            assert!(protein_content <= last_protein);
+            last_protein = protein_content;
+        }
+    }
+
+    assert_ne!(std::f32::MAX, last_protein);
+
+    Ok(())
+}
