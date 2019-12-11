@@ -8,9 +8,11 @@ use structopt::StructOpt;
 use tantivy::{Result, Searcher};
 
 use cantine::{
-    database::BincodeDatabase,
+    database::{BincodeConfig, DatabaseReader},
     index::Cantine,
-    model::{Recipe, SearchCursor, SearchQuery, SearchResult, Sort},
+    model::{
+        FeaturesAggregationResult, Recipe, RecipeId, SearchCursor, SearchQuery, SearchResult, Sort,
+    },
 };
 
 /// Queries data generated via `load`
@@ -25,13 +27,19 @@ pub struct QueryOptions {
     agg_threshold: Option<usize>,
 }
 
-fn search(
-    database: &BincodeDatabase<Recipe>,
+type ExecuteResult = (
+    usize,
+    Vec<RecipeId>,
+    Option<SearchCursor>,
+    Option<FeaturesAggregationResult>,
+);
+
+fn execute_search(
     searcher: &Searcher,
     cantine: &Cantine,
     query: SearchQuery,
     agg_threshold: Option<usize>,
-) -> Result<SearchResult> {
+) -> Result<ExecuteResult> {
     let interpreted_query = cantine.interpret_query(&query)?;
     let limit = query.num_items.unwrap_or(10) as usize;
 
@@ -53,28 +61,18 @@ fn search(
         None
     };
 
-    let mut items = Vec::with_capacity(recipe_ids.len());
-    for recipe_id in recipe_ids {
-        let recipe: Recipe = database
-            .get_by_id(recipe_id)
-            .expect("db operational")
-            .expect("item in the index always present in the db");
-        items.push(recipe.into());
-    }
-
-    Ok(SearchResult {
-        total_found,
-        items,
-        agg,
-        after,
-    })
+    Ok((total_found, recipe_ids, after, agg))
 }
 
 pub fn main() -> Result<()> {
     let options = QueryOptions::from_args();
 
     let (index, cantine) = Cantine::open(options.base_path.join("tantivy"))?;
-    let database = BincodeDatabase::open(options.base_path.join("database")).unwrap();
+    let database = DatabaseReader::open(
+        options.base_path.join("database"),
+        BincodeConfig::<Recipe>::new(),
+    )
+    .unwrap();
 
     let stdin = stdin();
     let reader = BufReader::new(stdin.lock());
@@ -87,7 +85,24 @@ pub fn main() -> Result<()> {
         let query = serde_json::from_str(line.as_str()).expect("valid SearchQuery json");
 
         eprintln!("Executing query {:?}", &query);
-        let result = search(&database, &searcher, &cantine, query, options.agg_threshold)?;
+        let (total_found, recipe_ids, after, agg) =
+            execute_search(&searcher, &cantine, query, options.agg_threshold)?;
+
+        let mut items = Vec::with_capacity(recipe_ids.len());
+        for recipe_id in recipe_ids {
+            let recipe: Recipe = database
+                .find_by_id(recipe_id)
+                .expect("db operational")
+                .expect("item in the index always present in the db");
+            items.push(recipe.into());
+        }
+
+        let result = SearchResult {
+            total_found,
+            items,
+            after,
+            agg,
+        };
 
         println!("{}", serde_json::to_string(&result).unwrap());
     }
