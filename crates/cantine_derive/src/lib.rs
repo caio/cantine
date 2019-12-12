@@ -45,7 +45,7 @@ fn make_collector(input: &DeriveInput) -> TokenStream2 {
         impl<F, R> #collector<F>
         where
             F: 'static + Sync + Fn(&tantivy::SegmentReader) -> R,
-            R: 'static + Fn(tantivy::DocId) -> #meta,
+            R: 'static + Fn(tantivy::DocId, &#query, &mut #agg),
         {
             pub fn new(query: #query, reader_factory: F) -> Self {
                 let agg = <#agg>::from(&query);
@@ -64,7 +64,7 @@ fn make_collector(input: &DeriveInput) -> TokenStream2 {
         impl<F, R> tantivy::collector::Collector for #collector<F>
         where
             F: 'static + Sync + Fn(&tantivy::SegmentReader) -> R,
-            R: 'static + Fn(tantivy::DocId) -> #meta,
+            R: 'static + Fn(tantivy::DocId, &#query, &mut #agg),
         {
             type Fruit = #agg;
             type Child = #segment_collector<R>;
@@ -100,13 +100,12 @@ fn make_collector(input: &DeriveInput) -> TokenStream2 {
 
         impl<F> tantivy::collector::SegmentCollector for #segment_collector<F>
         where
-            F: 'static + Fn(tantivy::DocId) -> #meta,
+            F: 'static + Fn(tantivy::DocId, &#query, &mut #agg),
         {
             type Fruit = #agg;
 
             fn collect(&mut self, doc: tantivy::DocId, _score: tantivy::Score) {
-                let item = (self.reader)(doc);
-                self.agg.collect(&self.query, &item);
+                (self.reader)(doc, &self.query, &mut self.agg);
             }
 
             fn harvest(self) -> Self::Fruit {

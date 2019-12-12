@@ -1,14 +1,9 @@
-use std::{
-    collections::HashMap,
-    convert::TryFrom,
-    ops::Range,
-    sync::{Arc, Mutex},
-};
+use std::{collections::HashMap, convert::TryFrom, ops::Range, sync::Arc};
 
 use tantivy::{
     query::AllQuery,
     schema::{SchemaBuilder, Value},
-    DocId, Document, Index, SegmentReader,
+    Document, Index, SegmentReader,
 };
 
 use cantine_derive::FilterAndAggregation;
@@ -274,13 +269,13 @@ fn collector_integration() -> tantivy::Result<()> {
         d: vec![42.0..100.0],
     };
 
-    let db = Arc::new(Mutex::new(db));
+    let db = Arc::new(db);
     let collector = FeatCollector::new(query, move |seg_reader: &SegmentReader| {
         let id_reader = seg_reader.fast_fields().u64(id_field).unwrap();
         let db = db.clone();
-        move |doc: DocId| {
+        move |doc, query, agg| {
             let id = id_reader.get(doc);
-            db.lock().unwrap().remove(&id).unwrap()
+            agg.collect(query, db.get(&id).unwrap());
         }
     });
 
