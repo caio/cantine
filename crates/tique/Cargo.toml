@@ -5,11 +5,10 @@ authors = ["Caio Romão <contact@caio.co>"]
 edition = "2018"
 
 [dependencies]
+tantivy = "0.10"
 serde = { version = "1", features = ["derive"] }
 byteorder = "1.3"
 nom = "5"
-
-tantivy = { git = "https://github.com/tantivy-search/tantivy" }
 
 [dev-dependencies]
 zerocopy = "0.2"
