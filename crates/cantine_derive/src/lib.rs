@@ -8,7 +8,6 @@ use syn::{
     PathArguments, Type, Visibility,
 };
 
-// TODO split derives
 #[proc_macro_derive(FilterAndAggregation)]
 pub fn derive_filter_and_agg(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
@@ -151,17 +150,12 @@ fn make_filter_query(input: &DeriveInput) -> TokenStream2 {
         let method = match field_type {
             FieldType::UNSIGNED => quote!(add_u64_field),
             FieldType::SIGNED => quote!(add_i64_field),
-            FieldType::FLOAT => quote!(add_f64_field),
+            // NOTE floats are stored as u64
+            FieldType::FLOAT => quote!(add_u64_field),
         };
 
-        match field_type {
-            // FIXME tantivy 0.11+
-            FieldType::FLOAT => quote_spanned! { field.span()=>
-                #name: builder.#method(#quoted, tantivy::schema::INDEXED)
-            },
-            _ => quote_spanned! { field.span()=>
-                #name: builder.#method(#quoted, tantivy::schema::INDEXED | tantivy::schema::FAST)
-            },
+        quote_spanned! { field.span()=>
+            #name: builder.#method(#quoted, tantivy::schema::INDEXED | tantivy::schema::FAST)
         }
     });
 
@@ -234,8 +228,14 @@ fn make_filter_query(input: &DeriveInput) -> TokenStream2 {
         let field_type = get_field_type(&ty);
 
         let convert_code = if is_largest {
-            quote_spanned! { field.span()=>
-                let value = value;
+            match field_type {
+                // NOTE floats are stored as u64
+                FieldType::FLOAT => quote_spanned! { field.span()=>
+                    let value = value.to_bits();
+                },
+                _ => quote_spanned! { field.span()=>
+                    let value = value;
+                },
             }
         } else {
             match field_type {
@@ -246,7 +246,7 @@ fn make_filter_query(input: &DeriveInput) -> TokenStream2 {
                     let value = i64::from(value);
                 },
                 FieldType::FLOAT => quote_spanned! { field.span()=>
-                    let value = f64::from(value);
+                    let value = f64::from(value).to_bits();
                 },
             }
         };
@@ -254,7 +254,8 @@ fn make_filter_query(input: &DeriveInput) -> TokenStream2 {
         let add_code = match field_type {
             FieldType::UNSIGNED => quote!(doc.add_u64(self.#name, value);),
             FieldType::SIGNED => quote!(doc.add_i64(self.#name, value);),
-            FieldType::FLOAT => quote!(doc.add_f64(self.#name, value);),
+            // NOTE floats are stored as u64
+            FieldType::FLOAT => quote!(doc.add_u64(self.#name, value);),
         };
 
         if is_optional {
@@ -285,7 +286,6 @@ fn make_filter_query(input: &DeriveInput) -> TokenStream2 {
         }
 
         impl std::convert::TryFrom<&tantivy::schema::Schema> for #index_name {
-            // TODO better errors
             type Error = tantivy::TantivyError;
 
             fn try_from(schema: &tantivy::schema::Schema) -> std::result::Result<Self, Self::Error> {
