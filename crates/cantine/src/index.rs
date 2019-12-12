@@ -16,7 +16,8 @@ use crate::model::{
 use tique::{
     queryparser::QueryParser,
     top_collector::{
-        ordered_by_f64_fast_field, ordered_by_u64_fast_field, ConditionalTopCollector, SearchMarker,
+        ordered_by_f64_from_u64_fast_field, ordered_by_u64_fast_field, ConditionalTopCollector,
+        SearchMarker,
     },
 };
 
@@ -217,8 +218,11 @@ impl Cantine {
         macro_rules! collect_float {
             ($field:ident) => {{
                 let condition = condition_from_score!(after.score_f64());
-                let top_collector =
-                    ordered_by_f64_fast_field(self.fields.features.$field, limit, condition);
+                let top_collector = ordered_by_f64_from_u64_fast_field(
+                    self.fields.features.$field,
+                    limit,
+                    condition,
+                );
 
                 let result = searcher.search(interpreted_query, &top_collector)?;
                 let items = self.addresses_to_ids(&searcher, &result.items)?;
