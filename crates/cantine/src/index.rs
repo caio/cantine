@@ -5,7 +5,7 @@ use tantivy::{
     self,
     query::{AllQuery, BooleanQuery, Occur, Query},
     schema::{Field, Schema, SchemaBuilder, Value, FAST, STORED, TEXT},
-    DocId, Document, Index, Result, Searcher, SegmentReader, TantivyError,
+    Document, Index, Result, Searcher, SegmentReader, TantivyError,
 };
 
 use crate::model::{
@@ -284,9 +284,10 @@ impl Cantine {
                 .bytes(features_field)
                 .expect("bytes field is indexed");
 
-            move |doc: DocId| {
+            move |doc, query, agg| {
                 let buf = features_reader.get_bytes(doc);
-                bincode::deserialize(buf).unwrap()
+                let features = bincode::deserialize(buf).unwrap();
+                agg.collect(query, &features);
             }
         });
 
