@@ -8,5 +8,7 @@ pub use conditional_collector::{
     ConditionalTopSegmentCollector, SearchMarker,
 };
 pub use custom_score::CustomScoreTopCollector;
-pub use field::{ordered_by_f64_fast_field, ordered_by_i64_fast_field, ordered_by_u64_fast_field};
+pub use field::{
+    ordered_by_f64_from_u64_fast_field, ordered_by_i64_fast_field, ordered_by_u64_fast_field,
+};
 pub use topk::{Scored, TopK};
