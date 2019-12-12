@@ -154,8 +154,14 @@ fn make_filter_query(input: &DeriveInput) -> TokenStream2 {
             FieldType::FLOAT => quote!(add_f64_field),
         };
 
-        quote_spanned! { field.span()=>
-            #name: builder.#method(#quoted, tantivy::schema::INDEXED | tantivy::schema::FAST)
+        match field_type {
+            // FIXME tantivy 0.11+
+            FieldType::FLOAT => quote_spanned! { field.span()=>
+                #name: builder.#method(#quoted, tantivy::schema::INDEXED)
+            },
+            _ => quote_spanned! { field.span()=>
+                #name: builder.#method(#quoted, tantivy::schema::INDEXED | tantivy::schema::FAST)
+            },
         }
     });
 
@@ -279,6 +285,7 @@ fn make_filter_query(input: &DeriveInput) -> TokenStream2 {
         }
 
         impl std::convert::TryFrom<&tantivy::schema::Schema> for #index_name {
+            // TODO better errors
             type Error = tantivy::TantivyError;
 
             fn try_from(schema: &tantivy::schema::Schema) -> std::result::Result<Self, Self::Error> {
