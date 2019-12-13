@@ -5,3 +5,5 @@ perf.data*
 tags
 /target
 .vscode
+# criterion writes the report here
+crates/cantine/target
