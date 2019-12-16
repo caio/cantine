@@ -149,8 +149,7 @@ fn make_filter_query(input: &DeriveInput) -> TokenStream2 {
         let method = match field_type {
             FieldType::UNSIGNED => quote!(add_u64_field),
             FieldType::SIGNED => quote!(add_i64_field),
-            // NOTE floats are stored as u64
-            FieldType::FLOAT => quote!(add_u64_field),
+            FieldType::FLOAT => quote!(add_f64_field),
         };
 
         quote_spanned! { field.span()=>
@@ -227,14 +226,8 @@ fn make_filter_query(input: &DeriveInput) -> TokenStream2 {
         let field_type = get_field_type(&ty);
 
         let convert_code = if is_largest {
-            match field_type {
-                // NOTE floats are stored as u64
-                FieldType::FLOAT => quote_spanned! { field.span()=>
-                    let value = value.to_bits();
-                },
-                _ => quote_spanned! { field.span()=>
-                    let value = value;
-                },
+            quote_spanned! { field.span()=>
+                let value = value;
             }
         } else {
             match field_type {
@@ -245,7 +238,7 @@ fn make_filter_query(input: &DeriveInput) -> TokenStream2 {
                     let value = i64::from(value);
                 },
                 FieldType::FLOAT => quote_spanned! { field.span()=>
-                    let value = f64::from(value).to_bits();
+                    let value = f64::from(value);
                 },
             }
         };
@@ -253,8 +246,7 @@ fn make_filter_query(input: &DeriveInput) -> TokenStream2 {
         let add_code = match field_type {
             FieldType::UNSIGNED => quote!(doc.add_u64(self.#name, value);),
             FieldType::SIGNED => quote!(doc.add_i64(self.#name, value);),
-            // NOTE floats are stored as u64
-            FieldType::FLOAT => quote!(doc.add_u64(self.#name, value);),
+            FieldType::FLOAT => quote!(doc.add_f64(self.#name, value);),
         };
 
         if is_optional {

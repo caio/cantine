@@ -199,14 +199,10 @@ fn add_to_doc_sets_fields_properly() {
 
     // Set values are filled properly
     assert_eq!(Some(&Value::U64(10)), doc.get_first(fields.a));
+    assert_eq!(Some(&Value::F64(0.0)), doc.get_first(fields.c));
+    assert_eq!(Some(&Value::F64(0.42)), doc.get_first(fields.d));
     // Unsed optional values aren't added
     assert_eq!(None, doc.get_first(fields.b));
-    // Float values are stored as U64
-    assert_eq!(Some(&Value::U64(0.0f64.to_bits())), doc.get_first(fields.c));
-    assert_eq!(
-        Some(&Value::U64(0.42f64.to_bits())),
-        doc.get_first(fields.d)
-    );
 }
 
 #[test]
