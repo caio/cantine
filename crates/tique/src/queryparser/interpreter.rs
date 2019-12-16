@@ -10,12 +10,12 @@ use tantivy::{
 
 pub struct QueryParser {
     field: Field,
-    tokenizer: Box<dyn BoxedTokenizer>,
+    tokenizer: BoxedTokenizer,
     occur: Occur,
 }
 
 impl QueryParser {
-    pub fn new(field: Field, tokenizer: Box<dyn BoxedTokenizer>, match_all: bool) -> QueryParser {
+    pub fn new(field: Field, tokenizer: BoxedTokenizer, match_all: bool) -> QueryParser {
         QueryParser {
             field,
             tokenizer,
@@ -120,7 +120,7 @@ mod tests {
 
     fn test_parser() -> QueryParser {
         QueryParser::new(
-            Field(0),
+            Field::from_field_id(0),
             TokenizerManager::default().get("en_stem").unwrap(),
             true,
         )
@@ -182,7 +182,7 @@ mod tests {
 
     fn check_match_all(match_all: bool, wanted: Occur) -> Result<()> {
         let parser = QueryParser::new(
-            Field(0),
+            Field::from_field_id(0),
             TokenizerManager::default().get("en_stem").unwrap(),
             match_all,
         );
