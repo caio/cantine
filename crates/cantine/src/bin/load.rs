@@ -1,6 +1,6 @@
 use std::{
     io::{self, BufRead, Result},
-    num::{NonZeroU64, NonZeroUsize},
+    num::NonZeroUsize,
     path::Path,
     result::Result as StdResult,
     sync::{mpsc::channel, Arc, RwLock},
@@ -23,17 +23,14 @@ use cantine::model::Recipe;
 #[structopt(name = "load")]
 pub struct LoadOptions {
     /// Size for tantivy's writer buffer in MBs
-    #[structopt(short, long, default_value = "400")]
+    #[structopt(short, long, default_value = "1000")]
     buffer_size: NonZeroUsize,
     /// How many recipes to ingest before comitting
-    #[structopt(short, long, default_value = "100000")]
+    #[structopt(short, long, default_value = "300000")]
     commit_every: NonZeroUsize,
     /// Number of worker threads to start
     #[structopt(short, long, default_value = "4")]
     num_producers: NonZeroUsize,
-    /// Size in MBs to pre-allocate the database
-    #[structopt(short, long, default_value = "1000")]
-    database_size: NonZeroU64,
     /// Path to a non-existing directory
     #[structopt(validator = does_not_exist)]
     output_dir: String,
