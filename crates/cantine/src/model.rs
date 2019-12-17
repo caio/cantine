@@ -148,47 +148,16 @@ pub struct SearchResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agg: Option<FeaturesAggregationResult>,
 
-    // XXX Maybe wrap the cursor so that we translate uuid<->id
+    // XXX is next a better name here?
     #[serde(skip_serializing_if = "Option::is_none")]
     pub after: Option<SearchCursor>,
 }
 
-// FIXME Saner serialization
 #[derive(Serialize, Deserialize, Debug, Default)]
-pub struct SearchCursor(u64, RecipeId);
+pub struct SearchCursor(pub u64, pub uuid::Bytes);
 
 impl SearchCursor {
-    pub const START: Self = Self(0, 0);
-
-    pub fn new(score: u64, recipe_id: RecipeId) -> Self {
-        Self(score, recipe_id)
-    }
-
-    pub fn from_f32(score: f32, recipe_id: RecipeId) -> Self {
-        Self(score.to_bits() as u64, recipe_id)
-    }
-
-    pub fn from_f64(score: f64, recipe_id: RecipeId) -> Self {
-        Self(score.to_bits(), recipe_id)
-    }
-
-    pub fn is_start(&self) -> bool {
-        self.0 == 0 && self.1 == 0
-    }
-
-    pub fn recipe_id(&self) -> RecipeId {
-        self.1
-    }
-
-    pub fn score(&self) -> u64 {
-        self.0
-    }
-
-    pub fn score_f32(&self) -> f32 {
-        f32::from_bits(self.0 as u32)
-    }
-
-    pub fn score_f64(&self) -> f64 {
-        f64::from_bits(self.0)
+    pub fn new(score_bits: u64, uuid: &Uuid) -> Self {
+        Self(score_bits, *uuid.as_bytes())
     }
 }

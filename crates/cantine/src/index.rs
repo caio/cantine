@@ -1,6 +1,7 @@
 use std::{cmp::Ordering, convert::TryFrom, path::Path};
 
 use bincode;
+use serde::{Deserialize, Serialize};
 use tantivy::{
     self,
     query::{AllQuery, BooleanQuery, Occur, Query},
@@ -10,7 +11,7 @@ use tantivy::{
 
 use crate::model::{
     FeaturesAggregationQuery, FeaturesAggregationResult, FeaturesCollector, FeaturesFilterFields,
-    Recipe, RecipeId, SearchCursor, SearchQuery, Sort,
+    Recipe, RecipeId, SearchQuery, Sort,
 };
 
 use tique::{
@@ -102,7 +103,7 @@ pub struct Cantine {
 pub type CantineSearchResult = (
     usize,
     Vec<RecipeId>,
-    Option<SearchCursor>,
+    Option<After>,
     Option<FeaturesAggregationResult>,
 );
 
@@ -161,8 +162,8 @@ impl Cantine {
         interpreted_query: &dyn Query,
         limit: usize,
         sort: Sort,
-        after: SearchCursor,
-    ) -> Result<(usize, Vec<RecipeId>, Option<SearchCursor>)> {
+        after: After,
+    ) -> Result<(usize, Vec<RecipeId>, Option<After>)> {
         macro_rules! condition_from_score {
             ($score:expr) => {{
                 let after_score = $score;
@@ -205,7 +206,7 @@ impl Cantine {
                 let cursor = if result.visited.saturating_sub(num_items) > 0 {
                     let last_score = result.items[num_items - 1].score;
                     let last_id = items[num_items - 1];
-                    Some(SearchCursor::new(last_score, last_id))
+                    Some(After::new(last_score, last_id))
                 } else {
                     None
                 };
@@ -227,7 +228,7 @@ impl Cantine {
                 let cursor = if result.visited.saturating_sub(num_items) > 0 {
                     let last_score = result.items[num_items - 1].score;
                     let last_id = items[num_items - 1];
-                    Some(SearchCursor::from_f64(last_score, last_id))
+                    Some(After::from_f64(last_score, last_id))
                 } else {
                     None
                 };
@@ -248,7 +249,7 @@ impl Cantine {
                 let cursor = if result.visited.saturating_sub(num_items) > 0 {
                     let last_score = result.items[num_items - 1].score;
                     let last_id = items[num_items - 1];
-                    Some(SearchCursor::from_f32(last_score, last_id))
+                    Some(After::from_f32(last_score, last_id))
                 } else {
                     None
                 };
@@ -306,5 +307,44 @@ impl TryFrom<&Index> for Cantine {
             fields,
             query_parser,
         })
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Default)]
+pub struct After(u64, RecipeId);
+
+impl After {
+    pub const START: Self = Self(0, 0);
+
+    pub fn new(score: u64, recipe_id: RecipeId) -> Self {
+        Self(score, recipe_id)
+    }
+
+    pub fn from_f32(score: f32, recipe_id: RecipeId) -> Self {
+        Self(score.to_bits() as u64, recipe_id)
+    }
+
+    pub fn from_f64(score: f64, recipe_id: RecipeId) -> Self {
+        Self(score.to_bits(), recipe_id)
+    }
+
+    pub fn is_start(&self) -> bool {
+        self.0 == 0 && self.1 == 0
+    }
+
+    pub fn recipe_id(&self) -> RecipeId {
+        self.1
+    }
+
+    pub fn score(&self) -> u64 {
+        self.0
+    }
+
+    pub fn score_f32(&self) -> f32 {
+        f32::from_bits(self.0 as u32)
+    }
+
+    pub fn score_f64(&self) -> f64 {
+        f64::from_bits(self.0)
     }
 }

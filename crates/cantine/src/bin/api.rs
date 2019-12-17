@@ -12,10 +12,10 @@ use uuid::Uuid;
 
 use cantine::{
     database::{BincodeConfig, DatabaseReader},
-    index::Cantine,
+    index::{After, Cantine},
     model::{
-        FeaturesAggregationResult, Recipe, RecipeId, RecipeInfo, SearchCursor, SearchQuery,
-        SearchResult, Sort,
+        FeaturesAggregationResult, Recipe, RecipeCard, RecipeId, RecipeInfo, SearchCursor,
+        SearchQuery, SearchResult, Sort,
     },
 };
 
@@ -56,6 +56,17 @@ pub async fn search(
     search_state: web::Data<SearchState>,
     database: web::Data<RecipeDatabase<'_>>,
 ) -> Result<HttpResponse> {
+    let after = match &search_query.after {
+        None => After::START,
+        Some(cursor) => {
+            if let Some(recipe_id) = database.id_for_uuid(&Uuid::from_bytes(cursor.1)) {
+                After::new(cursor.0, *recipe_id)
+            } else {
+                return Ok(HttpResponse::new(StatusCode::BAD_REQUEST));
+            }
+        }
+    };
+
     let (total_found, recipe_ids, after, agg) =
         web::block(move || -> TantivyResult<ExecuteResult> {
             let searcher = search_state.reader.searcher();
@@ -63,24 +74,31 @@ pub async fn search(
                 &searcher,
                 &search_state.cantine,
                 search_query.0,
+                after,
                 search_state.threshold,
             )?)
         })
         .await?;
 
-    let mut items = Vec::with_capacity(recipe_ids.len());
+    let num_results = recipe_ids.len();
+    let mut items = Vec::with_capacity(num_results);
     for recipe_id in recipe_ids {
         let recipe: Recipe = database
             .find_by_id(recipe_id)
             .expect("db operational")
             .expect("item in the index always present in the db");
-        items.push(recipe.into());
+        items.push(RecipeCard::from(recipe));
     }
+
+    let next = after.map(|cursor| {
+        let last = &items[num_results - 1];
+        SearchCursor::new(cursor.score(), &last.uuid)
+    });
 
     Ok(HttpResponse::Ok().json(SearchResult {
         total_found,
         items,
-        after,
+        after: next,
         agg,
     }))
 }
@@ -88,7 +106,7 @@ pub async fn search(
 type ExecuteResult = (
     usize,
     Vec<RecipeId>,
-    Option<SearchCursor>,
+    Option<After>,
     Option<FeaturesAggregationResult>,
 );
 
@@ -96,6 +114,7 @@ fn execute_search(
     searcher: &Searcher,
     cantine: &Cantine,
     query: SearchQuery,
+    after: After,
     agg_threshold: Option<usize>,
 ) -> TantivyResult<ExecuteResult> {
     let interpreted_query = cantine.interpret_query(&query)?;
@@ -106,7 +125,7 @@ fn execute_search(
         &interpreted_query,
         limit,
         query.sort.unwrap_or(Sort::Relevance),
-        query.after.unwrap_or(SearchCursor::START),
+        after,
     )?;
 
     let agg = if let Some(agg_query) = query.agg {

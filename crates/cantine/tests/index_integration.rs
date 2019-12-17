@@ -8,8 +8,8 @@ use std::{
 use tantivy::{query::AllQuery, schema::SchemaBuilder, Index, Result};
 
 use cantine::{
-    index::{Cantine, IndexFields},
-    model::{Recipe, RecipeId, SearchCursor, Sort},
+    index::{After, Cantine, IndexFields},
+    model::{Recipe, RecipeId, Sort},
 };
 
 struct GlobalData {
@@ -60,7 +60,7 @@ fn pagination_works() -> Result<()> {
     let reader = GLOBAL.index.reader()?;
     let searcher = reader.searcher();
 
-    let mut after = SearchCursor::START;
+    let mut after = After::START;
     let mut seen = HashSet::with_capacity(INDEX_SIZE);
 
     loop {
@@ -95,7 +95,7 @@ fn sort_works() -> Result<()> {
         &AllQuery,
         INDEX_SIZE,
         Sort::NumIngredients,
-        SearchCursor::START,
+        After::START,
     )?;
 
     let mut last_num_ingredients = std::u8::MAX;
@@ -119,7 +119,7 @@ fn float_field_sorting() -> Result<()> {
         &AllQuery,
         INDEX_SIZE,
         Sort::ProteinContent,
-        SearchCursor::START,
+        After::START,
     )?;
 
     let mut last_protein = std::f32::MAX;
