@@ -5,15 +5,17 @@ use std::{
     sync::Arc,
 };
 
-use actix_web::{web, App, Error, HttpResponse, HttpServer, Result};
+use actix_web::{http::StatusCode, web, App, HttpResponse, HttpServer, Result};
 use structopt::StructOpt;
 use tantivy::{IndexReader, Result as TantivyResult, Searcher};
+use uuid::Uuid;
 
 use cantine::{
     database::{BincodeConfig, DatabaseReader},
     index::Cantine,
     model::{
-        FeaturesAggregationResult, Recipe, RecipeId, SearchCursor, SearchQuery, SearchResult, Sort,
+        FeaturesAggregationResult, Recipe, RecipeId, RecipeInfo, SearchCursor, SearchQuery,
+        SearchResult, Sort,
     },
 };
 
@@ -36,24 +38,35 @@ fn is_dir(dir_path: String) -> StdResult<(), String> {
     }
 }
 
+type RecipeDatabase<'a> = Arc<DatabaseReader<'a, Recipe, BincodeConfig<Recipe>>>;
+
+pub async fn recipe(
+    database: web::Data<RecipeDatabase<'_>>,
+    uuid: web::Path<Uuid>,
+) -> Result<HttpResponse> {
+    if let Some(recipe) = database.find_by_uuid(&uuid).expect("db operational") {
+        Ok(HttpResponse::Ok().json(RecipeInfo::from(recipe)))
+    } else {
+        Ok(HttpResponse::new(StatusCode::NOT_FOUND))
+    }
+}
+
 pub async fn search(
     search_query: web::Json<SearchQuery>,
     search_state: web::Data<SearchState>,
-    database: web::Data<Arc<DatabaseReader<'_, Recipe, BincodeConfig<Recipe>>>>,
-) -> Result<HttpResponse, Error> {
+    database: web::Data<RecipeDatabase<'_>>,
+) -> Result<HttpResponse> {
     let (total_found, recipe_ids, after, agg) =
-        web::block(move || -> StdResult<ExecuteResult, &'static str> {
+        web::block(move || -> TantivyResult<ExecuteResult> {
             let searcher = search_state.reader.searcher();
             Ok(execute_search(
                 &searcher,
                 &search_state.cantine,
                 search_query.0,
                 search_state.threshold,
-            )
-            .unwrap())
+            )?)
         })
-        .await
-        .unwrap();
+        .await?;
 
     let mut items = Vec::with_capacity(recipe_ids.len());
     for recipe_id in recipe_ids {
@@ -127,8 +140,7 @@ async fn main() -> IoResult<()> {
     let cantine = Arc::new(cantine);
     let threshold = options.agg_threshold;
 
-    let database =
-        Arc::new(DatabaseReader::open(&db_path, BincodeConfig::<Recipe>::new()).unwrap());
+    let database: RecipeDatabase = Arc::new(DatabaseReader::open(&db_path, BincodeConfig::new())?);
 
     HttpServer::new(move || {
         let search_state = SearchState {
@@ -141,7 +153,8 @@ async fn main() -> IoResult<()> {
             .register_data(web::Data::new(database.clone()))
             .register_data(web::Data::new(search_state))
             .data(web::JsonConfig::default().limit(4096))
-            .service(web::resource("/").route(web::post().to(search)))
+            .service(web::resource("/recipe/{uuid}").route(web::get().to(recipe)))
+            .service(web::resource("/search").route(web::post().to(search)))
     })
     .bind("127.0.0.1:8080")?
     .start()
