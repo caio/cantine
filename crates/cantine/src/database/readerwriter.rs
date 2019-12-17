@@ -24,7 +24,7 @@ pub trait DatabaseRecord {
 
 pub struct DatabaseReader<'a, T, TDecoder: Decoder<'a, Item = T>> {
     data: TypedMmap<'a, T, TDecoder>,
-    uuid_index: HashMap<Uuid, usize>,
+    uuid_index: HashMap<Uuid, u64>,
     id_index: HashMap<u64, usize>,
 }
 
@@ -38,8 +38,9 @@ impl<'a, T, TDecoder: Decoder<'a, Item = T>> DatabaseReader<'a, T, TDecoder> {
 
         log.for_each_entry(|entry: &LogEntry| {
             let offset = entry.offset.get() as usize;
-            uuid_index.insert(Uuid::from_bytes(entry.uuid), offset);
-            id_index.insert(entry.id.get(), offset);
+            let id = entry.id.get();
+            id_index.insert(id, offset);
+            uuid_index.insert(Uuid::from_bytes(entry.uuid), id);
         })?;
 
         Ok(Self {
@@ -58,11 +59,15 @@ impl<'a, T, TDecoder: Decoder<'a, Item = T>> DatabaseReader<'a, T, TDecoder> {
     }
 
     pub fn find_by_uuid(&self, uuid: &Uuid) -> Result<Option<TDecoder::Item>> {
-        if let Some(&offset) = self.uuid_index.get(&uuid) {
-            Ok(Some(self.data.get(offset)?))
+        if let Some(&id) = self.uuid_index.get(uuid) {
+            self.find_by_id(id)
         } else {
             Ok(None)
         }
+    }
+
+    pub fn id_for_uuid(&self, uuid: &Uuid) -> Option<&u64> {
+        self.uuid_index.get(uuid)
     }
 }
 
