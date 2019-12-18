@@ -9,9 +9,9 @@ edition = "2018"
 [dependencies]
 cantine_derive = { path = "../cantine_derive" }
 tique = { path = "../tique" }
-actix-rt = "1.0.0-alpha.3"
-actix-service = "1.0.0-alpha.4"
-actix-web = "2.0.0-alpha.4"
+actix-rt = "1.0"
+actix-service = "1.0"
+actix-web = "2.0.0-alpha.6"
 bincode = "1"
 byteorder = "1.3"
 crossbeam-channel = "0.4"
