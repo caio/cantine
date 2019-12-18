@@ -3,11 +3,13 @@ use std::{
     path::{Path, PathBuf},
     result::Result as StdResult,
     sync::Arc,
+    time::Duration,
 };
 
 use actix_web::{http::StatusCode, web, App, HttpResponse, HttpServer, Result};
 use structopt::StructOpt;
 use tantivy::{IndexReader, Result as TantivyResult, Searcher};
+use tokio::time::timeout;
 use uuid::Uuid;
 
 use cantine::{
@@ -67,18 +69,24 @@ pub async fn search(
         }
     };
 
-    let (total_found, recipe_ids, after, agg) =
-        web::block(move || -> TantivyResult<ExecuteResult> {
-            let searcher = search_state.reader.searcher();
-            Ok(execute_search(
-                &searcher,
-                &search_state.cantine,
-                search_query.0,
-                after,
-                search_state.threshold,
-            )?)
-        })
-        .await?;
+    let search_future = web::block(move || -> TantivyResult<ExecuteResult> {
+        let searcher = search_state.reader.searcher();
+        Ok(execute_search(
+            &searcher,
+            &search_state.cantine,
+            search_query.0,
+            after,
+            search_state.threshold,
+        )?)
+    });
+
+    let (total_found, recipe_ids, after, agg) = {
+        if let Ok(search_future_result) = timeout(Duration::from_secs(3), search_future).await {
+            search_future_result?
+        } else {
+            return Ok(HttpResponse::new(StatusCode::GATEWAY_TIMEOUT));
+        }
+    };
 
     let num_results = recipe_ids.len();
     let mut items = Vec::with_capacity(num_results);
