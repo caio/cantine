@@ -6,11 +6,13 @@ use std::{
     time::Duration,
 };
 
-use actix_web::{http::StatusCode, web, App, HttpResponse, HttpServer, Result};
+use actix_web::{http::StatusCode, middleware, web, App, HttpResponse, HttpServer, Result};
 use structopt::StructOpt;
 use tantivy::{IndexReader, Result as TantivyResult, Searcher};
 use tokio::time::timeout;
 use uuid::Uuid;
+
+use env_logger;
 
 use cantine::{
     database::{BincodeConfig, DatabaseReader},
@@ -157,6 +159,9 @@ pub struct SearchState {
 
 #[actix_rt::main]
 async fn main() -> IoResult<()> {
+    std::env::set_var("RUST_LOG", "actix_server=info,actix_web=info");
+    env_logger::init();
+
     let options = ApiOptions::from_args();
 
     let cantine_path = options.base_path.join("tantivy");
@@ -177,6 +182,7 @@ async fn main() -> IoResult<()> {
         };
 
         App::new()
+            .wrap(middleware::Logger::default())
             .register_data(web::Data::new(database.clone()))
             .register_data(web::Data::new(search_state))
             .data(web::JsonConfig::default().limit(4096))
