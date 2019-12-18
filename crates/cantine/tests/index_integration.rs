@@ -131,7 +131,7 @@ fn float_field_sorting() -> Result<()> {
         }
     }
 
-    assert_ne!(std::f32::MAX, last_protein);
+    assert!(last_protein < std::f32::MAX);
 
     Ok(())
 }
