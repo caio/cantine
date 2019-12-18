@@ -1,4 +1,10 @@
-use serde::{Deserialize, Serialize};
+use std::{convert::TryInto, mem::size_of};
+
+use base64::{self, URL_SAFE_NO_PAD};
+use serde::{
+    de::{Deserializer, Error, Visitor},
+    Deserialize, Serialize, Serializer,
+};
 use uuid::{self, Uuid};
 
 use crate::database::DatabaseRecord;
@@ -152,11 +158,99 @@ pub struct SearchResult {
     pub next: Option<SearchCursor>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct SearchCursor(pub u64, pub uuid::Bytes);
 
 impl SearchCursor {
+    pub const SIZE: usize = size_of::<SearchCursor>();
+
     pub fn new(score_bits: u64, uuid: &Uuid) -> Self {
         Self(score_bits, *uuid.as_bytes())
+    }
+
+    pub fn from_bytes(src: &[u8; Self::SIZE]) -> Self {
+        let score_bits =
+            u64::from_be_bytes(src[0..8].try_into().expect("Slice has correct length"));
+        Self(
+            score_bits,
+            src[8..].try_into().expect("Slice has correct length"),
+        )
+    }
+
+    pub fn write_bytes(&self, buf: &mut [u8; Self::SIZE]) {
+        buf[0..8].copy_from_slice(&self.0.to_be_bytes());
+        buf[8..].copy_from_slice(&self.1[..]);
+    }
+}
+
+// XXX Only valid because I know the result is multiple of 4
+const ENCODED_SEARCH_CURSOR_LEN: usize = SearchCursor::SIZE * 8 / 6;
+
+impl Serialize for SearchCursor {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut buf = [0u8; SearchCursor::SIZE];
+
+        self.write_bytes(&mut buf);
+
+        let mut encode_buf = [0u8; ENCODED_SEARCH_CURSOR_LEN];
+        base64::encode_config_slice(&buf, URL_SAFE_NO_PAD, &mut encode_buf[..]);
+
+        let encoded = std::str::from_utf8(&encode_buf[..]).unwrap();
+        serializer.serialize_str(encoded)
+    }
+}
+
+struct SearchCursorVisitor;
+
+impl<'de> Visitor<'de> for SearchCursorVisitor {
+    type Value = SearchCursor;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("Base64-encoded SearchCursor")
+    }
+
+    fn visit_bytes<E: Error>(self, input: &[u8]) -> Result<Self::Value, E> {
+        if input.len() != ENCODED_SEARCH_CURSOR_LEN {
+            return Err(Error::invalid_length(ENCODED_SEARCH_CURSOR_LEN, &self));
+        }
+
+        let mut decode_buf = [0u8; SearchCursor::SIZE];
+        base64::decode_config_slice(input, URL_SAFE_NO_PAD, &mut decode_buf[..])
+            .map_err(|_| Error::custom("base64_decode failed"))?;
+
+        Ok(SearchCursor::from_bytes(
+            &decode_buf.try_into().expect("Slice has correct length"),
+        ))
+    }
+}
+
+impl<'de> Deserialize<'de> for SearchCursor {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_bytes(SearchCursorVisitor)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use serde_json;
+
+    #[test]
+    fn search_cursor_json_round_trip() {
+        for i in 0..100 {
+            let cursor = SearchCursor::new(i, &Uuid::new_v4());
+
+            let serialized = serde_json::to_string(&cursor).unwrap();
+            let deserialized = serde_json::from_str(&serialized).unwrap();
+
+            assert_eq!(cursor, deserialized);
+        }
     }
 }
