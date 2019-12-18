@@ -98,7 +98,7 @@ pub async fn search(
     Ok(HttpResponse::Ok().json(SearchResult {
         total_found,
         items,
-        after: next,
+        next,
         agg,
     }))
 }

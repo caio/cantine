@@ -148,9 +148,8 @@ pub struct SearchResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agg: Option<FeaturesAggregationResult>,
 
-    // XXX is next a better name here?
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub after: Option<SearchCursor>,
+    pub next: Option<SearchCursor>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Default)]
