@@ -32,6 +32,9 @@ pub struct ApiOptions {
     /// Only aggregate when found less recipes than given threshold
     #[structopt(short, long)]
     agg_threshold: Option<usize>,
+    /// Search execution timeout in ms
+    #[structopt(short, long, default_value = "2000")]
+    timeout: u64,
 }
 
 fn is_dir(dir_path: String) -> StdResult<(), String> {
@@ -71,6 +74,8 @@ pub async fn search(
         }
     };
 
+    let search_timeout = search_state.timeout;
+
     let search_future = web::block(move || -> TantivyResult<ExecuteResult> {
         let searcher = search_state.reader.searcher();
         Ok(execute_search(
@@ -83,7 +88,9 @@ pub async fn search(
     });
 
     let (total_found, recipe_ids, after, agg) = {
-        if let Ok(search_future_result) = timeout(Duration::from_secs(3), search_future).await {
+        if let Ok(search_future_result) =
+            timeout(Duration::from_millis(search_timeout), search_future).await
+        {
             search_future_result?
         } else {
             return Ok(HttpResponse::new(StatusCode::GATEWAY_TIMEOUT));
@@ -155,6 +162,7 @@ pub struct SearchState {
     cantine: Arc<Cantine>,
     reader: IndexReader,
     threshold: Option<usize>,
+    timeout: u64,
 }
 
 #[actix_rt::main]
@@ -171,6 +179,7 @@ async fn main() -> IoResult<()> {
     let reader = index.reader().unwrap();
     let cantine = Arc::new(cantine);
     let threshold = options.agg_threshold;
+    let timeout = options.timeout;
 
     let database: RecipeDatabase = Arc::new(DatabaseReader::open(&db_path, BincodeConfig::new())?);
 
@@ -179,6 +188,7 @@ async fn main() -> IoResult<()> {
             cantine: cantine.clone(),
             reader: reader.clone(),
             threshold,
+            timeout,
         };
 
         App::new()
