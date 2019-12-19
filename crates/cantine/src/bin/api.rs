@@ -132,7 +132,7 @@ fn execute_search(
     cantine: &Cantine,
     query: SearchQuery,
     after: After,
-    agg_threshold: Option<usize>,
+    agg_threshold: usize,
 ) -> TantivyResult<ExecuteResult> {
     let interpreted_query = cantine.interpret_query(&query)?;
     let limit = query.num_items.unwrap_or(10) as usize;
@@ -145,12 +145,11 @@ fn execute_search(
         after,
     )?;
 
-    let agg = if let Some(agg_query) = query.agg {
-        if total_found <= agg_threshold.unwrap_or(std::usize::MAX) {
-            Some(cantine.aggregate_features(&searcher, &interpreted_query, agg_query)?)
-        } else {
-            None
-        }
+    let agg = if total_found <= agg_threshold {
+        query
+            .agg
+            .map(|agg_query| cantine.aggregate_features(&searcher, &interpreted_query, agg_query))
+            .transpose()?
     } else {
         None
     };
@@ -161,7 +160,7 @@ fn execute_search(
 pub struct SearchState {
     cantine: Arc<Cantine>,
     reader: IndexReader,
-    threshold: Option<usize>,
+    threshold: usize,
     timeout: u64,
 }
 
@@ -178,7 +177,8 @@ async fn main() -> IoResult<()> {
     let (index, cantine) = Cantine::open(&cantine_path).unwrap();
     let reader = index.reader().unwrap();
     let cantine = Arc::new(cantine);
-    let threshold = options.agg_threshold;
+
+    let threshold = options.agg_threshold.unwrap_or(std::usize::MAX);
     let timeout = options.timeout;
 
     let database: RecipeDatabase = Arc::new(DatabaseReader::open(&db_path, BincodeConfig::new())?);
