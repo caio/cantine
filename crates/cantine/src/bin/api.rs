@@ -193,8 +193,8 @@ async fn main() -> IoResult<()> {
 
         App::new()
             .wrap(middleware::Logger::default())
-            .register_data(web::Data::new(database.clone()))
-            .register_data(web::Data::new(search_state))
+            .app_data(web::Data::new(database.clone()))
+            .app_data(web::Data::new(search_state))
             .data(web::JsonConfig::default().limit(4096))
             .service(web::resource("/recipe/{uuid}").route(web::get().to(recipe)))
             .service(web::resource("/search").route(web::post().to(search)))

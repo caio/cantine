@@ -11,7 +11,7 @@ cantine_derive = { path = "../cantine_derive" }
 tique = { path = "../tique" }
 actix-rt = "1.0"
 actix-service = "1.0"
-actix-web = "2.0.0-alpha.6"
+actix-web = "2.0.0-rc"
 base64 = "0.11"
 bincode = "1"
 byteorder = "1.3"
