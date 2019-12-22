@@ -15,7 +15,7 @@ use uuid::Uuid;
 use env_logger;
 
 use cantine::{
-    database::{BincodeConfig, DatabaseReader},
+    database::DatabaseReader,
     index::{After, Cantine},
     model::{
         FeaturesAggregationResult, Recipe, RecipeCard, RecipeId, RecipeInfo, SearchCursor,
@@ -45,13 +45,17 @@ fn is_dir(dir_path: String) -> StdResult<(), String> {
     }
 }
 
-type RecipeDatabase<'a> = Arc<DatabaseReader<'a, Recipe, BincodeConfig<Recipe>>>;
+type RecipeDatabase = Arc<DatabaseReader<Recipe>>;
 
 pub async fn recipe(
-    database: web::Data<RecipeDatabase<'_>>,
+    database: web::Data<RecipeDatabase>,
     uuid: web::Path<Uuid>,
 ) -> Result<HttpResponse> {
-    if let Some(recipe) = database.find_by_uuid(&uuid).expect("db operational") {
+    if let Some(recipe) = database
+        .find_by_uuid(&uuid)
+        .transpose()
+        .expect("db operational")
+    {
         Ok(HttpResponse::Ok().json(RecipeInfo::from(recipe)))
     } else {
         Ok(HttpResponse::new(StatusCode::NOT_FOUND))
@@ -61,7 +65,7 @@ pub async fn recipe(
 pub async fn search(
     search_query: web::Json<SearchQuery>,
     search_state: web::Data<SearchState>,
-    database: web::Data<RecipeDatabase<'_>>,
+    database: web::Data<RecipeDatabase>,
 ) -> Result<HttpResponse> {
     let after = match &search_query.after {
         None => After::START,
@@ -181,7 +185,7 @@ async fn main() -> IoResult<()> {
     let threshold = options.agg_threshold.unwrap_or(std::usize::MAX);
     let timeout = options.timeout;
 
-    let database: RecipeDatabase = Arc::new(DatabaseReader::open(&db_path, BincodeConfig::new())?);
+    let database: RecipeDatabase = Arc::new(DatabaseReader::open(&db_path)?);
 
     HttpServer::new(move || {
         let search_state = SearchState {

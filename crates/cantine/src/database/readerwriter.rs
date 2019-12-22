@@ -8,28 +8,26 @@ use std::{
 
 use byteorder::NativeEndian;
 use memmap::Mmap;
-use serde::Serialize;
+use serde::{de::Deserialize, Serialize};
 use uuid::{self, Uuid};
 use zerocopy::{AsBytes, FromBytes, U64};
 
-use super::{
-    config::{Decoder, Encoder},
-    structuredlog::StructuredLog,
-};
+use super::structuredlog::StructuredLog;
 
 pub trait DatabaseRecord {
     fn get_id(&self) -> u64;
     fn get_uuid(&self) -> uuid::Bytes;
 }
 
-pub struct DatabaseReader<'a, T, TDecoder: Decoder<'a, Item = T>> {
-    data: TypedMmap<'a, T, TDecoder>,
+pub struct DatabaseReader<T> {
     uuid_index: HashMap<Uuid, u64>,
     id_index: HashMap<u64, usize>,
+    data: Mmap,
+    _marker: PhantomData<T>,
 }
 
-impl<'a, T, TDecoder: Decoder<'a, Item = T>> DatabaseReader<'a, T, TDecoder> {
-    pub fn open<P: AsRef<Path>>(base_dir: P, config: TDecoder) -> Result<Self> {
+impl<'a, T: Deserialize<'a>> DatabaseReader<T> {
+    pub fn open<P: AsRef<Path>>(base_dir: P) -> Result<Self> {
         let log = StructuredLog::new(base_dir.as_ref().join(OFFSETS_FILE))?;
         let num_items = log.len()?;
 
@@ -43,26 +41,34 @@ impl<'a, T, TDecoder: Decoder<'a, Item = T>> DatabaseReader<'a, T, TDecoder> {
             uuid_index.insert(Uuid::from_bytes(entry.uuid), id);
         })?;
 
+        let datafile = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(base_dir.as_ref().join(DATA_FILE))?;
+
         Ok(Self {
             id_index,
             uuid_index,
-            data: TypedMmap::with_config(base_dir.as_ref().join(DATA_FILE), config)?,
+            data: unsafe { Mmap::map(&datafile)? },
+            _marker: PhantomData,
         })
     }
 
-    pub fn find_by_id(&self, id: u64) -> Result<Option<TDecoder::Item>> {
+    pub fn find_by_id(&'a self, id: u64) -> Option<Result<T>> {
         if let Some(&offset) = self.id_index.get(&id) {
-            Ok(Some(self.data.get(offset)?))
+            Some(bincode::deserialize(&self.data[offset..]).map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidData, "Failure decoding at offset")
+            }))
         } else {
-            Ok(None)
+            None
         }
     }
 
-    pub fn find_by_uuid(&self, uuid: &Uuid) -> Result<Option<TDecoder::Item>> {
+    pub fn find_by_uuid(&'a self, uuid: &Uuid) -> Option<Result<T>> {
         if let Some(&id) = self.uuid_index.get(uuid) {
             self.find_by_id(id)
         } else {
-            Ok(None)
+            None
         }
     }
 
@@ -89,23 +95,15 @@ where
         })
     }
 
-    pub fn append<'a, TEncoder: Encoder<'a, Item = T>>(
-        &mut self,
-        item: &'a TEncoder::Item,
-    ) -> Result<()> {
-        if let Some(encoded) = TEncoder::to_bytes(item) {
-            let offset = self.writer.seek(SeekFrom::Current(0))?;
-            self.writer.write_all(&encoded)?;
+    pub fn append(&mut self, item: &T) -> Result<()> {
+        let encoded = bincode::serialize(item)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "Failure encoding input"))?;
+        let offset = self.writer.seek(SeekFrom::Current(0))?;
+        self.writer.write_all(&encoded)?;
 
-            let entry = LogEntry::new(item.get_id(), item.get_uuid(), offset);
-            self.log.append(&entry)?;
-            Ok(())
-        } else {
-            Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "Failure encoding input",
-            ))
-        }
+        let entry = LogEntry::new(item.get_id(), item.get_uuid(), offset);
+        self.log.append(&entry)?;
+        Ok(())
     }
 }
 
@@ -130,65 +128,12 @@ impl LogEntry {
     }
 }
 
-struct TypedMmap<'a, T, TDecoder>
-where
-    T: 'a,
-    TDecoder: Decoder<'a, Item = T>,
-{
-    data: Mmap,
-    _file: File,
-    _config: TDecoder,
-    _marker: PhantomData<&'a T>,
-}
-
-impl<'a, T: 'a, TDecoder> TypedMmap<'a, T, TDecoder>
-where
-    TDecoder: Decoder<'a, Item = T>,
-{
-    pub fn with_config<P: AsRef<Path>>(path: P, _config: TDecoder) -> Result<Self> {
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(path.as_ref())?;
-
-        Ok(Self {
-            data: unsafe { Mmap::map(&file)? },
-            _file: file,
-            _config,
-            _marker: PhantomData,
-        })
-    }
-
-    pub fn get(&self, offset: usize) -> Result<TDecoder::Item> {
-        if offset > self.data.len() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "Offset too large",
-            ));
-        }
-
-        let data = self.data[offset..].as_ptr();
-        let len = self.data.len() - offset;
-        if let Some(decoded) =
-            TDecoder::from_bytes(unsafe { std::slice::from_raw_parts(data, len) })
-        {
-            Ok(decoded)
-        } else {
-            Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("Failure decoding bytes at offset {}", offset),
-            ))
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
 
     use super::*;
     use tempfile;
 
-    use crate::database::BincodeConfig;
     use serde::Deserialize;
 
     #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
@@ -218,21 +163,25 @@ mod tests {
         ];
 
         for entry in entries.iter() {
-            db_writer.append::<BincodeConfig<Named>>(entry)?;
+            db_writer.append(entry)?;
         }
 
         // So it flushes
         drop(db_writer);
 
-        let db_reader = DatabaseReader::open(basedir, BincodeConfig::<Named>::new())?;
+        let db_reader = DatabaseReader::open(basedir)?;
 
         for entry in entries.into_iter() {
             let id = entry.get_id();
             let uuid = Uuid::from_bytes(entry.get_uuid());
             let entry = Some(entry);
 
-            assert_eq!(entry, db_reader.find_by_id(id)?);
-            assert_eq!(entry, db_reader.find_by_uuid(&uuid)?);
+            assert_eq!(entry, db_reader.find_by_id(id).transpose().ok().flatten());
+
+            assert_eq!(
+                entry,
+                db_reader.find_by_uuid(&uuid).transpose().ok().flatten()
+            );
         }
 
         Ok(())

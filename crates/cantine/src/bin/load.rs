@@ -14,7 +14,7 @@ use structopt::StructOpt;
 
 use tantivy::{self, directory::MmapDirectory, schema::SchemaBuilder, Index};
 
-use cantine::database::{BincodeConfig, DatabaseWriter};
+use cantine::database::DatabaseWriter;
 use cantine::index::IndexFields;
 use cantine::model::Recipe;
 
@@ -100,7 +100,7 @@ fn load(options: LoadOptions) -> Result<()> {
 
         for recipe in recipe_receiver {
             num_recipes += 1;
-            db.append::<BincodeConfig<Recipe>>(&recipe).unwrap();
+            db.append(&recipe).expect("Write successful");
 
             if num_recipes % options.commit_every.get() == 0 {
                 writer.write().unwrap().commit().unwrap();
