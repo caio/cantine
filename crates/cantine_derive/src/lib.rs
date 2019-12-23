@@ -334,17 +334,19 @@ fn make_agg_result(input: &DeriveInput) -> TokenStream2 {
 
     let fields = get_public_struct_fields(&input).map(|field| {
         let name = &field.ident;
+        let ty = extract_type_if_option(&field.ty).unwrap_or(&field.ty);
+
         quote_spanned! { field.span()=>
             #[serde(skip_serializing_if = "Vec::is_empty")]
-            pub #name: Vec<u32>
+            pub #name: Vec<RangeStats<#ty>>
         }
     });
 
     let merge_code = get_public_struct_fields(&input).map(|field| {
         let name = &field.ident;
         quote_spanned! { field.span()=>
-            for (idx, tally) in self.#name.iter_mut().enumerate() {
-                *tally += other.#name[idx];
+            for (idx, stats) in self.#name.iter_mut().enumerate() {
+                stats.merge(&other.#name[idx]);
             }
         }
     });
@@ -357,7 +359,7 @@ fn make_agg_result(input: &DeriveInput) -> TokenStream2 {
                 if src.#name.is_empty() {
                     Vec::new()
                 } else {
-                    vec![0; src.#name.len()]
+                    src.#name.iter().map(|range| From::from(range)).collect()
                 }
         }
     });
@@ -369,7 +371,7 @@ fn make_agg_result(input: &DeriveInput) -> TokenStream2 {
                 if let Some(feat) = feature.#name {
                     for (idx, range) in query.#name.iter().enumerate() {
                         if range.contains(&feat) {
-                            self.#name[idx] += 1;
+                            self.#name[idx].collect(feat);
                         }
                     }
                 }
@@ -378,7 +380,7 @@ fn make_agg_result(input: &DeriveInput) -> TokenStream2 {
             quote_spanned! { field.span()=>
                 for (idx, range) in query.#name.iter().enumerate() {
                     if range.contains(&feature.#name) {
-                        self.#name[idx] += 1;
+                        self.#name[idx].collect(feature.#name);
                     }
                 }
             }
@@ -386,9 +388,53 @@ fn make_agg_result(input: &DeriveInput) -> TokenStream2 {
     });
 
     quote! {
-        #[derive(serde::Serialize, serde::Deserialize, Default, Debug, Clone)]
+        #[derive(serde::Serialize, Default, Debug, Clone)]
         pub struct #name {
             #(#fields),*
+        }
+
+        // FIXME move outside crate
+        #[derive(serde::Serialize, Debug, Clone)]
+        pub struct RangeStats<T: serde::Serialize> {
+            pub min: T,
+            pub max: T,
+            pub count: u64,
+        }
+
+        impl<T: PartialOrd + Copy + serde::Serialize> RangeStats<T> {
+            pub fn collect(&mut self, value: T) {
+                if self.min > value {
+                    self.min = value;
+                }
+
+                if self.max < value {
+                    self.max = value;
+                }
+
+                self.count += 1;
+            }
+
+            pub fn merge(&mut self, other: &Self) {
+                if self.min > other.min {
+                    self.min = other.min;
+                }
+
+                if self.max < other.max {
+                    self.max = other.max;
+                }
+
+                self.count += other.count;
+            }
+        }
+
+        impl<T: PartialOrd + Copy + serde::Serialize> From<&std::ops::Range<T>> for RangeStats<T> {
+            fn from(src: &std::ops::Range<T>) -> Self {
+                Self {
+                    min: src.start,
+                    max: src.start,
+                    count: 0,
+                }
+            }
         }
 
         impl #name {

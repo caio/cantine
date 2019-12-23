@@ -31,47 +31,20 @@ fn reads_inner_type_of_option() {
 
 #[test]
 fn aggregation_result_from_query() {
-    let mut res: FeatAggregationResult = FeatAggregationQuery::default().into();
-    assert!(res.a.is_empty());
-    assert!(res.b.is_empty());
-
-    res = FeatAggregationQuery {
-        a: vec![0..10],
-        ..FeatAggregationQuery::default()
-    }
-    .into();
-
-    assert_eq!(vec![0], res.a);
-    assert!(res.b.is_empty());
-
-    res = FeatAggregationQuery {
+    let res = FeatAggregationResult::from(FeatAggregationQuery {
         a: vec![0..10, 5..15],
         b: vec![-10..120],
         ..FeatAggregationQuery::default()
-    }
-    .into();
-
-    assert_eq!(vec![0, 0], res.a);
-    assert_eq!(vec![0], res.b);
-}
-
-#[test]
-fn can_merge_agg_result() {
-    let mut res = FeatAggregationResult {
-        a: vec![0, 12, 100],
-        b: vec![37],
-        ..FeatAggregationResult::default()
-    };
-
-    res.merge_same_size(&FeatAggregationResult {
-        a: vec![10, 3, 900],
-        b: vec![5],
-        ..FeatAggregationResult::default()
     });
 
-    assert_eq!(vec![10, 15, 1000], res.a);
-    assert_eq!(vec![42], res.b);
+    assert_eq!(2, res.a.len());
+    assert_eq!(1, res.b.len());
     assert!(res.c.is_empty());
+    assert!(res.d.is_empty());
+}
+
+fn agg_counts<T: serde::Serialize>(items: &[RangeStats<T>]) -> Vec<u64> {
+    items.iter().map(|s| s.count).collect()
 }
 
 #[test]
@@ -96,8 +69,8 @@ fn collect_works_as_intended() {
     );
 
     assert!(agg.a.is_empty());
-    assert_eq!(vec![0, 0], agg.b);
-    assert_eq!(vec![1], agg.c);
+    assert_eq!(vec![0, 0], agg_counts(&agg.b));
+    assert_eq!(vec![1], agg_counts(&agg.c));
 
     agg.collect(
         &query,
@@ -109,8 +82,9 @@ fn collect_works_as_intended() {
     );
 
     // No change
-    assert_eq!(vec![0, 0], agg.b);
-    assert_eq!(vec![1], agg.c);
+    assert!(agg.a.is_empty());
+    assert_eq!(vec![0, 0], agg_counts(&agg.b));
+    assert_eq!(vec![1], agg_counts(&agg.c));
 
     agg.collect(
         &query,
@@ -121,8 +95,8 @@ fn collect_works_as_intended() {
         },
     );
 
-    assert_eq!(vec![1, 0], agg.b);
-    assert_eq!(vec![1], agg.c);
+    assert_eq!(vec![1, 0], agg_counts(&agg.b));
+    assert_eq!(vec![1], agg_counts(&agg.c));
 
     agg.collect(
         &query,
@@ -133,8 +107,8 @@ fn collect_works_as_intended() {
         },
     );
 
-    assert_eq!(vec![1, 1], agg.b);
-    assert_eq!(vec![2], agg.c);
+    assert_eq!(vec![1, 1], agg_counts(&agg.b));
+    assert_eq!(vec![2], agg_counts(&agg.c));
 }
 
 #[test]
@@ -280,10 +254,10 @@ fn collector_integration() -> tantivy::Result<()> {
 
     let agg_result = searcher.search(&AllQuery, &collector)?;
 
-    assert_eq!(vec![0, 2], agg_result.a);
-    assert_eq!(vec![1], agg_result.b);
-    assert_eq!(vec![0, 3], agg_result.c);
-    assert_eq!(vec![0], agg_result.d);
+    assert_eq!(vec![0, 2], agg_counts(&agg_result.a));
+    assert_eq!(vec![1], agg_counts(&agg_result.b));
+    assert_eq!(vec![0, 3], agg_counts(&agg_result.c));
+    assert_eq!(vec![0], agg_counts(&agg_result.d));
 
     Ok(())
 }
