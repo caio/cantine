@@ -359,7 +359,7 @@ fn make_agg_result(input: &DeriveInput) -> TokenStream2 {
                 if src.#name.is_empty() {
                     Vec::new()
                 } else {
-                    src.#name.iter().map(|range| From::from(range)).collect()
+                    src.#name.iter().map(From::from).collect()
                 }
         }
     });
