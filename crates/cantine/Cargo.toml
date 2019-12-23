@@ -3,6 +3,7 @@ name = "cantine"
 version = "0.1.0"
 authors = ["Caio Romão <contact@caio.co>"]
 edition = "2018"
+default-run = "cantine"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
