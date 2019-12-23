@@ -146,7 +146,7 @@ pub struct SearchQuery {
     pub after: Option<SearchCursor>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Default)]
+#[derive(Serialize, Debug, Default)]
 pub struct SearchResult {
     pub items: Vec<RecipeCard>,
     pub total_found: usize,
