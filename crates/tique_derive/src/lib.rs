@@ -338,7 +338,7 @@ fn make_agg_result(input: &DeriveInput) -> TokenStream2 {
 
         quote_spanned! { field.span()=>
             #[serde(skip_serializing_if = "Vec::is_empty")]
-            pub #name: Vec<RangeStats<#ty>>
+            pub #name: Vec<tique::RangeStats<#ty>>
         }
     });
 
@@ -391,50 +391,6 @@ fn make_agg_result(input: &DeriveInput) -> TokenStream2 {
         #[derive(serde::Serialize, Default, Debug, Clone)]
         pub struct #name {
             #(#fields),*
-        }
-
-        // FIXME move outside crate
-        #[derive(serde::Serialize, Debug, Clone)]
-        pub struct RangeStats<T: serde::Serialize> {
-            pub min: T,
-            pub max: T,
-            pub count: u64,
-        }
-
-        impl<T: PartialOrd + Copy + serde::Serialize> RangeStats<T> {
-            pub fn collect(&mut self, value: T) {
-                if self.min > value {
-                    self.min = value;
-                }
-
-                if self.max < value {
-                    self.max = value;
-                }
-
-                self.count += 1;
-            }
-
-            pub fn merge(&mut self, other: &Self) {
-                if self.min > other.min {
-                    self.min = other.min;
-                }
-
-                if self.max < other.max {
-                    self.max = other.max;
-                }
-
-                self.count += other.count;
-            }
-        }
-
-        impl<T: PartialOrd + Copy + serde::Serialize> From<&std::ops::Range<T>> for RangeStats<T> {
-            fn from(src: &std::ops::Range<T>) -> Self {
-                Self {
-                    min: src.start,
-                    max: src.start,
-                    count: 0,
-                }
-            }
         }
 
         impl #name {

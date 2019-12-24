@@ -5,6 +5,7 @@ authors = ["Caio Romão <contact@caio.co>"]
 edition = "2018"
 
 [dependencies]
+tique_derive = { path = "../tique_derive" }
 tantivy = "0.11"
 serde = { version = "1", features = ["derive"] }
 byteorder = "1.3"

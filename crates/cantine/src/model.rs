@@ -8,7 +8,7 @@ use serde::{
 use uuid::{self, Uuid};
 
 use crate::database::DatabaseRecord;
-use cantine_derive::FilterAndAggregation;
+use tique::FilterAndAggregation;
 
 #[derive(Deserialize, Serialize, Debug, PartialEq, Clone)]
 pub struct Recipe {
