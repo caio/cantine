@@ -15,7 +15,7 @@ use structopt::StructOpt;
 use tantivy::{self, directory::MmapDirectory, schema::SchemaBuilder, Index};
 
 use cantine::database::DatabaseWriter;
-use cantine::index::IndexFields;
+use cantine::index::RecipeIndex;
 use cantine::model::Recipe;
 
 /// Loads recipes as json into cantine's database and index
@@ -56,7 +56,7 @@ fn load(options: LoadOptions) -> Result<()> {
 
     let mut builder = SchemaBuilder::new();
 
-    let fields = IndexFields::from(&mut builder);
+    let fields = RecipeIndex::from(&mut builder);
 
     let index =
         Index::open_or_create(MmapDirectory::open(&index_path).unwrap(), builder.build()).unwrap();

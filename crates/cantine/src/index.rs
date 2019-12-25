@@ -1,28 +1,25 @@
-use std::{cmp::Ordering, convert::TryFrom, path::Path};
+use std::{cmp::Ordering, convert::TryFrom};
 
 use bincode;
 use serde::{Deserialize, Serialize};
 use tantivy::{
     self,
-    query::{AllQuery, BooleanQuery, Occur, Query},
+    query::Query,
     schema::{Field, Schema, SchemaBuilder, Value, FAST, STORED, TEXT},
-    Document, Index, Result, Searcher, SegmentReader, TantivyError,
+    Document, Result, Searcher, SegmentReader, TantivyError,
 };
 
 use crate::model::{
     FeaturesAggregationQuery, FeaturesAggregationResult, FeaturesCollector, FeaturesFilterFields,
-    Recipe, RecipeId, SearchQuery, Sort,
+    Recipe, RecipeId, Sort,
 };
 
-use tique::{
-    queryparser::QueryParser,
-    top_collector::{
-        ordered_by_f64_fast_field, ordered_by_u64_fast_field, ConditionalTopCollector, SearchMarker,
-    },
+use tique::top_collector::{
+    ordered_by_f64_fast_field, ordered_by_u64_fast_field, ConditionalTopCollector, SearchMarker,
 };
 
 #[derive(Clone)]
-pub struct IndexFields {
+pub struct RecipeIndex {
     pub id: Field,
     pub fulltext: Field,
     pub features_bincode: Field,
@@ -33,7 +30,7 @@ const FIELD_ID: &str = "id";
 const FIELD_FULLTEXT: &str = "fulltext";
 const FIELD_FEATURES_BINCODE: &str = "features_bincode";
 
-impl IndexFields {
+impl RecipeIndex {
     pub fn make_document(&self, recipe: &Recipe) -> Document {
         let mut doc = Document::new();
         doc.add_u64(self.id, recipe.recipe_id);
@@ -57,85 +54,6 @@ impl IndexFields {
         self.features.add_to_doc(&mut doc, &recipe.features);
         doc
     }
-}
-
-impl From<&mut SchemaBuilder> for IndexFields {
-    fn from(builder: &mut SchemaBuilder) -> Self {
-        IndexFields {
-            id: builder.add_u64_field(FIELD_ID, STORED | FAST),
-            fulltext: builder.add_text_field(FIELD_FULLTEXT, TEXT),
-            features_bincode: builder.add_bytes_field(FIELD_FEATURES_BINCODE),
-            features: FeaturesFilterFields::from(builder),
-        }
-    }
-}
-
-impl TryFrom<&Schema> for IndexFields {
-    type Error = TantivyError;
-
-    fn try_from(schema: &Schema) -> Result<Self> {
-        let id = schema
-            .get_field(FIELD_ID)
-            .ok_or_else(|| TantivyError::SchemaError(format!("Missing field {}", FIELD_ID)))?;
-
-        let fulltext = schema.get_field(FIELD_FULLTEXT).ok_or_else(|| {
-            TantivyError::SchemaError(format!("Missing field {}", FIELD_FULLTEXT))
-        })?;
-
-        let features_bincode = schema.get_field(FIELD_FEATURES_BINCODE).ok_or_else(|| {
-            TantivyError::SchemaError(format!("Missing field {}", FIELD_FEATURES_BINCODE))
-        })?;
-
-        Ok(IndexFields {
-            id,
-            fulltext,
-            features_bincode,
-            features: FeaturesFilterFields::try_from(schema)?,
-        })
-    }
-}
-
-pub struct Cantine {
-    fields: IndexFields,
-    query_parser: QueryParser,
-}
-
-pub type CantineSearchResult = (
-    usize,
-    Vec<RecipeId>,
-    Option<After>,
-    Option<FeaturesAggregationResult>,
-);
-
-impl Cantine {
-    pub fn open<P: AsRef<Path>>(base_path: P) -> Result<(Index, Self)> {
-        let index = Index::open_in_dir(base_path.as_ref())?;
-        let cantine = Self::try_from(&index)?;
-
-        Ok((index, cantine))
-    }
-
-    pub fn interpret_query(&self, query: &SearchQuery) -> Result<Box<dyn Query>> {
-        let mut subqueries: Vec<(Occur, Box<dyn Query>)> = Vec::new();
-
-        if let Some(fulltext) = &query.fulltext {
-            if let Some(parsed) = self.query_parser.parse(fulltext.as_str())? {
-                subqueries.push((Occur::Must, parsed));
-            }
-        }
-
-        if let Some(filter) = &query.filter {
-            for query in self.fields.features.interpret(filter).into_iter() {
-                subqueries.push((Occur::Must, query));
-            }
-        }
-
-        match subqueries.len() {
-            0 => Ok(Box::new(AllQuery)),
-            1 => Ok(subqueries.pop().expect("length has been checked").1),
-            _ => Ok(Box::new(BooleanQuery::from(subqueries))),
-        }
-    }
 
     fn addresses_to_ids<T>(
         &self,
@@ -146,7 +64,7 @@ impl Cantine {
 
         for addr in addresses.iter() {
             let doc = searcher.doc(addr.doc)?;
-            if let Some(&Value::U64(id)) = doc.get_first(self.fields.id) {
+            if let Some(&Value::U64(id)) = doc.get_first(self.id) {
                 items.push(id);
             } else {
                 panic!("Found document without a stored id");
@@ -159,7 +77,7 @@ impl Cantine {
     pub fn search(
         &self,
         searcher: &Searcher,
-        interpreted_query: &dyn Query,
+        query: &dyn Query,
         limit: usize,
         sort: Sort,
         after: After,
@@ -170,7 +88,7 @@ impl Cantine {
                 let after_id = after.recipe_id();
                 let is_start = after.is_start();
 
-                let id_field = self.fields.id;
+                let id_field = self.id;
                 move |reader: &SegmentReader| {
                     let id_reader = reader
                         .fast_fields()
@@ -197,9 +115,9 @@ impl Cantine {
             ($field:ident) => {{
                 let condition = condition_from_score!(after.score());
                 let top_collector =
-                    ordered_by_u64_fast_field(self.fields.features.$field, limit, condition);
+                    ordered_by_u64_fast_field(self.features.$field, limit, condition);
 
-                let result = searcher.search(interpreted_query, &top_collector)?;
+                let result = searcher.search(query, &top_collector)?;
                 let items = self.addresses_to_ids(&searcher, &result.items)?;
 
                 let num_items = items.len();
@@ -219,9 +137,9 @@ impl Cantine {
             ($field:ident) => {{
                 let condition = condition_from_score!(after.score_f64());
                 let top_collector =
-                    ordered_by_f64_fast_field(self.fields.features.$field, limit, condition);
+                    ordered_by_f64_fast_field(self.features.$field, limit, condition);
 
-                let result = searcher.search(interpreted_query, &top_collector)?;
+                let result = searcher.search(query, &top_collector)?;
                 let items = self.addresses_to_ids(&searcher, &result.items)?;
 
                 let num_items = items.len();
@@ -242,7 +160,7 @@ impl Cantine {
                 let condition = condition_from_score!(after.score_f32());
                 let top_collector = ConditionalTopCollector::with_limit(limit, condition);
 
-                let result = searcher.search(interpreted_query, &top_collector)?;
+                let result = searcher.search(query, &top_collector)?;
                 let items = self.addresses_to_ids(&searcher, &result.items)?;
 
                 let num_items = items.len();
@@ -271,10 +189,10 @@ impl Cantine {
     pub fn aggregate_features(
         &self,
         searcher: &Searcher,
-        interpreted_query: &dyn Query,
+        query: &dyn Query,
         agg_query: FeaturesAggregationQuery,
     ) -> Result<FeaturesAggregationResult> {
-        let features_field = self.fields.features_bincode;
+        let features_field = self.features_bincode;
         let collector = FeaturesCollector::new(agg_query, move |reader: &SegmentReader| {
             let features_reader = reader
                 .fast_fields()
@@ -288,27 +206,52 @@ impl Cantine {
             }
         });
 
-        Ok(searcher.search(interpreted_query, &collector)?)
+        Ok(searcher.search(query, &collector)?)
     }
 }
 
-impl TryFrom<&Index> for Cantine {
+impl From<&mut SchemaBuilder> for RecipeIndex {
+    fn from(builder: &mut SchemaBuilder) -> Self {
+        RecipeIndex {
+            id: builder.add_u64_field(FIELD_ID, STORED | FAST),
+            fulltext: builder.add_text_field(FIELD_FULLTEXT, TEXT),
+            features_bincode: builder.add_bytes_field(FIELD_FEATURES_BINCODE),
+            features: FeaturesFilterFields::from(builder),
+        }
+    }
+}
+
+impl TryFrom<&Schema> for RecipeIndex {
     type Error = TantivyError;
-    fn try_from(index: &Index) -> Result<Self> {
-        let fields = IndexFields::try_from(&index.schema())?;
 
-        let query_parser = QueryParser::new(
-            fields.fulltext,
-            index.tokenizer_for_field(fields.fulltext)?,
-            true,
-        );
+    fn try_from(schema: &Schema) -> Result<Self> {
+        let id = schema
+            .get_field(FIELD_ID)
+            .ok_or_else(|| TantivyError::SchemaError(format!("Missing field {}", FIELD_ID)))?;
 
-        Ok(Self {
-            fields,
-            query_parser,
+        let fulltext = schema.get_field(FIELD_FULLTEXT).ok_or_else(|| {
+            TantivyError::SchemaError(format!("Missing field {}", FIELD_FULLTEXT))
+        })?;
+
+        let features_bincode = schema.get_field(FIELD_FEATURES_BINCODE).ok_or_else(|| {
+            TantivyError::SchemaError(format!("Missing field {}", FIELD_FEATURES_BINCODE))
+        })?;
+
+        Ok(RecipeIndex {
+            id,
+            fulltext,
+            features_bincode,
+            features: FeaturesFilterFields::try_from(schema)?,
         })
     }
 }
+
+pub type RecipeIndexSearchResult = (
+    usize,
+    Vec<RecipeId>,
+    Option<After>,
+    Option<FeaturesAggregationResult>,
+);
 
 #[derive(Serialize, Deserialize, Debug, Default)]
 pub struct After(u64, RecipeId);

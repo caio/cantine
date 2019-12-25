@@ -3,24 +3,23 @@ use serde_json;
 use once_cell::sync::Lazy;
 use std::{
     collections::{HashMap, HashSet},
-    convert::TryFrom,
 };
 use tantivy::{query::AllQuery, schema::SchemaBuilder, Index, Result};
 
 use cantine::{
-    index::{After, Cantine, IndexFields},
+    index::{After, RecipeIndex},
     model::{Recipe, RecipeId, Sort},
 };
 
 struct GlobalData {
     index: Index,
-    cantine: Cantine,
+    cantine: RecipeIndex,
     db: HashMap<RecipeId, Recipe>,
 }
 
 static GLOBAL: Lazy<GlobalData> = Lazy::new(|| {
     let mut builder = SchemaBuilder::new();
-    let fields = IndexFields::from(&mut builder);
+    let cantine = RecipeIndex::from(&mut builder);
     let index = Index::create_in_ram(builder.build());
 
     let mut writer = index.writer_with_num_threads(1, 50_000_000).unwrap();
@@ -31,13 +30,11 @@ static GLOBAL: Lazy<GlobalData> = Lazy::new(|| {
     for line in sample_recipes.lines() {
         let recipe: Recipe = serde_json::from_str(line).expect("valid recipe json");
 
-        writer.add_document(fields.make_document(&recipe));
+        writer.add_document(cantine.make_document(&recipe));
         db.insert(recipe.recipe_id, recipe);
     }
 
     writer.commit().unwrap();
-
-    let cantine = Cantine::try_from(&index).unwrap();
 
     GlobalData { index, cantine, db }
 });

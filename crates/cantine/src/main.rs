@@ -1,4 +1,5 @@
 use std::{
+    convert::TryFrom,
     io::Result as IoResult,
     path::{Path, PathBuf},
     result::Result as StdResult,
@@ -7,21 +8,26 @@ use std::{
 };
 
 use actix_web::{http::StatusCode, middleware, web, App, HttpResponse, HttpServer, Result};
+use env_logger;
 use structopt::StructOpt;
-use tantivy::{IndexReader, Result as TantivyResult, Searcher};
 use tokio::time::timeout;
 use uuid::Uuid;
 
-use env_logger;
+use tantivy::{
+    query::{AllQuery, BooleanQuery, Occur, Query},
+    Index, IndexReader, Result as TantivyResult, Searcher,
+};
 
 use cantine::{
     database::DatabaseReader,
-    index::{After, Cantine},
+    index::{After, RecipeIndex},
     model::{
         FeaturesAggregationResult, Recipe, RecipeCard, RecipeId, RecipeInfo, SearchCursor,
         SearchQuery, SearchResult, Sort,
     },
 };
+
+use tique::queryparser::QueryParser;
 
 #[derive(Debug, StructOpt)]
 #[structopt(name = "api")]
@@ -85,6 +91,7 @@ pub async fn search(
         Ok(execute_search(
             &searcher,
             &search_state.cantine,
+            &search_state.query_parser,
             search_query.0,
             after,
             search_state.threshold,
@@ -131,14 +138,41 @@ type ExecuteResult = (
     Option<FeaturesAggregationResult>,
 );
 
+fn interpret_query(
+    cantine: &RecipeIndex,
+    query_parser: &QueryParser,
+    query: &SearchQuery,
+) -> TantivyResult<Box<dyn Query>> {
+    let mut subqueries: Vec<(Occur, Box<dyn Query>)> = Vec::new();
+
+    if let Some(fulltext) = &query.fulltext {
+        if let Some(parsed) = query_parser.parse(fulltext.as_str())? {
+            subqueries.push((Occur::Must, parsed));
+        }
+    }
+
+    if let Some(filter) = &query.filter {
+        for query in cantine.features.interpret(filter).into_iter() {
+            subqueries.push((Occur::Must, query));
+        }
+    }
+
+    match subqueries.len() {
+        0 => Ok(Box::new(AllQuery)),
+        1 => Ok(subqueries.pop().expect("length has been checked").1),
+        _ => Ok(Box::new(BooleanQuery::from(subqueries))),
+    }
+}
+
 fn execute_search(
     searcher: &Searcher,
-    cantine: &Cantine,
+    cantine: &RecipeIndex,
+    query_parser: &QueryParser,
     query: SearchQuery,
     after: After,
     agg_threshold: usize,
 ) -> TantivyResult<ExecuteResult> {
-    let interpreted_query = cantine.interpret_query(&query)?;
+    let interpreted_query = interpret_query(&cantine, query_parser, &query)?;
     let limit = query.num_items.unwrap_or(10) as usize;
 
     let (total_found, recipe_ids, after) = cantine.search(
@@ -162,8 +196,9 @@ fn execute_search(
 }
 
 pub struct SearchState {
-    cantine: Arc<Cantine>,
+    cantine: Arc<RecipeIndex>,
     reader: IndexReader,
+    query_parser: Arc<QueryParser>,
     threshold: usize,
     timeout: u64,
 }
@@ -178,7 +213,14 @@ async fn main() -> IoResult<()> {
     let cantine_path = options.base_path.join("tantivy");
     let db_path = options.base_path.join("database");
 
-    let (index, cantine) = Cantine::open(&cantine_path).unwrap();
+    let index = Index::open_in_dir(&cantine_path).unwrap();
+    let cantine = RecipeIndex::try_from(&index.schema()).unwrap();
+    let query_parser = Arc::new(QueryParser::new(
+        cantine.fulltext,
+        index.tokenizer_for_field(cantine.fulltext).unwrap(),
+        true,
+    ));
+
     let reader = index.reader().unwrap();
     let cantine = Arc::new(cantine);
 
@@ -191,6 +233,7 @@ async fn main() -> IoResult<()> {
         let search_state = SearchState {
             cantine: cantine.clone(),
             reader: reader.clone(),
+            query_parser: query_parser.clone(),
             threshold,
             timeout,
         };
