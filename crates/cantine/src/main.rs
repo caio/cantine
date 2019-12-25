@@ -240,6 +240,6 @@ async fn main() -> IoResult<()> {
             .service(web::resource("/search").route(web::post().to(search)))
     })
     .bind("127.0.0.1:8080")?
-    .start()
+    .run()
     .await
 }
