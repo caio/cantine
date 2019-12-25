@@ -15,7 +15,7 @@ use uuid::Uuid;
 
 use tantivy::{
     query::{AllQuery, BooleanQuery, Occur, Query},
-    Index, IndexReader, Result as TantivyResult, Searcher,
+    Index, IndexReader, Result as TantivyResult,
 };
 
 use cantine::{
@@ -70,7 +70,8 @@ pub async fn recipe(
 
 pub async fn search(
     search_query: web::Json<SearchQuery>,
-    search_state: web::Data<SearchState>,
+    search_state: web::Data<Arc<SearchState>>,
+    config: web::Data<Config>,
     database: web::Data<RecipeDatabase>,
 ) -> Result<HttpResponse> {
     let after = match &search_query.after {
@@ -84,25 +85,17 @@ pub async fn search(
         }
     };
 
-    let search_timeout = search_state.timeout;
-
-    let search_future = web::block(move || -> TantivyResult<ExecuteResult> {
-        let searcher = search_state.reader.searcher();
-        Ok(execute_search(
-            &searcher,
-            &search_state.cantine,
-            &search_state.query_parser,
-            search_query.0,
-            after,
-            search_state.threshold,
-        )?)
-    });
+    let agg_threshold = config.threshold;
+    let timed_search_future = timeout(
+        Duration::from_millis(config.timeout),
+        web::block(move || -> TantivyResult<ExecuteResult> {
+            search_state.search(search_query.0, after, agg_threshold)
+        }),
+    );
 
     let (total_found, recipe_ids, after, agg) = {
-        if let Ok(search_future_result) =
-            timeout(Duration::from_millis(search_timeout), search_future).await
-        {
-            search_future_result?
+        if let Ok(actual_result) = timed_search_future.await {
+            actual_result?
         } else {
             return Ok(HttpResponse::new(StatusCode::GATEWAY_TIMEOUT));
         }
@@ -138,69 +131,73 @@ type ExecuteResult = (
     Option<FeaturesAggregationResult>,
 );
 
-fn interpret_query(
-    cantine: &RecipeIndex,
-    query_parser: &QueryParser,
-    query: &SearchQuery,
-) -> TantivyResult<Box<dyn Query>> {
-    let mut subqueries: Vec<(Occur, Box<dyn Query>)> = Vec::new();
-
-    if let Some(fulltext) = &query.fulltext {
-        if let Some(parsed) = query_parser.parse(fulltext.as_str())? {
-            subqueries.push((Occur::Must, parsed));
-        }
-    }
-
-    if let Some(filter) = &query.filter {
-        for query in cantine.features.interpret(filter).into_iter() {
-            subqueries.push((Occur::Must, query));
-        }
-    }
-
-    match subqueries.len() {
-        0 => Ok(Box::new(AllQuery)),
-        1 => Ok(subqueries.pop().expect("length has been checked").1),
-        _ => Ok(Box::new(BooleanQuery::from(subqueries))),
-    }
-}
-
-fn execute_search(
-    searcher: &Searcher,
-    cantine: &RecipeIndex,
-    query_parser: &QueryParser,
-    query: SearchQuery,
-    after: After,
-    agg_threshold: usize,
-) -> TantivyResult<ExecuteResult> {
-    let interpreted_query = interpret_query(&cantine, query_parser, &query)?;
-    let limit = query.num_items.unwrap_or(10) as usize;
-
-    let (total_found, recipe_ids, after) = cantine.search(
-        &searcher,
-        &interpreted_query,
-        limit,
-        query.sort.unwrap_or(Sort::Relevance),
-        after,
-    )?;
-
-    let agg = if total_found <= agg_threshold {
-        query
-            .agg
-            .map(|agg_query| cantine.aggregate_features(&searcher, &interpreted_query, agg_query))
-            .transpose()?
-    } else {
-        None
-    };
-
-    Ok((total_found, recipe_ids, after, agg))
+pub struct Config {
+    pub threshold: usize,
+    pub timeout: u64,
 }
 
 pub struct SearchState {
-    cantine: Arc<RecipeIndex>,
     reader: IndexReader,
-    query_parser: Arc<QueryParser>,
-    threshold: usize,
-    timeout: u64,
+    recipe_index: RecipeIndex,
+    query_parser: QueryParser,
+}
+
+impl SearchState {
+    pub fn search(
+        &self,
+        query: SearchQuery,
+        after: After,
+        threshold: usize,
+    ) -> TantivyResult<ExecuteResult> {
+        let limit = query.num_items.unwrap_or(10) as usize;
+
+        let searcher = self.reader.searcher();
+        let interpreted_query = self.interpret_query(&query)?;
+
+        let (total_found, recipe_ids, after) = self.recipe_index.search(
+            &searcher,
+            &interpreted_query,
+            limit,
+            query.sort.unwrap_or(Sort::Relevance),
+            after,
+        )?;
+
+        let agg = if total_found <= threshold {
+            query
+                .agg
+                .map(|agg_query| {
+                    self.recipe_index
+                        .aggregate_features(&searcher, &interpreted_query, agg_query)
+                })
+                .transpose()?
+        } else {
+            None
+        };
+
+        Ok((total_found, recipe_ids, after, agg))
+    }
+
+    fn interpret_query(&self, query: &SearchQuery) -> TantivyResult<Box<dyn Query>> {
+        let mut subqueries: Vec<(Occur, Box<dyn Query>)> = Vec::new();
+
+        if let Some(fulltext) = &query.fulltext {
+            if let Some(parsed) = self.query_parser.parse(fulltext.as_str())? {
+                subqueries.push((Occur::Must, parsed));
+            }
+        }
+
+        if let Some(filter) = &query.filter {
+            for query in self.recipe_index.features.interpret(filter).into_iter() {
+                subqueries.push((Occur::Must, query));
+            }
+        }
+
+        match subqueries.len() {
+            0 => Ok(Box::new(AllQuery)),
+            1 => Ok(subqueries.pop().expect("length has been checked").1),
+            _ => Ok(Box::new(BooleanQuery::from(subqueries))),
+        }
+    }
 }
 
 #[actix_rt::main]
@@ -210,38 +207,34 @@ async fn main() -> IoResult<()> {
 
     let options = ApiOptions::from_args();
 
-    let cantine_path = options.base_path.join("tantivy");
+    let index_path = options.base_path.join("tantivy");
     let db_path = options.base_path.join("database");
 
-    let index = Index::open_in_dir(&cantine_path).unwrap();
-    let cantine = RecipeIndex::try_from(&index.schema()).unwrap();
-    let query_parser = Arc::new(QueryParser::new(
-        cantine.fulltext,
-        index.tokenizer_for_field(cantine.fulltext).unwrap(),
+    let index = Index::open_in_dir(&index_path).unwrap();
+    let recipe_index = RecipeIndex::try_from(&index.schema()).unwrap();
+    let query_parser = QueryParser::new(
+        recipe_index.fulltext,
+        index.tokenizer_for_field(recipe_index.fulltext).unwrap(),
         true,
-    ));
+    );
 
     let reader = index.reader().unwrap();
-    let cantine = Arc::new(cantine);
+    let search_state = Arc::new(SearchState {
+        reader,
+        recipe_index,
+        query_parser,
+    });
 
-    let threshold = options.agg_threshold.unwrap_or(std::usize::MAX);
     let timeout = options.timeout;
-
+    let threshold = options.agg_threshold.unwrap_or(std::usize::MAX);
     let database: RecipeDatabase = Arc::new(DatabaseReader::open(&db_path)?);
 
     HttpServer::new(move || {
-        let search_state = SearchState {
-            cantine: cantine.clone(),
-            reader: reader.clone(),
-            query_parser: query_parser.clone(),
-            threshold,
-            timeout,
-        };
-
         App::new()
             .wrap(middleware::Logger::default())
+            .app_data(web::Data::new(search_state.clone()))
             .app_data(web::Data::new(database.clone()))
-            .app_data(web::Data::new(search_state))
+            .app_data(web::Data::new(Config { timeout, threshold }))
             .data(web::JsonConfig::default().limit(4096))
             .service(web::resource("/recipe/{uuid}").route(web::get().to(recipe)))
             .service(web::resource("/search").route(web::post().to(search)))
