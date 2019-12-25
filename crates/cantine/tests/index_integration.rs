@@ -1,9 +1,7 @@
 use serde_json;
 
 use once_cell::sync::Lazy;
-use std::{
-    collections::{HashMap, HashSet},
-};
+use std::collections::{HashMap, HashSet};
 use tantivy::{query::AllQuery, schema::SchemaBuilder, Index, Result};
 
 use cantine::{
