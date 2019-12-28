@@ -31,6 +31,7 @@ pub struct RecipeIndex {
 const FIELD_ID: &str = "id";
 const FIELD_FULLTEXT: &str = "fulltext";
 const FIELD_FEATURES_BINCODE: &str = "features_bincode";
+const INVALID_RECIPE_ID: RecipeId = 0;
 
 impl RecipeIndex {
     pub fn make_document(&self, recipe: &Recipe) -> Document {
@@ -249,25 +250,11 @@ pub type RecipeIndexSearchResult = (
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct After(u64, RecipeId);
 
-const INVALID_RECIPE_ID: RecipeId = 0;
-
 impl After {
-    pub const START: Self = Self(0, 0);
+    pub const START: Self = Self(INVALID_RECIPE_ID, 0);
 
     pub fn new(score: u64, recipe_id: RecipeId) -> Self {
         Self(score, recipe_id)
-    }
-
-    pub fn from_f32(score: f32, recipe_id: RecipeId) -> Self {
-        Self(score.to_bits() as u64, recipe_id)
-    }
-
-    pub fn from_f64(score: f64, recipe_id: RecipeId) -> Self {
-        Self(score.to_bits(), recipe_id)
-    }
-
-    pub fn is_start(&self) -> bool {
-        self.0 == INVALID_RECIPE_ID
     }
 
     pub fn recipe_id(&self) -> RecipeId {
@@ -278,12 +265,24 @@ impl After {
         self.0
     }
 
-    pub fn score_f32(&self) -> f32 {
+    fn from_f32(score: f32, recipe_id: RecipeId) -> Self {
+        Self(score.to_bits() as u64, recipe_id)
+    }
+
+    fn from_f64(score: f64, recipe_id: RecipeId) -> Self {
+        Self(score.to_bits(), recipe_id)
+    }
+
+    fn score_f32(&self) -> f32 {
         f32::from_bits(self.0 as u32)
     }
 
-    pub fn score_f64(&self) -> f64 {
+    fn score_f64(&self) -> f64 {
         f64::from_bits(self.0)
+    }
+
+    fn is_start(&self) -> bool {
+        self.0 == INVALID_RECIPE_ID
     }
 }
 
