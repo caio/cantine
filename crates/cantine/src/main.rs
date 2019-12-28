@@ -69,12 +69,12 @@ pub async fn recipe(
 }
 
 pub async fn search(
-    search_query: web::Json<SearchQuery>,
-    search_state: web::Data<Arc<SearchState>>,
+    query: web::Json<SearchQuery>,
+    state: web::Data<Arc<SearchState>>,
     config: web::Data<Config>,
     database: web::Data<RecipeDatabase>,
 ) -> Result<HttpResponse> {
-    let after = match &search_query.after {
+    let after = match &query.after {
         None => After::START,
         Some(cursor) => {
             if let Some(recipe_id) = database.id_for_uuid(&Uuid::from_bytes(cursor.1)) {
@@ -89,7 +89,7 @@ pub async fn search(
     let timed_search_future = timeout(
         Duration::from_millis(config.timeout),
         web::block(move || -> TantivyResult<ExecuteResult> {
-            search_state.search(search_query.0, after, agg_threshold)
+            state.search(query.0, after, agg_threshold)
         }),
     );
 
