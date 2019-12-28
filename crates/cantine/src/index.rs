@@ -4,9 +4,10 @@ use bincode;
 use serde::{Deserialize, Serialize};
 use tantivy::{
     self,
+    fastfield::FastFieldReader,
     query::Query,
     schema::{Field, Schema, SchemaBuilder, Value, FAST, STORED, TEXT},
-    Document, Result, Searcher, SegmentReader, TantivyError,
+    DocId, Document, Result, Searcher, SegmentLocalId, SegmentReader, TantivyError,
 };
 
 use crate::model::{
@@ -15,7 +16,8 @@ use crate::model::{
 };
 
 use tique::top_collector::{
-    ordered_by_f64_fast_field, ordered_by_u64_fast_field, ConditionalTopCollector, SearchMarker,
+    ordered_by_f64_fast_field, ordered_by_u64_fast_field, CollectCondition,
+    CollectConditionFactory, ConditionalTopCollector, SearchMarker,
 };
 
 #[derive(Clone)]
@@ -74,6 +76,58 @@ impl RecipeIndex {
         Ok(items)
     }
 
+    fn topk_u64(
+        &self,
+        searcher: &Searcher,
+        query: &dyn Query,
+        limit: usize,
+        after: After,
+        field: Field,
+    ) -> Result<(usize, Vec<RecipeId>, Option<After>)> {
+        let condition = Paginator::new_u64(self.id, after);
+        let top_collector = ordered_by_u64_fast_field(field, limit, condition);
+
+        let result = searcher.search(query, &top_collector)?;
+        let items = self.addresses_to_ids(&searcher, &result.items)?;
+
+        let num_items = items.len();
+        let cursor = if result.visited.saturating_sub(num_items) > 0 {
+            let last_score = result.items[num_items - 1].score;
+            let last_id = items[num_items - 1];
+            Some(After::new(last_score, last_id))
+        } else {
+            None
+        };
+
+        Ok((result.total, items, cursor))
+    }
+
+    fn topk_f64(
+        &self,
+        searcher: &Searcher,
+        query: &dyn Query,
+        limit: usize,
+        after: After,
+        field: Field,
+    ) -> Result<(usize, Vec<RecipeId>, Option<After>)> {
+        let condition = Paginator::new_f64(self.id, after);
+        let top_collector = ordered_by_f64_fast_field(field, limit, condition);
+
+        let result = searcher.search(query, &top_collector)?;
+        let items = self.addresses_to_ids(&searcher, &result.items)?;
+
+        let num_items = items.len();
+        let cursor = if result.visited.saturating_sub(num_items) > 0 {
+            let last_score = result.items[num_items - 1].score;
+            let last_id = items[num_items - 1];
+            Some(After::from_f64(last_score, last_id))
+        } else {
+            None
+        };
+
+        Ok((result.total, items, cursor))
+    }
+
     pub fn search(
         &self,
         searcher: &Searcher,
@@ -82,82 +136,21 @@ impl RecipeIndex {
         sort: Sort,
         after: After,
     ) -> Result<(usize, Vec<RecipeId>, Option<After>)> {
-        macro_rules! condition_from_score {
-            ($score:expr) => {{
-                let after_score = $score;
-                let after_id = after.recipe_id();
-                let is_start = after.is_start();
-
-                let id_field = self.id;
-                move |reader: &SegmentReader| {
-                    let id_reader = reader
-                        .fast_fields()
-                        .u64(id_field)
-                        .expect("id field is indexed with the FAST flag");
-
-                    move |_segment_id, doc_id, score| {
-                        if is_start {
-                            return true;
-                        }
-
-                        let recipe_id = id_reader.get(doc_id);
-                        match after_score.partial_cmp(&score) {
-                            Some(Ordering::Greater) => true,
-                            Some(Ordering::Equal) => after_id < recipe_id,
-                            _ => false,
-                        }
-                    }
-                }
-            }};
-        }
-
         macro_rules! collect_unsigned {
             ($field:ident) => {{
-                let condition = condition_from_score!(after.score());
-                let top_collector =
-                    ordered_by_u64_fast_field(self.features.$field, limit, condition);
-
-                let result = searcher.search(query, &top_collector)?;
-                let items = self.addresses_to_ids(&searcher, &result.items)?;
-
-                let num_items = items.len();
-                let cursor = if result.visited.saturating_sub(num_items) > 0 {
-                    let last_score = result.items[num_items - 1].score;
-                    let last_id = items[num_items - 1];
-                    Some(After::new(last_score, last_id))
-                } else {
-                    None
-                };
-
-                Ok((result.total, items, cursor))
+                self.topk_u64(searcher, query, limit, after, self.features.$field)
             }};
         }
 
         macro_rules! collect_float {
             ($field:ident) => {{
-                let condition = condition_from_score!(after.score_f64());
-                let top_collector =
-                    ordered_by_f64_fast_field(self.features.$field, limit, condition);
-
-                let result = searcher.search(query, &top_collector)?;
-                let items = self.addresses_to_ids(&searcher, &result.items)?;
-
-                let num_items = items.len();
-                let cursor = if result.visited.saturating_sub(num_items) > 0 {
-                    let last_score = result.items[num_items - 1].score;
-                    let last_id = items[num_items - 1];
-                    Some(After::from_f64(last_score, last_id))
-                } else {
-                    None
-                };
-
-                Ok((result.total, items, cursor))
+                self.topk_f64(searcher, query, limit, after, self.features.$field)
             }};
         }
 
         match sort {
             Sort::Relevance => {
-                let condition = condition_from_score!(after.score_f32());
+                let condition = Paginator::new(self.id, after);
                 let top_collector = ConditionalTopCollector::with_limit(limit, condition);
 
                 let result = searcher.search(query, &top_collector)?;
@@ -253,8 +246,10 @@ pub type RecipeIndexSearchResult = (
     Option<FeaturesAggregationResult>,
 );
 
-#[derive(Serialize, Deserialize, Debug, Default)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct After(u64, RecipeId);
+
+const INVALID_RECIPE_ID: RecipeId = 0;
 
 impl After {
     pub const START: Self = Self(0, 0);
@@ -272,7 +267,7 @@ impl After {
     }
 
     pub fn is_start(&self) -> bool {
-        self.0 == 0 && self.1 == 0
+        self.0 == INVALID_RECIPE_ID
     }
 
     pub fn recipe_id(&self) -> RecipeId {
@@ -289,5 +284,82 @@ impl After {
 
     pub fn score_f64(&self) -> f64 {
         f64::from_bits(self.0)
+    }
+}
+
+#[derive(Clone)]
+struct PaginationCondition<T> {
+    id_reader: FastFieldReader<RecipeId>,
+    is_start: bool,
+    ref_id: RecipeId,
+    ref_score: T,
+}
+
+impl<T> CollectCondition<T> for PaginationCondition<T>
+where
+    T: 'static + PartialOrd + Clone,
+{
+    fn check(&self, _sid: SegmentLocalId, doc_id: DocId, score: T) -> bool {
+        if self.is_start {
+            return true;
+        }
+        let recipe_id = self.id_reader.get(doc_id);
+        match self.ref_score.partial_cmp(&score) {
+            Some(Ordering::Greater) => true,
+            Some(Ordering::Equal) => self.ref_id < recipe_id,
+            _ => false,
+        }
+    }
+}
+
+#[derive(Clone)]
+struct Paginator<T>(Field, bool, RecipeId, T);
+
+impl Paginator<u64> {
+    pub fn new_u64(field: Field, after: After) -> Self {
+        Paginator(field, after.is_start(), after.recipe_id(), after.score())
+    }
+}
+
+impl Paginator<f64> {
+    pub fn new_f64(field: Field, after: After) -> Self {
+        Paginator(
+            field,
+            after.is_start(),
+            after.recipe_id(),
+            after.score_f64(),
+        )
+    }
+}
+
+impl Paginator<f32> {
+    pub fn new(field: Field, after: After) -> Self {
+        Paginator(
+            field,
+            after.is_start(),
+            after.recipe_id(),
+            after.score_f32(),
+        )
+    }
+}
+
+impl<T> CollectConditionFactory<T> for Paginator<T>
+where
+    T: 'static + PartialOrd + Copy,
+{
+    type Type = PaginationCondition<T>;
+
+    fn for_segment(&self, reader: &SegmentReader) -> Self::Type {
+        let id_reader = reader
+            .fast_fields()
+            .u64(self.0)
+            .expect("id field is indexed with the FAST flag");
+
+        PaginationCondition {
+            id_reader,
+            is_start: self.1,
+            ref_id: self.2,
+            ref_score: self.3,
+        }
     }
 }
