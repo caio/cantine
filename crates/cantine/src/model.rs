@@ -239,6 +239,7 @@ impl<'de> Deserialize<'de> for SearchCursor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     use serde_json;
 
@@ -251,6 +252,21 @@ mod tests {
             let deserialized = serde_json::from_str(&serialized).unwrap();
 
             assert_eq!(cursor, deserialized);
+        }
+    }
+
+    proptest! {
+        #[test]
+        #[allow(unused_must_use)]
+        fn no_crash_json_any_input_size(input in "\\PC*") {
+            serde_json::from_str::<SearchCursor>(input.as_str());
+        }
+
+        #[test]
+        #[allow(unused_must_use)]
+        fn no_crash_with_properly_sized_junk(buf in prop::array::uniform32(0u8..)) {
+            let visitor = SearchCursorVisitor;
+            visitor.visit_bytes::<serde_json::Error>(&buf);
         }
     }
 }
