@@ -1,5 +1,7 @@
 [workspace]
 
 members = [
-    "crates/*",
+    "cantine",
+    "tique",
+    "tique_derive",
 ]

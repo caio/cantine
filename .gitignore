@@ -6,4 +6,4 @@ tags
 /target
 .vscode
 # criterion writes the report here
-crates/cantine/target
+cantine/target
