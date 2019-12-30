@@ -1,22 +1,25 @@
 use std::{
     convert::TryFrom,
-    io::Result as IoResult,
     path::{Path, PathBuf},
     result::Result as StdResult,
     sync::Arc,
     time::Duration,
 };
 
-use actix_web::{http::StatusCode, middleware, web, App, HttpResponse, HttpServer, Result};
 use env_logger;
 use serde::Serialize;
 use structopt::StructOpt;
+use tique::queryparser::QueryParser;
 use tokio::time::timeout;
 use uuid::Uuid;
 
+use actix_web::{
+    http::StatusCode, middleware, web, App, HttpResponse, HttpServer, Result as ActixResult,
+};
+
 use tantivy::{
     query::{AllQuery, BooleanQuery, Occur, Query},
-    Index, IndexReader, Result as TantivyResult,
+    Index, IndexReader, Result,
 };
 
 use cantine::{
@@ -27,8 +30,6 @@ use cantine::{
         RecipeInfo, SearchCursor, SearchQuery, SearchResult, Sort,
     },
 };
-
-use tique::queryparser::QueryParser;
 
 #[derive(Debug, StructOpt)]
 pub struct ApiOptions {
@@ -56,7 +57,7 @@ type RecipeDatabase = Arc<DatabaseReader<Recipe>>;
 pub async fn recipe(
     database: web::Data<RecipeDatabase>,
     uuid: web::Path<Uuid>,
-) -> Result<HttpResponse> {
+) -> ActixResult<HttpResponse> {
     if let Some(recipe) = database
         .find_by_uuid(&uuid)
         .transpose()
@@ -74,7 +75,7 @@ pub struct IndexInfo {
     pub features: FeaturesAggregationResult,
 }
 
-pub async fn index_info(info: web::Data<IndexInfo>) -> Result<HttpResponse> {
+pub async fn index_info(info: web::Data<IndexInfo>) -> ActixResult<HttpResponse> {
     Ok(HttpResponse::Ok().json(info.get_ref()))
 }
 
@@ -83,7 +84,7 @@ pub async fn search(
     state: web::Data<Arc<SearchState>>,
     config: web::Data<Config>,
     database: web::Data<RecipeDatabase>,
-) -> Result<HttpResponse> {
+) -> ActixResult<HttpResponse> {
     let after = match &query.after {
         None => After::START,
         Some(cursor) => {
@@ -98,7 +99,7 @@ pub async fn search(
     let agg_threshold = config.threshold;
     let timed_search_future = timeout(
         Duration::from_millis(config.timeout),
-        web::block(move || -> TantivyResult<ExecuteResult> {
+        web::block(move || -> Result<ExecuteResult> {
             state.search(query.0, after, agg_threshold)
         }),
     );
@@ -158,7 +159,7 @@ impl SearchState {
         query: SearchQuery,
         after: After,
         threshold: usize,
-    ) -> TantivyResult<ExecuteResult> {
+    ) -> Result<ExecuteResult> {
         let limit = query.num_items.unwrap_or(10) as usize;
 
         let searcher = self.reader.searcher();
@@ -187,7 +188,7 @@ impl SearchState {
         Ok((total_found, recipe_ids, after, agg))
     }
 
-    fn interpret_query(&self, query: &SearchQuery) -> TantivyResult<Box<dyn Query>> {
+    fn interpret_query(&self, query: &SearchQuery) -> Result<Box<dyn Query>> {
         let mut subqueries: Vec<(Occur, Box<dyn Query>)> = Vec::new();
 
         if let Some(fulltext) = &query.fulltext {
@@ -209,7 +210,7 @@ impl SearchState {
         }
     }
 
-    pub fn index_info(&self) -> TantivyResult<IndexInfo> {
+    pub fn index_info(&self) -> Result<IndexInfo> {
         let searcher = self.reader.searcher();
         let features = self.recipe_index.aggregate_features(
             &searcher,
@@ -225,7 +226,7 @@ impl SearchState {
 }
 
 #[actix_rt::main]
-async fn main() -> IoResult<()> {
+async fn main() -> Result<()> {
     std::env::set_var("RUST_LOG", "actix_server=info,actix_web=info");
     env_logger::init();
 
@@ -234,15 +235,15 @@ async fn main() -> IoResult<()> {
     let index_path = options.base_path.join("tantivy");
     let db_path = options.base_path.join("database");
 
-    let index = Index::open_in_dir(&index_path).unwrap();
-    let recipe_index = RecipeIndex::try_from(&index.schema()).unwrap();
+    let index = Index::open_in_dir(&index_path)?;
+    let recipe_index = RecipeIndex::try_from(&index.schema())?;
     let query_parser = QueryParser::new(
         recipe_index.fulltext,
-        index.tokenizer_for_field(recipe_index.fulltext).unwrap(),
+        index.tokenizer_for_field(recipe_index.fulltext)?,
         true,
     );
 
-    let reader = index.reader().unwrap();
+    let reader = index.reader()?;
     let search_state = Arc::new(SearchState {
         reader,
         recipe_index,
@@ -253,7 +254,7 @@ async fn main() -> IoResult<()> {
     let threshold = options.agg_threshold.unwrap_or(std::usize::MAX);
     let database: RecipeDatabase = Arc::new(DatabaseReader::open(&db_path)?);
 
-    let info = search_state.index_info().expect("Working index");
+    let info = search_state.index_info()?;
 
     HttpServer::new(move || {
         App::new()
@@ -269,5 +270,7 @@ async fn main() -> IoResult<()> {
     })
     .bind("127.0.0.1:8080")?
     .run()
-    .await
+    .await?;
+
+    Ok(())
 }
