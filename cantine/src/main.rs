@@ -9,6 +9,7 @@ use std::{
 
 use actix_web::{http::StatusCode, middleware, web, App, HttpResponse, HttpServer, Result};
 use env_logger;
+use serde::Serialize;
 use structopt::StructOpt;
 use tokio::time::timeout;
 use uuid::Uuid;
@@ -22,8 +23,8 @@ use cantine::{
     database::DatabaseReader,
     index::{After, RecipeIndex},
     model::{
-        FeaturesAggregationResult, Recipe, RecipeCard, RecipeId, RecipeInfo, SearchCursor,
-        SearchQuery, SearchResult, Sort,
+        FeaturesAggregationQuery, FeaturesAggregationResult, Recipe, RecipeCard, RecipeId,
+        RecipeInfo, SearchCursor, SearchQuery, SearchResult, Sort,
     },
 };
 
@@ -65,6 +66,16 @@ pub async fn recipe(
     } else {
         Ok(HttpResponse::new(StatusCode::NOT_FOUND))
     }
+}
+
+#[derive(Serialize, Clone)]
+pub struct IndexInfo {
+    pub total_recipes: u64,
+    pub features: FeaturesAggregationResult,
+}
+
+pub async fn index_info(info: web::Data<IndexInfo>) -> Result<HttpResponse> {
+    Ok(HttpResponse::Ok().json(info.get_ref()))
 }
 
 pub async fn search(
@@ -197,6 +208,20 @@ impl SearchState {
             _ => Ok(Box::new(BooleanQuery::from(subqueries))),
         }
     }
+
+    pub fn index_info(&self) -> TantivyResult<IndexInfo> {
+        let searcher = self.reader.searcher();
+        let features = self.recipe_index.aggregate_features(
+            &searcher,
+            &AllQuery,
+            FeaturesAggregationQuery::full_range(),
+        )?;
+
+        Ok(IndexInfo {
+            total_recipes: searcher.num_docs(),
+            features,
+        })
+    }
 }
 
 #[actix_rt::main]
@@ -228,15 +253,19 @@ async fn main() -> IoResult<()> {
     let threshold = options.agg_threshold.unwrap_or(std::usize::MAX);
     let database: RecipeDatabase = Arc::new(DatabaseReader::open(&db_path)?);
 
+    let info = search_state.index_info().expect("Working index");
+
     HttpServer::new(move || {
         App::new()
             .wrap(middleware::Logger::default())
             .app_data(web::Data::new(search_state.clone()))
             .app_data(web::Data::new(database.clone()))
             .app_data(web::Data::new(Config { timeout, threshold }))
+            .app_data(web::Data::new(info.clone()))
             .data(web::JsonConfig::default().limit(4096))
             .service(web::resource("/recipe/{uuid}").route(web::get().to(recipe)))
             .service(web::resource("/search").route(web::post().to(search)))
+            .service(web::resource("/info").route(web::get().to(index_info)))
     })
     .bind("127.0.0.1:8080")?
     .run()
