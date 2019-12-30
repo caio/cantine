@@ -110,7 +110,7 @@ pub struct Features {
 
     pub calories: Option<u32>,
     pub fat_content: Option<f32>,
-    pub carbohydrate_content: Option<f32>,
+    pub carb_content: Option<f32>,
     pub protein_content: Option<f32>,
 
     pub diet_lowcarb: Option<f32>,

@@ -175,7 +175,7 @@ impl RecipeIndex {
             Sort::PrepTime => collect_unsigned!(prep_time),
             Sort::Calories => collect_unsigned!(calories),
             Sort::FatContent => collect_float!(fat_content),
-            Sort::CarbContent => collect_float!(carbohydrate_content),
+            Sort::CarbContent => collect_float!(carb_content),
             Sort::ProteinContent => collect_float!(protein_content),
         }
     }
