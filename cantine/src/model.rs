@@ -183,8 +183,7 @@ impl SearchCursor {
     }
 }
 
-// XXX Only valid because I know the result is multiple of 4
-const ENCODED_SEARCH_CURSOR_LEN: usize = SearchCursor::SIZE * 8 / 6;
+const ENCODED_SEARCH_CURSOR_LEN: usize = 32;
 
 impl Serialize for SearchCursor {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
