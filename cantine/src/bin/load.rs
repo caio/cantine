@@ -1,5 +1,5 @@
 use std::{
-    io::{self, BufRead, Result},
+    io::{self, BufRead},
     num::NonZeroUsize,
     path::Path,
     result::Result as StdResult,
@@ -12,7 +12,7 @@ use crossbeam_channel::unbounded;
 use serde_json;
 use structopt::StructOpt;
 
-use tantivy::{self, directory::MmapDirectory, schema::SchemaBuilder, Index};
+use tantivy::{self, directory::MmapDirectory, schema::SchemaBuilder, Index, Result};
 
 use cantine::database::DatabaseWriter;
 use cantine::index::RecipeIndex;
@@ -58,8 +58,7 @@ fn load(options: LoadOptions) -> Result<()> {
 
     let fields = RecipeIndex::from(&mut builder);
 
-    let index =
-        Index::open_or_create(MmapDirectory::open(&index_path).unwrap(), builder.build()).unwrap();
+    let index = Index::open_or_create(MmapDirectory::open(&index_path)?, builder.build())?;
 
     // A SpMc channel to paralellize decode and index preparation
     let (line_sender, line_receiver) = unbounded::<String>();
@@ -67,7 +66,7 @@ fn load(options: LoadOptions) -> Result<()> {
     let (recipe_sender, recipe_receiver) = channel();
 
     let buffer_size = options.buffer_size.get();
-    let writer = Arc::new(RwLock::new(index.writer(buffer_size * 1_000_000).unwrap()));
+    let writer = Arc::new(RwLock::new(index.writer(buffer_size * 1_000_000)?));
 
     let num_producers = options.num_producers.get();
     let mut workers = Vec::with_capacity(num_producers);
@@ -87,23 +86,23 @@ fn load(options: LoadOptions) -> Result<()> {
                     .unwrap()
                     .add_document(fields.make_document(&recipe));
 
-                recipe_sender.send(recipe).unwrap();
+                recipe_sender.send(recipe).expect("send always works");
             }
         }))
     }
 
-    let disk_writer = spawn(move || {
-        let mut db = DatabaseWriter::new(db_path).unwrap();
+    let disk_writer = spawn(move || -> Result<()> {
+        let mut db = DatabaseWriter::new(db_path)?;
 
         let cur = Instant::now();
         let mut num_recipes = 0;
 
         for recipe in recipe_receiver {
             num_recipes += 1;
-            db.append(&recipe).expect("Write successful");
+            db.append(&recipe)?;
 
             if num_recipes % options.commit_every.get() == 0 {
-                writer.write().unwrap().commit().unwrap();
+                writer.write()?.commit()?;
 
                 println!(
                     "DiskWriter: {} Documents so far (@ {} secs).",
@@ -113,17 +112,19 @@ fn load(options: LoadOptions) -> Result<()> {
             }
         }
 
-        writer.write().unwrap().commit().unwrap();
+        writer.write()?.commit()?;
 
         println!(
             "DiskWriter: Wrote {} documents in {} seconds",
             num_recipes,
             cur.elapsed().as_secs()
         );
+
+        Ok(())
     });
 
-    for line in io::stdin().lock().lines().filter_map(Result::ok) {
-        line_sender.send(line).unwrap();
+    for line in io::stdin().lock().lines() {
+        line_sender.send(line?).unwrap();
     }
 
     drop(line_sender);
@@ -134,7 +135,7 @@ fn load(options: LoadOptions) -> Result<()> {
 
     drop(recipe_sender);
 
-    disk_writer.join().unwrap();
+    disk_writer.join().unwrap()?;
 
     println!("Done!");
 
