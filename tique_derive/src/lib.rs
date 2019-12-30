@@ -320,10 +320,26 @@ fn make_agg_query(input: &DeriveInput) -> TokenStream2 {
         }
     });
 
+    let full_range = get_public_struct_fields(&input).map(|field| {
+        let name = &field.ident;
+        let ty = extract_type_if_option(&field.ty).unwrap_or(&field.ty);
+        quote_spanned! { field.span()=>
+            #name: vec![std::#ty::MIN..std::#ty::MAX]
+        }
+    });
+
     quote! {
-        #[derive(serde::Serialize, serde::Deserialize, Default, Debug, Clone)]
+        #[derive(serde::Serialize, serde::Deserialize, Default, Debug, Clone, PartialEq)]
         pub struct #name {
             #(#fields),*
+        }
+
+        impl #name {
+            pub fn full_range() -> Self {
+                Self {
+                    #(#full_range),*
+                }
+            }
         }
     }
 }

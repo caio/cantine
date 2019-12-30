@@ -180,6 +180,19 @@ fn add_to_doc_sets_fields_properly() {
 }
 
 #[test]
+fn agg_query_full_range_generation() {
+    assert_eq!(
+        FeatAggregationQuery {
+            a: vec![std::u64::MIN..std::u64::MAX],
+            b: vec![std::i16::MIN..std::i16::MAX],
+            c: vec![std::f32::MIN..std::f32::MAX],
+            d: vec![std::f64::MIN..std::f64::MAX],
+        },
+        FeatAggregationQuery::full_range(),
+    );
+}
+
+#[test]
 fn collector_integration() -> tantivy::Result<()> {
     let mut builder = SchemaBuilder::new();
 
