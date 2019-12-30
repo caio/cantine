@@ -43,7 +43,7 @@ where
 {
     fn from(src: &Range<T>) -> Self {
         Self {
-            min: src.start,
+            min: src.end,
             max: src.start,
             count: 0,
         }
