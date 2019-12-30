@@ -30,7 +30,6 @@ use cantine::{
 use tique::queryparser::QueryParser;
 
 #[derive(Debug, StructOpt)]
-#[structopt(name = "api")]
 pub struct ApiOptions {
     /// Path to the data directory
     #[structopt(validator = is_dir)]
