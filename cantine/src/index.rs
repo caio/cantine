@@ -95,7 +95,7 @@ impl RecipeIndex {
         let cursor = if result.visited.saturating_sub(num_items) > 0 {
             let last_score = result.items[num_items - 1].score;
             let last_id = items[num_items - 1];
-            Some(After::new(last_score, last_id))
+            Some((last_score, last_id).into())
         } else {
             None
         };
@@ -121,7 +121,7 @@ impl RecipeIndex {
         let cursor = if result.visited.saturating_sub(num_items) > 0 {
             let last_score = result.items[num_items - 1].score;
             let last_id = items[num_items - 1];
-            Some(After::from_f64(last_score, last_id))
+            Some((last_score, last_id).into())
         } else {
             None
         };
@@ -161,7 +161,7 @@ impl RecipeIndex {
                 let cursor = if result.visited.saturating_sub(num_items) > 0 {
                     let last_score = result.items[num_items - 1].score;
                     let last_id = items[num_items - 1];
-                    Some(After::from_f32(last_score, last_id))
+                    Some((last_score, last_id).into())
                 } else {
                     None
                 };
@@ -265,14 +265,6 @@ impl After {
         self.0
     }
 
-    fn from_f32(score: f32, recipe_id: RecipeId) -> Self {
-        Self(score.to_bits() as u64, recipe_id)
-    }
-
-    fn from_f64(score: f64, recipe_id: RecipeId) -> Self {
-        Self(score.to_bits(), recipe_id)
-    }
-
     fn score_f32(&self) -> f32 {
         f32::from_bits(self.0 as u32)
     }
@@ -283,6 +275,24 @@ impl After {
 
     fn is_start(&self) -> bool {
         self.0 == INVALID_RECIPE_ID
+    }
+}
+
+impl From<(f32, RecipeId)> for After {
+    fn from(src: (f32, RecipeId)) -> Self {
+        Self(src.0.to_bits() as u64, src.1)
+    }
+}
+
+impl From<(f64, RecipeId)> for After {
+    fn from(src: (f64, RecipeId)) -> Self {
+        Self(src.0.to_bits(), src.1)
+    }
+}
+
+impl From<(u64, RecipeId)> for After {
+    fn from(src: (u64, RecipeId)) -> Self {
+        Self(src.0, src.1)
     }
 }
 

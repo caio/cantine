@@ -117,8 +117,7 @@ pub async fn search(
     for recipe_id in recipe_ids {
         let recipe: Recipe = database
             .find_by_id(recipe_id)
-            .expect("db operational")
-            .expect("item in the index always present in the db");
+            .expect("item in the index always present in the db")?;
         items.push(RecipeCard::from(recipe));
     }
 
