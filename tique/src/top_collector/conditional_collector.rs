@@ -7,15 +7,15 @@ use tantivy::{
 
 use super::{Scored, TopK};
 
-pub trait CollectConditionFactory<T>: Clone {
-    type Type: CollectCondition<T>;
+pub trait ConditionForSegment<T>: Clone {
+    type Type: CheckCondition<T>;
     fn for_segment(&self, reader: &SegmentReader) -> Self::Type;
 }
 
-impl<T, C, F> CollectConditionFactory<T> for F
+impl<T, C, F> ConditionForSegment<T> for F
 where
     F: Clone + Fn(&SegmentReader) -> C,
-    C: CollectCondition<T>,
+    C: CheckCondition<T>,
 {
     type Type = C;
     fn for_segment(&self, reader: &SegmentReader) -> Self::Type {
@@ -23,24 +23,24 @@ where
     }
 }
 
-impl<T> CollectConditionFactory<T> for bool {
+impl<T> ConditionForSegment<T> for bool {
     type Type = bool;
     fn for_segment(&self, _reader: &SegmentReader) -> Self::Type {
         *self
     }
 }
 
-pub trait CollectCondition<T>: 'static + Clone {
+pub trait CheckCondition<T>: 'static + Clone {
     fn check(&self, segment_id: SegmentLocalId, doc_id: DocId, score: T) -> bool;
 }
 
-impl<T> CollectCondition<T> for bool {
+impl<T> CheckCondition<T> for bool {
     fn check(&self, _: SegmentLocalId, _: DocId, _: T) -> bool {
         *self
     }
 }
 
-impl<F, T> CollectCondition<T> for F
+impl<F, T> CheckCondition<T> for F
 where
     F: 'static + Clone + Fn(SegmentLocalId, DocId, T) -> bool,
 {
@@ -51,7 +51,7 @@ where
 
 pub type SearchMarker<T> = Scored<T, DocAddress>;
 
-impl<T> CollectCondition<T> for SearchMarker<T>
+impl<T> CheckCondition<T> for SearchMarker<T>
 where
     T: 'static + PartialOrd + Clone,
 {
@@ -63,7 +63,7 @@ where
 
 pub struct ConditionalTopCollector<T, F>
 where
-    F: CollectConditionFactory<T>,
+    F: ConditionForSegment<T>,
 {
     pub limit: usize,
     condition_factory: F,
@@ -73,7 +73,7 @@ where
 impl<T, F> ConditionalTopCollector<T, F>
 where
     T: PartialOrd,
-    F: CollectConditionFactory<T>,
+    F: ConditionForSegment<T>,
 {
     pub fn with_limit(limit: usize, condition_factory: F) -> Self {
         if limit < 1 {
@@ -93,7 +93,7 @@ where
 
 impl<F> Collector for ConditionalTopCollector<Score, F>
 where
-    F: CollectConditionFactory<Score> + Sync,
+    F: ConditionForSegment<Score> + Sync,
 {
     type Fruit = CollectionResult<Score>;
     type Child = ConditionalTopSegmentCollector<Score, F::Type>;
@@ -121,7 +121,7 @@ where
 
 pub struct ConditionalTopSegmentCollector<T, F>
 where
-    F: CollectCondition<T>,
+    F: CheckCondition<T>,
 {
     segment_id: SegmentLocalId,
     collected: TopK<T, DocId>,
@@ -133,7 +133,7 @@ where
 impl<T, F> ConditionalTopSegmentCollector<T, F>
 where
     T: PartialOrd + Copy,
-    F: CollectCondition<T>,
+    F: CheckCondition<T>,
 {
     pub fn new(segment_id: SegmentLocalId, limit: usize, condition: F) -> Self {
         ConditionalTopSegmentCollector {
@@ -181,7 +181,7 @@ where
 
 impl<F> SegmentCollector for ConditionalTopSegmentCollector<Score, F>
 where
-    F: CollectCondition<Score>,
+    F: CheckCondition<Score>,
 {
     type Fruit = CollectionResult<Score>;
 

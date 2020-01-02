@@ -4,13 +4,13 @@ use tantivy::{
 };
 
 use super::{
-    CollectCondition, CollectConditionFactory, CollectionResult, ConditionalTopCollector,
+    CheckCondition, CollectionResult, ConditionForSegment, ConditionalTopCollector,
     ConditionalTopSegmentCollector,
 };
 
 pub struct CustomScoreTopCollector<T, C, F>
 where
-    C: CollectConditionFactory<T>,
+    C: ConditionForSegment<T>,
 {
     scorer_factory: F,
     condition_factory: C,
@@ -20,8 +20,8 @@ where
 impl<T, C, F> CustomScoreTopCollector<T, C, F>
 where
     T: 'static + PartialOrd + Copy + Sync + Send,
-    C: CollectConditionFactory<T>,
-    F: 'static + Sync + DocScorerFactory<T>,
+    C: ConditionForSegment<T>,
+    F: 'static + Sync + ScorerForSegment<T>,
 {
     pub fn new(limit: usize, condition_factory: C, scorer_factory: F) -> Self {
         Self {
@@ -32,12 +32,12 @@ where
     }
 }
 
-pub trait DocScorerFactory<T>: Sync {
+pub trait ScorerForSegment<T>: Sync {
     type Type: DocScorer<T>;
     fn for_segment(&self, reader: &SegmentReader) -> Self::Type;
 }
 
-impl<T, C, F> DocScorerFactory<T> for F
+impl<T, C, F> ScorerForSegment<T> for F
 where
     F: 'static + Sync + Send + Fn(&SegmentReader) -> C,
     C: DocScorer<T>,
@@ -52,8 +52,8 @@ where
 impl<T, C, F> Collector for CustomScoreTopCollector<T, C, F>
 where
     T: 'static + PartialOrd + Copy + Sync + Send,
-    C: CollectConditionFactory<T> + Sync,
-    F: 'static + DocScorerFactory<T>,
+    C: ConditionForSegment<T> + Sync,
+    F: 'static + ScorerForSegment<T>,
 {
     type Fruit = CollectionResult<T>;
     type Child = CustomScoreTopSegmentCollector<T, C::Type, F::Type>;
@@ -83,7 +83,7 @@ where
 
 pub struct CustomScoreTopSegmentCollector<T, C, F>
 where
-    C: CollectCondition<T>,
+    C: CheckCondition<T>,
 {
     scorer: F,
     collector: ConditionalTopSegmentCollector<T, C>,
@@ -92,7 +92,7 @@ where
 impl<T, C, F> CustomScoreTopSegmentCollector<T, C, F>
 where
     T: PartialOrd + Copy,
-    C: CollectCondition<T>,
+    C: CheckCondition<T>,
     F: DocScorer<T>,
 {
     fn new(segment_id: SegmentLocalId, limit: usize, condition: C, scorer: F) -> Self {
@@ -106,7 +106,7 @@ where
 impl<T, C, F> SegmentCollector for CustomScoreTopSegmentCollector<T, C, F>
 where
     T: 'static + PartialOrd + Copy + Sync + Send,
-    C: CollectCondition<T>,
+    C: CheckCondition<T>,
     F: DocScorer<T>,
 {
     type Fruit = CollectionResult<T>;

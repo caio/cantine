@@ -1,6 +1,6 @@
 use tantivy::{collector::Collector, schema::Field, SegmentReader};
 
-use super::{CollectConditionFactory, CollectionResult, CustomScoreTopCollector};
+use super::{CollectionResult, ConditionForSegment, CustomScoreTopCollector};
 
 macro_rules! fast_field_custom_score_collector {
     ($name: ident, $type: ty, $reader: ident) => {
@@ -10,7 +10,7 @@ macro_rules! fast_field_custom_score_collector {
             condition_factory: C,
         ) -> impl Collector<Fruit = CollectionResult<$type>>
         where
-            C: CollectConditionFactory<$type> + Sync,
+            C: ConditionForSegment<$type> + Sync,
         {
             let scorer_for_segment = move |reader: &SegmentReader| {
                 let scorer = reader
