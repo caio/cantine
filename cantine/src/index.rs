@@ -16,8 +16,8 @@ use crate::model::{
 };
 
 use tique::top_collector::{
-    ordered_by_f64_fast_field, ordered_by_u64_fast_field, CollectCondition,
-    CollectConditionFactory, ConditionalTopCollector, SearchMarker,
+    ordered_by_f64_fast_field, ordered_by_u64_fast_field, CheckCondition, ConditionForSegment,
+    ConditionalTopCollector, SearchMarker,
 };
 
 #[derive(Clone)]
@@ -294,7 +294,7 @@ struct PaginationCondition<T> {
     ref_score: T,
 }
 
-impl<T> CollectCondition<T> for PaginationCondition<T>
+impl<T> CheckCondition<T> for PaginationCondition<T>
 where
     T: 'static + PartialOrd + Clone,
 {
@@ -342,7 +342,7 @@ impl Paginator<f32> {
     }
 }
 
-impl<T> CollectConditionFactory<T> for Paginator<T>
+impl<T> ConditionForSegment<T> for Paginator<T>
 where
     T: 'static + PartialOrd + Copy,
 {
