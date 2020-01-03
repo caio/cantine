@@ -3,14 +3,12 @@ use std::{
     path::{Path, PathBuf},
     result::Result as StdResult,
     sync::Arc,
-    time::Duration,
 };
 
 use env_logger;
 use serde::Serialize;
 use structopt::StructOpt;
 use tique::queryparser::QueryParser;
-use tokio::time::timeout;
 use uuid::Uuid;
 
 use actix_web::{
@@ -39,9 +37,6 @@ pub struct ApiOptions {
     /// Only aggregate when found less recipes than given threshold
     #[structopt(short, long)]
     agg_threshold: Option<usize>,
-    /// Search execution timeout in ms
-    #[structopt(short, long, default_value = "2000")]
-    timeout: u64,
 }
 
 fn is_dir(dir_path: String) -> StdResult<(), String> {
@@ -82,7 +77,6 @@ pub async fn index_info(info: web::Data<IndexInfo>) -> ActixResult<HttpResponse>
 pub async fn search(
     query: web::Json<SearchQuery>,
     state: web::Data<Arc<SearchState>>,
-    config: web::Data<Config>,
     database: web::Data<RecipeDatabase>,
 ) -> ActixResult<HttpResponse> {
     let after = match &query.after {
@@ -96,21 +90,8 @@ pub async fn search(
         }
     };
 
-    let agg_threshold = config.threshold;
-    let timed_search_future = timeout(
-        Duration::from_millis(config.timeout),
-        web::block(move || -> Result<ExecuteResult> {
-            state.search(query.0, after, agg_threshold)
-        }),
-    );
-
-    let (total_found, recipe_ids, after, agg) = {
-        if let Ok(actual_result) = timed_search_future.await {
-            actual_result?
-        } else {
-            return Ok(HttpResponse::new(StatusCode::GATEWAY_TIMEOUT));
-        }
-    };
+    let (total_found, recipe_ids, after, agg) =
+        web::block(move || -> Result<ExecuteResult> { state.search(query.0, after) }).await?;
 
     let num_results = recipe_ids.len();
     let mut items = Vec::with_capacity(num_results);
@@ -141,24 +122,15 @@ type ExecuteResult = (
     Option<FeaturesAggregationResult>,
 );
 
-pub struct Config {
-    pub threshold: usize,
-    pub timeout: u64,
-}
-
 pub struct SearchState {
     reader: IndexReader,
     recipe_index: RecipeIndex,
     query_parser: QueryParser,
+    agg_threshold: usize,
 }
 
 impl SearchState {
-    pub fn search(
-        &self,
-        query: SearchQuery,
-        after: After,
-        threshold: usize,
-    ) -> Result<ExecuteResult> {
+    pub fn search(&self, query: SearchQuery, after: After) -> Result<ExecuteResult> {
         let limit = query.num_items.unwrap_or(10) as usize;
 
         let searcher = self.reader.searcher();
@@ -172,7 +144,7 @@ impl SearchState {
             after,
         )?;
 
-        let agg = if total_found <= threshold {
+        let agg = if total_found <= self.agg_threshold {
             query
                 .agg
                 .map(|agg_query| {
@@ -242,15 +214,15 @@ async fn main() -> Result<()> {
         true,
     );
 
+    let agg_threshold = options.agg_threshold.unwrap_or(std::usize::MAX);
     let reader = index.reader()?;
     let search_state = Arc::new(SearchState {
         reader,
         recipe_index,
         query_parser,
+        agg_threshold,
     });
 
-    let timeout = options.timeout;
-    let threshold = options.agg_threshold.unwrap_or(std::usize::MAX);
     let database: RecipeDatabase = Arc::new(DatabaseReader::open(&db_path)?);
 
     let info = search_state.index_info()?;
@@ -260,7 +232,6 @@ async fn main() -> Result<()> {
             .wrap(middleware::Logger::default())
             .app_data(web::Data::new(search_state.clone()))
             .app_data(web::Data::new(database.clone()))
-            .app_data(web::Data::new(Config { timeout, threshold }))
             .app_data(web::Data::new(info.clone()))
             .data(web::JsonConfig::default().limit(4096))
             .service(web::resource("/recipe/{uuid}").route(web::get().to(recipe)))
