@@ -84,18 +84,15 @@ impl QueryParser {
 
     // May result in Ok(None) because the tokenizer might give us nothing
     fn query_from_token(&self, token: &Token) -> Result<Option<Box<dyn Query>>> {
-        match token {
-            Token::Term(t) => self.assemble_query(t, false),
+        let (query, negate) = match token {
+            Token::Term(t, neg) => (self.assemble_query(t, false)?, *neg),
+            Token::Phrase(p, neg) => (self.assemble_query(p, true)?, *neg),
+        };
 
-            Token::Phrase(p) => self.assemble_query(p, true),
-
-            Token::NotTerm(t) => Ok(self
-                .assemble_query(t, false)?
-                .map(|inner| Self::negate_query(inner))),
-
-            Token::NotPhrase(p) => Ok(self
-                .assemble_query(p, true)?
-                .map(|inner| Self::negate_query(inner))),
+        if negate {
+            Ok(query.map(|inner| Self::negate_query(inner)))
+        } else {
+            Ok(query)
         }
     }
 
