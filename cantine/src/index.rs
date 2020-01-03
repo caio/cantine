@@ -240,13 +240,6 @@ impl TryFrom<&Schema> for RecipeIndex {
     }
 }
 
-pub type RecipeIndexSearchResult = (
-    usize,
-    Vec<RecipeId>,
-    Option<After>,
-    Option<FeaturesAggregationResult>,
-);
-
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct After(u64, RecipeId);
 
