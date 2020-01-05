@@ -43,6 +43,7 @@ pub struct RecipeCard {
     pub name: String,
     pub uuid: Uuid,
     pub crawl_url: String,
+    pub image: Option<String>,
     pub num_ingredients: u8,
     pub instructions_length: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -54,12 +55,12 @@ pub struct RecipeCard {
 #[derive(Serialize, Deserialize, Debug, Default)]
 pub struct RecipeInfo {
     pub uuid: Uuid,
-
     pub name: String,
     pub crawl_url: String,
+    pub images: Vec<String>,
 
     pub ingredients: Vec<String>,
-    pub images: Vec<String>,
+    pub instructions: Vec<String>,
 
     pub num_ingredients: u8,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -74,9 +75,10 @@ impl From<Recipe> for RecipeInfo {
             uuid: src.uuid,
             name: src.name,
             crawl_url: src.crawl_url,
+            images: src.images,
 
             ingredients: src.ingredients,
-            images: src.images,
+            instructions: src.instructions,
 
             num_ingredients: src.features.num_ingredients,
             total_time: src.features.total_time,
@@ -91,6 +93,7 @@ impl From<Recipe> for RecipeCard {
             name: src.name,
             uuid: src.uuid,
             crawl_url: src.crawl_url,
+            image: src.images.into_iter().next(),
             num_ingredients: src.features.num_ingredients,
             instructions_length: src.features.instructions_length,
             total_time: src.features.total_time,
