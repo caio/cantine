@@ -1,9 +1,4 @@
-use std::{
-    convert::TryFrom,
-    path::{Path, PathBuf},
-    result::Result as StdResult,
-    sync::Arc,
-};
+use std::{convert::TryFrom, path::PathBuf, sync::Arc};
 
 use env_logger;
 use serde::Serialize;
@@ -12,7 +7,7 @@ use tique::queryparser::QueryParser;
 use uuid::Uuid;
 
 use actix_web::{
-    http::StatusCode, middleware, web, App, HttpResponse, HttpServer, Result as ActixResult,
+    http::StatusCode, middleware::Logger, web, App, HttpResponse, HttpServer, Result as ActixResult,
 };
 
 use tantivy::{
@@ -32,19 +27,10 @@ use cantine::{
 #[derive(Debug, StructOpt)]
 pub struct ApiOptions {
     /// Path to the data directory
-    #[structopt(validator = is_dir)]
     base_path: PathBuf,
     /// Only aggregate when found less recipes than given threshold
     #[structopt(short, long)]
     agg_threshold: Option<usize>,
-}
-
-fn is_dir(dir_path: String) -> StdResult<(), String> {
-    if Path::new(dir_path.as_str()).is_dir() {
-        Ok(())
-    } else {
-        Err("Not a directory".to_owned())
-    }
 }
 
 type RecipeDatabase = Arc<DatabaseReader<Recipe>>;
@@ -198,9 +184,7 @@ impl SearchState {
 
 #[actix_rt::main]
 async fn main() -> Result<()> {
-    std::env::set_var("RUST_LOG", "actix_server=info,actix_web=info");
     env_logger::init();
-
     let options = ApiOptions::from_args();
 
     let index_path = options.base_path.join("tantivy");
@@ -229,7 +213,7 @@ async fn main() -> Result<()> {
 
     HttpServer::new(move || {
         App::new()
-            .wrap(middleware::Logger::default())
+            .wrap(Logger::default())
             .app_data(web::Data::new(search_state.clone()))
             .app_data(web::Data::new(database.clone()))
             .app_data(web::Data::new(info.clone()))
