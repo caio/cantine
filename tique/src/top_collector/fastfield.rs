@@ -8,10 +8,49 @@ use tantivy::{
 
 use super::{DocScorer, ScorerForSegment};
 
-pub struct PlainDocScorer<T: FastValue>(FastFieldReader<T>);
-pub struct ReversedDocScorer<T: FastValue>(FastFieldReader<T>);
+pub fn descending<T>(field: Field) -> DescendingFastField<T> {
+    DescendingFastField(field, PhantomData)
+}
 
-impl<T> DocScorer<T> for PlainDocScorer<T>
+pub fn ascending<T>(field: Field) -> AscendingFastField<T> {
+    AscendingFastField(field, PhantomData)
+}
+
+pub struct DescendingFastField<T>(Field, PhantomData<T>);
+
+pub struct AscendingFastField<T>(Field, PhantomData<T>);
+
+macro_rules! impl_scorer_for_segment {
+    ($type: ident) => {
+        impl ScorerForSegment<$type> for DescendingFastField<$type> {
+            type Type = DescendingScorer<$type>;
+
+            fn for_segment(&self, reader: &SegmentReader) -> Self::Type {
+                let scorer = reader.fast_fields().$type(self.0).expect("Field is FAST");
+                DescendingScorer(scorer)
+            }
+        }
+
+        impl ScorerForSegment<$type> for AscendingFastField<$type> {
+            type Type = AscendingScorer<$type>;
+
+            fn for_segment(&self, reader: &SegmentReader) -> Self::Type {
+                let scorer = reader.fast_fields().$type(self.0).expect("Field is FAST");
+                AscendingScorer(scorer)
+            }
+        }
+    };
+}
+
+impl_scorer_for_segment!(f64);
+impl_scorer_for_segment!(i64);
+impl_scorer_for_segment!(u64);
+
+pub struct DescendingScorer<T: FastValue>(FastFieldReader<T>);
+
+pub struct AscendingScorer<T: FastValue>(FastFieldReader<T>);
+
+impl<T> DocScorer<T> for DescendingScorer<T>
 where
     T: FastValue + 'static,
 {
@@ -20,7 +59,7 @@ where
     }
 }
 
-impl DocScorer<u64> for ReversedDocScorer<u64> {
+impl DocScorer<u64> for AscendingScorer<u64> {
     fn score(&self, doc_id: DocId) -> u64 {
         std::u64::MAX - self.0.get(doc_id)
     }
@@ -28,7 +67,7 @@ impl DocScorer<u64> for ReversedDocScorer<u64> {
 
 macro_rules! impl_neg_reversed_scorer {
     ($type: ty) => {
-        impl DocScorer<$type> for ReversedDocScorer<$type> {
+        impl DocScorer<$type> for AscendingScorer<$type> {
             fn score(&self, doc_id: DocId) -> $type {
                 self.0.get(doc_id).neg()
             }
@@ -38,43 +77,6 @@ macro_rules! impl_neg_reversed_scorer {
 
 impl_neg_reversed_scorer!(i64);
 impl_neg_reversed_scorer!(f64);
-
-pub struct DescendingFastFieldScorer<T>(Field, PhantomData<T>);
-pub struct AscendingFastFieldScorer<T>(Field, PhantomData<T>);
-
-pub fn descending<T>(field: Field) -> DescendingFastFieldScorer<T> {
-    DescendingFastFieldScorer(field, PhantomData)
-}
-
-pub fn ascending<T>(field: Field) -> AscendingFastFieldScorer<T> {
-    AscendingFastFieldScorer(field, PhantomData)
-}
-
-macro_rules! impl_scorer_for_segment {
-    ($type: ident) => {
-        impl ScorerForSegment<$type> for DescendingFastFieldScorer<$type> {
-            type Type = PlainDocScorer<$type>;
-
-            fn for_segment(&self, reader: &SegmentReader) -> Self::Type {
-                let scorer = reader.fast_fields().$type(self.0).expect("Field is FAST");
-                PlainDocScorer(scorer)
-            }
-        }
-
-        impl ScorerForSegment<$type> for AscendingFastFieldScorer<$type> {
-            type Type = ReversedDocScorer<$type>;
-
-            fn for_segment(&self, reader: &SegmentReader) -> Self::Type {
-                let scorer = reader.fast_fields().$type(self.0).expect("Field is FAST");
-                ReversedDocScorer(scorer)
-            }
-        }
-    };
-}
-
-impl_scorer_for_segment!(f64);
-impl_scorer_for_segment!(i64);
-impl_scorer_for_segment!(u64);
 
 #[cfg(test)]
 use super::{CollectionResult, CustomScoreTopCollector};
