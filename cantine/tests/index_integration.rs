@@ -62,7 +62,7 @@ fn pagination_works() -> Result<()> {
         let (_total, found_ids, next) =
             GLOBAL
                 .cantine
-                .search(&searcher, &AllQuery, 10, Sort::Relevance, after)?;
+                .search(&searcher, &AllQuery, 10, Sort::Relevance, false, after)?;
 
         for id in found_ids {
             seen.insert(id);
@@ -90,6 +90,7 @@ fn sort_works() -> Result<()> {
         &AllQuery,
         INDEX_SIZE,
         Sort::NumIngredients,
+        false,
         After::START,
     )?;
 
@@ -114,6 +115,7 @@ fn float_field_sorting() -> Result<()> {
         &AllQuery,
         INDEX_SIZE,
         Sort::ProteinContent,
+        false,
         After::START,
     )?;
 
@@ -127,6 +129,31 @@ fn float_field_sorting() -> Result<()> {
     }
 
     assert!(last_protein < std::f32::MAX);
+
+    Ok(())
+}
+
+#[test]
+fn ascending_sort() -> Result<()> {
+    let reader = GLOBAL.index.reader()?;
+    let searcher = reader.searcher();
+
+    let (_total, found_ids, _next) = GLOBAL.cantine.search(
+        &searcher,
+        &AllQuery,
+        INDEX_SIZE,
+        Sort::InstructionsLength,
+        true,
+        After::START,
+    )?;
+
+    let mut last_len = 0;
+    for id in found_ids {
+        let recipe = GLOBAL.db.get(&id).unwrap();
+        let cur_len = recipe.features.instructions_length;
+        assert!(cur_len >= last_len);
+        last_len = cur_len;
+    }
 
     Ok(())
 }

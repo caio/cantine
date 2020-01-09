@@ -127,6 +127,7 @@ impl SearchState {
             &interpreted_query,
             limit,
             query.sort.unwrap_or(Sort::Relevance),
+            query.ascending,
             after,
         )?;
 

@@ -146,11 +146,14 @@ pub enum Sort {
 #[serde(deny_unknown_fields)]
 pub struct SearchQuery {
     pub fulltext: Option<String>,
-    pub sort: Option<Sort>,
     pub num_items: Option<u8>,
     pub filter: Option<FeaturesFilterQuery>,
     pub agg: Option<FeaturesAggregationQuery>,
     pub after: Option<SearchCursor>,
+
+    pub sort: Option<Sort>,
+    #[serde(default)]
+    pub ascending: bool,
 }
 
 #[derive(Serialize, Debug, Default)]

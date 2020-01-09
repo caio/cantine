@@ -17,7 +17,7 @@ use crate::model::{
 
 use tique::top_collector::{
     fastfield, CheckCondition, ConditionForSegment, ConditionalTopCollector,
-    CustomScoreTopCollector, SearchMarker,
+    CustomScoreTopCollector, ScorerForSegment, SearchMarker,
 };
 
 #[derive(Clone)]
@@ -77,17 +77,16 @@ impl RecipeIndex {
         Ok(items)
     }
 
-    fn topk_u64(
+    fn topk_u64<S: 'static + ScorerForSegment<u64>>(
         &self,
         searcher: &Searcher,
         query: &dyn Query,
         limit: usize,
         after: After,
-        field: Field,
+        scorer: S,
     ) -> Result<(usize, Vec<RecipeId>, Option<After>)> {
         let condition = Paginator::new_u64(self.id, after);
-        let top_collector =
-            CustomScoreTopCollector::new(limit, condition, fastfield::descending::<u64>(field));
+        let top_collector = CustomScoreTopCollector::new(limit, condition, scorer);
 
         let result = searcher.search(query, &top_collector)?;
         let items = self.addresses_to_ids(&searcher, &result.items)?;
@@ -104,17 +103,16 @@ impl RecipeIndex {
         Ok((result.total, items, cursor))
     }
 
-    fn topk_f64(
+    fn topk_f64<S: 'static + ScorerForSegment<f64>>(
         &self,
         searcher: &Searcher,
         query: &dyn Query,
         limit: usize,
         after: After,
-        field: Field,
+        scorer: S,
     ) -> Result<(usize, Vec<RecipeId>, Option<After>)> {
         let condition = Paginator::new_f64(self.id, after);
-        let top_collector =
-            CustomScoreTopCollector::new(limit, condition, fastfield::descending::<f64>(field));
+        let top_collector = CustomScoreTopCollector::new(limit, condition, scorer);
 
         let result = searcher.search(query, &top_collector)?;
         let items = self.addresses_to_ids(&searcher, &result.items)?;
@@ -137,22 +135,49 @@ impl RecipeIndex {
         query: &dyn Query,
         limit: usize,
         sort: Sort,
+        ascending: bool,
         after: After,
     ) -> Result<(usize, Vec<RecipeId>, Option<After>)> {
+        macro_rules! collect {
+            ($topk: ident, $field:ident) => {{
+                if ascending {
+                    self.$topk(
+                        searcher,
+                        query,
+                        limit,
+                        after,
+                        fastfield::ascending(self.features.$field),
+                    )
+                } else {
+                    self.$topk(
+                        searcher,
+                        query,
+                        limit,
+                        after,
+                        fastfield::descending(self.features.$field),
+                    )
+                }
+            }};
+        }
+
         macro_rules! collect_unsigned {
             ($field:ident) => {{
-                self.topk_u64(searcher, query, limit, after, self.features.$field)
+                collect!(topk_u64, $field)
             }};
         }
 
         macro_rules! collect_float {
             ($field:ident) => {{
-                self.topk_f64(searcher, query, limit, after, self.features.$field)
+                collect!(topk_f64, $field)
             }};
         }
 
         match sort {
             Sort::Relevance => {
+                if ascending {
+                    todo!("TweakedScoreCollector");
+                }
+
                 let condition = Paginator::new(self.id, after);
                 let top_collector = ConditionalTopCollector::with_limit(limit, condition);
 
