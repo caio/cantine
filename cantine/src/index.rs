@@ -16,8 +16,8 @@ use crate::model::{
 };
 
 use tique::top_collector::{
-    ordered_by_f64_fast_field, ordered_by_u64_fast_field, CheckCondition, ConditionForSegment,
-    ConditionalTopCollector, SearchMarker,
+    fastfield, CheckCondition, ConditionForSegment, ConditionalTopCollector,
+    CustomScoreTopCollector, SearchMarker,
 };
 
 #[derive(Clone)]
@@ -86,7 +86,8 @@ impl RecipeIndex {
         field: Field,
     ) -> Result<(usize, Vec<RecipeId>, Option<After>)> {
         let condition = Paginator::new_u64(self.id, after);
-        let top_collector = ordered_by_u64_fast_field(field, limit, condition);
+        let top_collector =
+            CustomScoreTopCollector::new(limit, condition, fastfield::descending::<u64>(field));
 
         let result = searcher.search(query, &top_collector)?;
         let items = self.addresses_to_ids(&searcher, &result.items)?;
@@ -112,7 +113,8 @@ impl RecipeIndex {
         field: Field,
     ) -> Result<(usize, Vec<RecipeId>, Option<After>)> {
         let condition = Paginator::new_f64(self.id, after);
-        let top_collector = ordered_by_f64_fast_field(field, limit, condition);
+        let top_collector =
+            CustomScoreTopCollector::new(limit, condition, fastfield::descending::<f64>(field));
 
         let result = searcher.search(query, &top_collector)?;
         let items = self.addresses_to_ids(&searcher, &result.items)?;
