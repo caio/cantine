@@ -33,3 +33,16 @@ someday, but for now here's a brief outline of the modules:
 * `cantine::database`: A memory-mapped file used as database with the
   index stored in a separate log file and payload serialized as
   `bincode`
+
+* `cantine::index`: What actually drives the recipe index, doing all
+  the custom pagination and sorting logic. It's where most of the
+  code from `tique` gets used.
+
+## Instructions
+
+You can use the sample data to run a tiny version of the API:
+
+```bash
+cargo run --bin load /tmp/cantine < cantine/tests/sample_recipes.jsonlines
+RUST_LOG=debug cargo run /tmp/cantine
+```
