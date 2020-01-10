@@ -267,6 +267,7 @@ fn make_filter_query(input: &DeriveInput) -> TokenStream2 {
 
     quote! {
         #[derive(serde::Serialize, serde::Deserialize, Default, Debug, Clone)]
+        #[serde(deny_unknown_fields)]
         pub struct #name {
             #(#query_fields),*
         }
@@ -330,6 +331,7 @@ fn make_agg_query(input: &DeriveInput) -> TokenStream2 {
 
     quote! {
         #[derive(serde::Serialize, serde::Deserialize, Default, Debug, Clone, PartialEq)]
+        #[serde(deny_unknown_fields)]
         pub struct #name {
             #(#fields),*
         }
