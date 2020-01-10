@@ -9,6 +9,8 @@ use cantine::{
     model::{Recipe, RecipeId, Sort},
 };
 
+use tique::queryparser::QueryParser;
+
 struct GlobalData {
     index: Index,
     cantine: RecipeIndex,
@@ -154,6 +156,49 @@ fn ascending_sort() -> Result<()> {
         assert!(cur_len >= last_len);
         last_len = cur_len;
     }
+
+    Ok(())
+}
+
+#[test]
+fn ascending_sort_works_for_relevance() -> Result<()> {
+    let reader = GLOBAL.index.reader()?;
+    let searcher = reader.searcher();
+
+    let parser = QueryParser::new(
+        GLOBAL.cantine.fulltext,
+        GLOBAL.index.tokenizer_for_field(GLOBAL.cantine.fulltext)?,
+        true,
+    );
+
+    let query = parser.parse("potato cheese")?.unwrap();
+
+    let (_total, found_ids, _next) = GLOBAL.cantine.search(
+        &searcher,
+        &query,
+        INDEX_SIZE,
+        Sort::Relevance,
+        false,
+        After::Start,
+    )?;
+
+    let (total, mut asc_found_ids, _next) = GLOBAL.cantine.search(
+        &searcher,
+        &query,
+        INDEX_SIZE,
+        Sort::Relevance,
+        true,
+        After::Start,
+    )?;
+
+    assert!(total > 5);
+    // NOTE Flaky test: the only reason the reverse check works
+    //      here is because every matching doc has a distinct
+    //      score.
+    //      The reverse() logic doesn't work when scores are
+    //      the same because the topk breaks even by id
+    asc_found_ids.reverse();
+    assert_eq!(found_ids, asc_found_ids);
 
     Ok(())
 }

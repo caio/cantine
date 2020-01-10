@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, convert::TryFrom};
+use std::{cmp::Ordering, convert::TryFrom, ops::Neg};
 
 use bincode;
 use serde::{Deserialize, Serialize};
@@ -17,7 +17,7 @@ use crate::model::{
 
 use tique::top_collector::{
     fastfield, CheckCondition, ConditionForSegment, ConditionalTopCollector,
-    CustomScoreTopCollector, ScorerForSegment, SearchMarker,
+    CustomScoreTopCollector, ScorerForSegment, SearchMarker, TweakedScoreTopCollector,
 };
 
 #[derive(Clone)]
@@ -123,25 +123,43 @@ impl RecipeIndex {
         match sort {
             Sort::Relevance => {
                 if ascending {
-                    todo!("TweakedScoreCollector");
-                }
+                    let condition = Paginator::new(self.id, after);
+                    let top_collector =
+                        TweakedScoreTopCollector::new(limit, condition, |_: &SegmentReader| {
+                            |_doc, score: Score| score.neg()
+                        });
 
-                let condition = Paginator::new(self.id, after);
-                let top_collector = ConditionalTopCollector::with_limit(limit, condition);
+                    let result = searcher.search(query, &top_collector)?;
+                    let items = self.addresses_to_ids(&searcher, &result.items)?;
 
-                let result = searcher.search(query, &top_collector)?;
-                let items = self.addresses_to_ids(&searcher, &result.items)?;
+                    let num_items = items.len();
+                    let cursor = if result.visited.saturating_sub(num_items) > 0 {
+                        let last_score = result.items[num_items - 1].score;
+                        let last_id = items[num_items - 1];
+                        Some((last_score, last_id).into())
+                    } else {
+                        None
+                    };
 
-                let num_items = items.len();
-                let cursor = if result.visited.saturating_sub(num_items) > 0 {
-                    let last_score = result.items[num_items - 1].score;
-                    let last_id = items[num_items - 1];
-                    Some((last_score, last_id).into())
+                    Ok((result.total, items, cursor))
                 } else {
-                    None
-                };
+                    let condition = Paginator::new(self.id, after);
+                    let top_collector = ConditionalTopCollector::with_limit(limit, condition);
 
-                Ok((result.total, items, cursor))
+                    let result = searcher.search(query, &top_collector)?;
+                    let items = self.addresses_to_ids(&searcher, &result.items)?;
+
+                    let num_items = items.len();
+                    let cursor = if result.visited.saturating_sub(num_items) > 0 {
+                        let last_score = result.items[num_items - 1].score;
+                        let last_id = items[num_items - 1];
+                        Some((last_score, last_id).into())
+                    } else {
+                        None
+                    };
+
+                    Ok((result.total, items, cursor))
+                }
             }
             Sort::NumIngredients => collect_unsigned!(num_ingredients),
             Sort::InstructionsLength => collect_unsigned!(instructions_length),
