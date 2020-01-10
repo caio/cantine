@@ -55,7 +55,7 @@ fn pagination_works() -> Result<()> {
     let reader = GLOBAL.index.reader()?;
     let searcher = reader.searcher();
 
-    let mut after = After::START;
+    let mut after = After::Start;
     let mut seen = HashSet::with_capacity(INDEX_SIZE);
 
     loop {
@@ -91,7 +91,7 @@ fn sort_works() -> Result<()> {
         INDEX_SIZE,
         Sort::NumIngredients,
         false,
-        After::START,
+        After::Start,
     )?;
 
     let mut last_num_ingredients = std::u8::MAX;
@@ -116,7 +116,7 @@ fn float_field_sorting() -> Result<()> {
         INDEX_SIZE,
         Sort::ProteinContent,
         false,
-        After::START,
+        After::Start,
     )?;
 
     let mut last_protein = std::f32::MAX;
@@ -144,7 +144,7 @@ fn ascending_sort() -> Result<()> {
         INDEX_SIZE,
         Sort::InstructionsLength,
         true,
-        After::START,
+        After::Start,
     )?;
 
     let mut last_len = 0;

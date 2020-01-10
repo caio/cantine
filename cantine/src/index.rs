@@ -7,7 +7,7 @@ use tantivy::{
     fastfield::FastFieldReader,
     query::Query,
     schema::{Field, Schema, SchemaBuilder, Value, FAST, STORED, TEXT},
-    DocId, Document, Result, Searcher, SegmentLocalId, SegmentReader, TantivyError,
+    DocId, Document, Result, Score, Searcher, SegmentLocalId, SegmentReader, TantivyError,
 };
 
 use crate::model::{
@@ -75,58 +75,6 @@ impl RecipeIndex {
         }
 
         Ok(items)
-    }
-
-    fn topk_u64<S: 'static + ScorerForSegment<u64>>(
-        &self,
-        searcher: &Searcher,
-        query: &dyn Query,
-        limit: usize,
-        after: After,
-        scorer: S,
-    ) -> Result<(usize, Vec<RecipeId>, Option<After>)> {
-        let condition = Paginator::new_u64(self.id, after);
-        let top_collector = CustomScoreTopCollector::new(limit, condition, scorer);
-
-        let result = searcher.search(query, &top_collector)?;
-        let items = self.addresses_to_ids(&searcher, &result.items)?;
-
-        let num_items = items.len();
-        let cursor = if result.visited.saturating_sub(num_items) > 0 {
-            let last_score = result.items[num_items - 1].score;
-            let last_id = items[num_items - 1];
-            Some((last_score, last_id).into())
-        } else {
-            None
-        };
-
-        Ok((result.total, items, cursor))
-    }
-
-    fn topk_f64<S: 'static + ScorerForSegment<f64>>(
-        &self,
-        searcher: &Searcher,
-        query: &dyn Query,
-        limit: usize,
-        after: After,
-        scorer: S,
-    ) -> Result<(usize, Vec<RecipeId>, Option<After>)> {
-        let condition = Paginator::new_f64(self.id, after);
-        let top_collector = CustomScoreTopCollector::new(limit, condition, scorer);
-
-        let result = searcher.search(query, &top_collector)?;
-        let items = self.addresses_to_ids(&searcher, &result.items)?;
-
-        let num_items = items.len();
-        let cursor = if result.visited.saturating_sub(num_items) > 0 {
-            let last_score = result.items[num_items - 1].score;
-            let last_id = items[num_items - 1];
-            Some((last_score, last_id).into())
-        } else {
-            None
-        };
-
-        Ok((result.total, items, cursor))
     }
 
     pub fn search(
@@ -231,6 +179,44 @@ impl RecipeIndex {
     }
 }
 
+macro_rules! impl_typed_topk_fn {
+    ($name: ident, $type: ty, $paginator: ident) => {
+        impl RecipeIndex {
+            fn $name<S>(
+                &self,
+                searcher: &Searcher,
+                query: &dyn Query,
+                limit: usize,
+                after: After,
+                scorer: S,
+            ) -> Result<(usize, Vec<RecipeId>, Option<After>)>
+            where
+                S: 'static + ScorerForSegment<$type>,
+            {
+                let condition = Paginator::$paginator(self.id, after);
+                let top_collector = CustomScoreTopCollector::new(limit, condition, scorer);
+
+                let result = searcher.search(query, &top_collector)?;
+                let items = self.addresses_to_ids(&searcher, &result.items)?;
+
+                let num_items = items.len();
+                let cursor = if result.visited.saturating_sub(num_items) > 0 {
+                    let last_score = result.items[num_items - 1].score;
+                    let last_id = items[num_items - 1];
+                    Some((last_score, last_id).into())
+                } else {
+                    None
+                };
+
+                Ok((result.total, items, cursor))
+            }
+        }
+    };
+}
+
+impl_typed_topk_fn!(topk_u64, u64, new_u64);
+impl_typed_topk_fn!(topk_f64, f64, new_f64);
+
 impl From<&mut SchemaBuilder> for RecipeIndex {
     fn from(builder: &mut SchemaBuilder) -> Self {
         RecipeIndex {
@@ -267,52 +253,29 @@ impl TryFrom<&Schema> for RecipeIndex {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Default, Clone)]
-pub struct After(u64, RecipeId);
-
-impl After {
-    pub const START: Self = Self(INVALID_RECIPE_ID, 0);
-
-    pub fn new(score: u64, recipe_id: RecipeId) -> Self {
-        Self(score, recipe_id)
-    }
-
-    pub fn recipe_id(&self) -> RecipeId {
-        self.1
-    }
-
-    pub fn score(&self) -> u64 {
-        self.0
-    }
-
-    fn score_f32(&self) -> f32 {
-        f32::from_bits(self.0 as u32)
-    }
-
-    fn score_f64(&self) -> f64 {
-        f64::from_bits(self.0)
-    }
-
-    fn is_start(&self) -> bool {
-        self.0 == INVALID_RECIPE_ID
-    }
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum After {
+    Start,
+    Relevance(Score, RecipeId),
+    F64Field(f64, RecipeId),
+    U64Field(u64, RecipeId),
 }
 
-impl From<(f32, RecipeId)> for After {
-    fn from(src: (f32, RecipeId)) -> Self {
-        Self(src.0.to_bits() as u64, src.1)
+impl From<(Score, RecipeId)> for After {
+    fn from(src: (Score, RecipeId)) -> Self {
+        After::Relevance(src.0, src.1)
     }
 }
 
 impl From<(f64, RecipeId)> for After {
     fn from(src: (f64, RecipeId)) -> Self {
-        Self(src.0.to_bits(), src.1)
+        After::F64Field(src.0, src.1)
     }
 }
 
 impl From<(u64, RecipeId)> for After {
     fn from(src: (u64, RecipeId)) -> Self {
-        Self(src.0, src.1)
+        After::U64Field(src.0, src.1)
     }
 }
 
@@ -346,29 +309,31 @@ struct Paginator<T>(Field, bool, RecipeId, T);
 
 impl Paginator<u64> {
     pub fn new_u64(field: Field, after: After) -> Self {
-        Paginator(field, after.is_start(), after.recipe_id(), after.score())
+        match after {
+            After::Start => Paginator(field, true, INVALID_RECIPE_ID, 0),
+            After::U64Field(score, id) => Paginator(field, false, id, score),
+            rest => panic!("Can't handle {:?}", rest),
+        }
     }
 }
 
 impl Paginator<f64> {
     pub fn new_f64(field: Field, after: After) -> Self {
-        Paginator(
-            field,
-            after.is_start(),
-            after.recipe_id(),
-            after.score_f64(),
-        )
+        match after {
+            After::Start => Paginator(field, true, INVALID_RECIPE_ID, 0.0),
+            After::F64Field(score, id) => Paginator(field, false, id, score),
+            rest => panic!("Can't handle {:?}", rest),
+        }
     }
 }
 
 impl Paginator<f32> {
     pub fn new(field: Field, after: After) -> Self {
-        Paginator(
-            field,
-            after.is_start(),
-            after.recipe_id(),
-            after.score_f32(),
-        )
+        match after {
+            After::Start => Paginator(field, true, INVALID_RECIPE_ID, 0.0),
+            After::Relevance(score, id) => Paginator(field, false, id, score),
+            rest => panic!("Can't handle {:?}", rest),
+        }
     }
 }
 

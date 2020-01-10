@@ -1,10 +1,11 @@
-use std::{convert::TryInto, mem::size_of};
+use std::convert::TryInto;
 
 use base64::{self, URL_SAFE_NO_PAD};
 use serde::{
     de::{Deserializer, Error, Visitor},
     Deserialize, Serialize, Serializer,
 };
+use tantivy::Score;
 use uuid::{self, Uuid};
 
 use crate::database::DatabaseRecord;
@@ -168,32 +169,64 @@ pub struct SearchResult {
     pub next: Option<SearchCursor>,
 }
 
-#[derive(Debug, Default, PartialEq)]
-pub struct SearchCursor(pub u64, pub uuid::Bytes);
+#[derive(Debug, PartialEq)]
+pub enum SearchCursor {
+    F64Field(f64, uuid::Bytes),
+    U64Field(u64, uuid::Bytes),
+    Relevance(Score, uuid::Bytes),
+}
 
 impl SearchCursor {
-    pub const SIZE: usize = size_of::<SearchCursor>();
+    /// tag + score_as_bits + uuid
+    pub const SIZE: usize = 1 + 8 + 16;
 
-    pub fn new(score_bits: u64, uuid: &Uuid) -> Self {
-        Self(score_bits, *uuid.as_bytes())
+    pub fn uuid(&self) -> &uuid::Bytes {
+        match self {
+            Self::Relevance(_, uuid) => uuid,
+            Self::U64Field(_, uuid) => uuid,
+            Self::F64Field(_, uuid) => uuid,
+        }
     }
 
     pub fn from_bytes(src: &[u8; Self::SIZE]) -> Self {
-        let score_bits =
-            u64::from_be_bytes(src[0..8].try_into().expect("Slice has correct length"));
-        Self(
-            score_bits,
-            src[8..].try_into().expect("Slice has correct length"),
-        )
+        // tag 0 + 0-padding for f32
+        if src[0..5] == [0, 0, 0, 0, 0] {
+            let score = f32::from_be_bytes(src[5..9].try_into().unwrap());
+            Self::Relevance(score, src[9..].try_into().unwrap())
+        } else if src[0] == 1 {
+            let score = u64::from_be_bytes(src[1..9].try_into().unwrap());
+            Self::U64Field(score, src[9..].try_into().unwrap())
+        } else if src[0] == 2 {
+            let score = f64::from_be_bytes(src[1..9].try_into().unwrap());
+            Self::F64Field(score, src[9..].try_into().unwrap())
+        } else {
+            todo!("change interface to Result")
+        }
     }
 
     pub fn write_bytes(&self, buf: &mut [u8; Self::SIZE]) {
-        buf[0..8].copy_from_slice(&self.0.to_be_bytes());
-        buf[8..].copy_from_slice(&self.1[..]);
+        match self {
+            Self::Relevance(score, uuid) => {
+                // tag 0 + 0-padding
+                buf[0..5].copy_from_slice(&[0, 0, 0, 0, 0]);
+                buf[5..9].copy_from_slice(&score.to_be_bytes());
+                buf[9..].copy_from_slice(&uuid[..]);
+            }
+            Self::U64Field(score, uuid) => {
+                buf[0] = 1;
+                buf[1..9].copy_from_slice(&score.to_be_bytes());
+                buf[9..].copy_from_slice(&uuid[..]);
+            }
+            Self::F64Field(score, uuid) => {
+                buf[0] = 2;
+                buf[1..9].copy_from_slice(&score.to_be_bytes());
+                buf[9..].copy_from_slice(&uuid[..]);
+            }
+        }
     }
 }
 
-const ENCODED_SEARCH_CURSOR_LEN: usize = 32;
+const ENCODED_SEARCH_CURSOR_LEN: usize = 34;
 
 impl Serialize for SearchCursor {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -254,13 +287,23 @@ mod tests {
 
     #[test]
     fn search_cursor_json_round_trip() {
-        for i in 0..100 {
-            let cursor = SearchCursor::new(i, &Uuid::new_v4());
-
+        let roundtrip = |cursor| {
             let serialized = serde_json::to_string(&cursor).unwrap();
             let deserialized = serde_json::from_str(&serialized).unwrap();
 
             assert_eq!(cursor, deserialized);
+        };
+
+        for i in 0..100 {
+            roundtrip(SearchCursor::Relevance(
+                i as f32 * 1.0f32,
+                *Uuid::new_v4().as_bytes(),
+            ));
+            roundtrip(SearchCursor::U64Field(i, *Uuid::new_v4().as_bytes()));
+            roundtrip(SearchCursor::F64Field(
+                i as f64 * 1.0f64,
+                *Uuid::new_v4().as_bytes(),
+            ));
         }
     }
 

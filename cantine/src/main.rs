@@ -60,16 +60,26 @@ pub async fn index_info(info: web::Data<IndexInfo>) -> ActixResult<HttpResponse>
     Ok(HttpResponse::Ok().json(info.get_ref()))
 }
 
+fn cursor_to_after(database: &RecipeDatabase, cursor: &SearchCursor) -> Option<After> {
+    database
+        .id_for_uuid(&Uuid::from_bytes(*cursor.uuid()))
+        .map(|id| match &cursor {
+            SearchCursor::Relevance(score, _) => After::Relevance(*score, *id),
+            SearchCursor::U64Field(score, _) => After::U64Field(*score, *id),
+            SearchCursor::F64Field(score, _) => After::F64Field(*score, *id),
+        })
+}
+
 pub async fn search(
     query: web::Json<SearchQuery>,
     state: web::Data<Arc<SearchState>>,
     database: web::Data<RecipeDatabase>,
 ) -> ActixResult<HttpResponse> {
     let after = match &query.after {
-        None => After::START,
+        None => After::Start,
         Some(cursor) => {
-            if let Some(recipe_id) = database.id_for_uuid(&Uuid::from_bytes(cursor.1)) {
-                After::new(cursor.0, *recipe_id)
+            if let Some(after) = cursor_to_after(&database, cursor) {
+                after
             } else {
                 return Ok(HttpResponse::new(StatusCode::BAD_REQUEST));
             }
@@ -88,9 +98,15 @@ pub async fn search(
         items.push(RecipeCard::from(recipe));
     }
 
-    let next = after.map(|cursor| {
-        let last = &items[num_results - 1];
-        SearchCursor::new(cursor.score(), &last.uuid)
+    let next = after.map(|after| {
+        let last_uuid = &items[num_results - 1].uuid;
+
+        match after {
+            After::Relevance(score, _) => SearchCursor::Relevance(score, *last_uuid.as_bytes()),
+            After::U64Field(score, _) => SearchCursor::U64Field(score, *last_uuid.as_bytes()),
+            After::F64Field(score, _) => SearchCursor::F64Field(score, *last_uuid.as_bytes()),
+            _ => unreachable!(),
+        }
     });
 
     Ok(HttpResponse::Ok().json(SearchResult {
