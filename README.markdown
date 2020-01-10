@@ -14,11 +14,11 @@ generation is implemented in `tique`.
 I plan on exploring the whole ecosystem so documentation will come
 someday, but for now here's a brief outline of the modules:
 
-* `tique::top_collector`: A `tantivy` top collector that allows
-  checking for a condition before collecting a matching document,
-  particularly useful in streaming and highly dynamic filtering
-  contexts. Used in `cantine::index` as a way to navigate results
-  without offsets/pages
+* `tique::top_collector`: A `tantivy` group of top collectors that
+  allows checking for a condition before collecting a matching
+  document, particularly useful in streaming and highly dynamic
+  filtering contexts. Used in `cantine::index` as a way to navigate
+  results without offsets/pages, sort by fields and change ordering.
 
 * `tique::query_parser`: A simplified query parser that only knows
   about term and phrase queries (and their negation). Mostly an excuse
