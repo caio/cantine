@@ -1,6 +1,97 @@
 # Cantine
 
-A cooking recipe search API.
+A cooking recipe search JSON API.
+
+## Walkthrough
+
+The API is publicly accessible:
+
+```bash
+export API=https://caio.co/recipes/api/v0
+export CT="Content-Type: application/json"
+```
+
+You can query via `POST` on `/search`:
+
+```bash
+curl -d'{ "fulltext": "bacon", "num_items": 3 }' -H "${CT}" ${API}/search
+```
+
+The output will contain an array under `items` with each item
+containing fields like `name`, `crawl_url`, `num_ingredients`,
+`image` and more.
+
+If you want more details about a specic recipe, you can `GET`
+at `/recipe/{uuid}`
+
+### Pagination
+
+You should have noticed a `next` field in the output of our
+previous search. Should look like base64-encoded gibberish.
+
+If you submit the same search, but with an extra `after` key
+with the value you got from `next`, you get (surprise!) the
+next results:
+
+```bash
+curl -d'{ "fulltext": "bacon", "after": "AAAAAABAy6c0cM0Rb7VSU3OJkjB7_hHxeA" }' -H "${CT}" ${API}/search
+```
+
+Notice that the result contains a `next` field again? So long
+as a result contains a `next` you can keep using it as `after`
+to paginate through a result set of any size.
+
+
+### Querying Features
+
+You can find out about recipe features we know by querying the
+`/info` endpoint:
+
+```bash
+curl $API/info
+```
+
+Here's a commented example of what you would see by looking
+at the output under `features.num_ingredients`:
+
+```javascript
+{
+  // Lowest number of ingredients (at least) one indexed recipe has
+  "min": 2,
+  // Ditto, but highest
+  "max": 93,
+  // Number of recipes in the index with the "num_ingredients" feature
+  "count": 1183461,
+}
+```
+
+You can sort by any feature via `sort` and change the order to
+ascending via `ascending` (defaults to `false`):
+
+```bash
+curl -d'{ "sort": "num_ingredients", "ascending": true }' -H "${CT}" ${API}/search
+```
+
+And you can query for any feature and value ranges you want. Recipes
+with calories within the `[100,350[` range:
+
+```bash
+curl -d'{ "filter": { "calories": [100, 350] } }' -H "${CT}" ${API}/search
+```
+
+Maybe you'd like to see a more detailed breakdown of a feature:
+
+```bash
+curl -d'{ "fulltext": "cheese bacon", "agg": { "total_time": [ [0, 15], [15, 60], [60, 240] ] } }' -H "${CT}" ${API}/search
+```
+
+Of course, you can filter and aggregate as many features/ranges as
+you want.
+
+**NOTE**: For performance reasons, the `agg` field is omitted from
+the result if too many recipes are found. Adding more filters
+and words to your query always help reducing the number of results.
+
 
 ## Notes
 
