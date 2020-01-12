@@ -65,8 +65,8 @@ at the output under `features.num_ingredients`:
 }
 ```
 
-You can sort by any feature via `sort` and change the order to
-ascending via `ascending` (defaults to `false`):
+You can sort by any feature that doesn't start with "diet_" via `sort`
+and change the order to ascending via `ascending` (defaults to `false`):
 
 ```bash
 curl -d'{ "sort": "num_ingredients", "ascending": true }' -H "${CT}" ${API}/search
