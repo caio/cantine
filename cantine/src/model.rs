@@ -188,19 +188,19 @@ impl SearchCursor {
         }
     }
 
-    pub fn from_bytes(src: &[u8; Self::SIZE]) -> Self {
+    pub fn from_bytes(src: &[u8; Self::SIZE]) -> Result<Self, &str> {
         // tag 0 + 0-padding for f32
         if src[0..5] == [0, 0, 0, 0, 0] {
             let score = f32::from_be_bytes(src[5..9].try_into().unwrap());
-            Self::Relevance(score, src[9..].try_into().unwrap())
+            Ok(Self::Relevance(score, src[9..].try_into().unwrap()))
         } else if src[0] == 1 {
             let score = u64::from_be_bytes(src[1..9].try_into().unwrap());
-            Self::U64Field(score, src[9..].try_into().unwrap())
+            Ok(Self::U64Field(score, src[9..].try_into().unwrap()))
         } else if src[0] == 2 {
             let score = f64::from_be_bytes(src[1..9].try_into().unwrap());
-            Self::F64Field(score, src[9..].try_into().unwrap())
+            Ok(Self::F64Field(score, src[9..].try_into().unwrap()))
         } else {
-            todo!("change interface to Result")
+            Err("Invalid payload")
         }
     }
 
@@ -263,9 +263,8 @@ impl<'de> Visitor<'de> for SearchCursorVisitor {
         base64::decode_config_slice(input, URL_SAFE_NO_PAD, &mut decode_buf[..])
             .map_err(|_| Error::custom("base64_decode failed"))?;
 
-        Ok(SearchCursor::from_bytes(
-            &decode_buf.try_into().expect("Slice has correct length"),
-        ))
+        SearchCursor::from_bytes(&decode_buf.try_into().expect("Slice has correct length"))
+            .map_err(|_| Error::custom("invalid payload"))
     }
 }
 
@@ -307,11 +306,28 @@ mod tests {
         }
     }
 
-    fn search_cursor_from_bytes(input: Vec<u8>) -> TestResult {
+    fn search_cursor_from_bytes(mut input: Vec<u8>) -> TestResult {
         if input.len() != SearchCursor::SIZE {
             TestResult::discard()
         } else {
-            SearchCursor::from_bytes(input.as_slice().try_into().unwrap());
+            // Must not crash ever
+            let _result = SearchCursor::from_bytes(input.as_slice().try_into().unwrap());
+
+            // Tag=1 uses the whole payload
+            input[0] = 1;
+            SearchCursor::from_bytes(input.as_slice().try_into().unwrap())
+                .expect("SearchCursor::U64Field");
+
+            // Tag=2 uses the whole payload
+            input[0] = 2;
+            SearchCursor::from_bytes(input.as_slice().try_into().unwrap())
+                .expect("SearchCursor::F64Field");
+
+            // Tag=0 requires padding
+            input[0..5].copy_from_slice(&[0, 0, 0, 0, 0]);
+            SearchCursor::from_bytes(input.as_slice().try_into().unwrap())
+                .expect("SearchCursor::Relevance");
+
             TestResult::passed()
         }
     }
