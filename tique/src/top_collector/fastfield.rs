@@ -111,7 +111,7 @@ mod tests {
                 let index = Index::create_in_ram(sb.build());
                 let mut writer = index.writer_with_num_threads(1, 3_000_000)?;
 
-                for v in $values.into_iter() {
+                for v in $values.iter() {
                     let mut doc = Document::new();
                     doc.$add(field, *v);
                     writer.add_document(doc);
