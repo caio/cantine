@@ -11,7 +11,7 @@ use actix_web::{
 };
 
 use tantivy::{
-    query::{AllQuery, BooleanQuery, Occur, Query},
+    query::{AllQuery, BooleanQuery, Occur, Query, RangeQuery},
     Index, IndexReader, Result,
 };
 
@@ -174,6 +174,35 @@ impl SearchState {
         if let Some(filter) = &query.filter {
             for query in self.recipe_index.features.interpret(filter).into_iter() {
                 subqueries.push((Occur::Must, query));
+            }
+        }
+
+        macro_rules! max_range_bound {
+            ($type: ident, $range: ident, $field: ident) => {{
+                subqueries.push((
+                    Occur::Must,
+                    Box::new(RangeQuery::$range(
+                        self.recipe_index.features.$field,
+                        std::$type::MIN..std::$type::MAX,
+                    )),
+                ))
+            }};
+        }
+
+        // Sorting by a feature implies filtering for recipes that actually
+        // contain said feature
+        if let Some(sort) = &query.sort {
+            match sort {
+                Sort::Relevance => {}
+                Sort::NumIngredients => max_range_bound!(u64, new_u64, num_ingredients),
+                Sort::InstructionsLength => max_range_bound!(u64, new_u64, instructions_length),
+                Sort::TotalTime => max_range_bound!(u64, new_u64, total_time),
+                Sort::CookTime => max_range_bound!(u64, new_u64, cook_time),
+                Sort::PrepTime => max_range_bound!(u64, new_u64, prep_time),
+                Sort::Calories => max_range_bound!(u64, new_u64, calories),
+                Sort::FatContent => max_range_bound!(f64, new_f64, fat_content),
+                Sort::CarbContent => max_range_bound!(f64, new_f64, carb_content),
+                Sort::ProteinContent => max_range_bound!(f64, new_f64, protein_content),
             }
         }
 
