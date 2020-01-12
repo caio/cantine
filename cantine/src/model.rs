@@ -281,8 +281,8 @@ impl<'de> Deserialize<'de> for SearchCursor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use proptest::prelude::*;
 
+    use quickcheck::{quickcheck, TestResult};
     use serde_json;
 
     #[test]
@@ -307,18 +307,29 @@ mod tests {
         }
     }
 
-    proptest! {
-        #[test]
-        #[allow(unused_must_use)]
-        fn no_crash_json_any_input_size(input in "\\PC*") {
-            serde_json::from_str::<SearchCursor>(input.as_str());
+    fn search_cursor_from_bytes(input: Vec<u8>) -> TestResult {
+        if input.len() != SearchCursor::SIZE {
+            TestResult::discard()
+        } else {
+            SearchCursor::from_bytes(input.as_slice().try_into().unwrap());
+            TestResult::passed()
         }
+    }
 
-        #[test]
-        #[allow(unused_must_use)]
-        fn no_crash_with_properly_sized_junk(buf in prop::array::uniform32(0u8..)) {
+    #[allow(unused_must_use)]
+    fn search_cursor_from_base64(input: Vec<u8>) -> TestResult {
+        if input.len() != ENCODED_SEARCH_CURSOR_LEN {
+            TestResult::discard()
+        } else {
             let visitor = SearchCursorVisitor;
-            visitor.visit_bytes::<serde_json::Error>(&buf);
+            visitor.visit_bytes::<serde_json::Error>(input.as_slice().try_into().unwrap());
+            TestResult::passed()
         }
+    }
+
+    #[test]
+    fn search_cursor_deserialization_does_not_crash() {
+        quickcheck(search_cursor_from_bytes as fn(Vec<u8>) -> TestResult);
+        quickcheck(search_cursor_from_base64 as fn(Vec<u8>) -> TestResult);
     }
 }
