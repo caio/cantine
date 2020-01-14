@@ -88,9 +88,9 @@ impl RecipeIndex {
         after: After,
     ) -> Result<(usize, Vec<RecipeId>, Option<After>)> {
         macro_rules! collect {
-            ($topk: ident, $field:ident) => {{
+            ($type: ty, $field:ident) => {{
                 if ascending {
-                    self.$topk(
+                    self.topk_fast_field::<$type, _, _>(
                         searcher,
                         query,
                         limit,
@@ -98,7 +98,7 @@ impl RecipeIndex {
                         fastfield::ascending(self.features.$field),
                     )
                 } else {
-                    self.$topk(
+                    self.topk_fast_field::<$type, _, _>(
                         searcher,
                         query,
                         limit,
@@ -106,18 +106,6 @@ impl RecipeIndex {
                         fastfield::descending(self.features.$field),
                     )
                 }
-            }};
-        }
-
-        macro_rules! collect_unsigned {
-            ($field:ident) => {{
-                collect!(topk_u64, $field)
-            }};
-        }
-
-        macro_rules! collect_float {
-            ($field:ident) => {{
-                collect!(topk_f64, $field)
             }};
         }
 
@@ -138,15 +126,15 @@ impl RecipeIndex {
                     self.render::<tantivy::Score, _>(&searcher, query, top_collector)
                 }
             }
-            Sort::NumIngredients => collect_unsigned!(num_ingredients),
-            Sort::InstructionsLength => collect_unsigned!(instructions_length),
-            Sort::TotalTime => collect_unsigned!(total_time),
-            Sort::CookTime => collect_unsigned!(cook_time),
-            Sort::PrepTime => collect_unsigned!(prep_time),
-            Sort::Calories => collect_unsigned!(calories),
-            Sort::FatContent => collect_float!(fat_content),
-            Sort::CarbContent => collect_float!(carb_content),
-            Sort::ProteinContent => collect_float!(protein_content),
+            Sort::NumIngredients => collect!(u64, num_ingredients),
+            Sort::InstructionsLength => collect!(u64, instructions_length),
+            Sort::TotalTime => collect!(u64, total_time),
+            Sort::CookTime => collect!(u64, cook_time),
+            Sort::PrepTime => collect!(u64, prep_time),
+            Sort::Calories => collect!(u64, calories),
+            Sort::FatContent => collect!(f64, fat_content),
+            Sort::CarbContent => collect!(f64, carb_content),
+            Sort::ProteinContent => collect!(f64, protein_content),
         }
     }
 
@@ -197,33 +185,26 @@ impl RecipeIndex {
 
         Ok((result.total, items, cursor))
     }
+
+    fn topk_fast_field<T, S, P>(
+        &self,
+        searcher: &Searcher,
+        query: &dyn Query,
+        limit: usize,
+        after: P,
+        scorer: S,
+    ) -> Result<(usize, Vec<RecipeId>, Option<After>)>
+    where
+        T: 'static + Sync + Send + Copy + AsAfter + PartialOrd,
+        S: 'static + ScorerForSegment<T>,
+        P: AsPaginator<T>,
+    {
+        let condition = after.as_paginator(self.id);
+        let top_collector = CustomScoreTopCollector::new(limit, condition, scorer);
+
+        self.render::<T, _>(&searcher, query, top_collector)
+    }
 }
-
-macro_rules! impl_typed_topk_fn {
-    ($name: ident, $type: ty, $paginator: ident) => {
-        impl RecipeIndex {
-            fn $name<S>(
-                &self,
-                searcher: &Searcher,
-                query: &dyn Query,
-                limit: usize,
-                after: After,
-                scorer: S,
-            ) -> Result<(usize, Vec<RecipeId>, Option<After>)>
-            where
-                S: 'static + ScorerForSegment<$type>,
-            {
-                let condition = Paginator::$paginator(self.id, after);
-                let top_collector = CustomScoreTopCollector::new(limit, condition, scorer);
-
-                self.render::<$type, _>(&searcher, query, top_collector)
-            }
-        }
-    };
-}
-
-impl_typed_topk_fn!(topk_u64, u64, new_u64);
-impl_typed_topk_fn!(topk_f64, f64, new_f64);
 
 impl From<&mut SchemaBuilder> for RecipeIndex {
     fn from(builder: &mut SchemaBuilder) -> Self {
@@ -310,7 +291,7 @@ impl AsAfter for f32 {
 }
 
 #[derive(Clone)]
-struct PaginationCondition<T> {
+pub struct PaginationCondition<T> {
     id_reader: FastFieldReader<RecipeId>,
     is_start: bool,
     ref_id: RecipeId,
@@ -335,7 +316,7 @@ where
 }
 
 #[derive(Clone)]
-struct Paginator<T>(Field, bool, RecipeId, T);
+pub struct Paginator<T>(Field, bool, RecipeId, T);
 
 impl Paginator<u64> {
     pub fn new_u64(field: Field, after: After) -> Self {
@@ -364,6 +345,28 @@ impl Paginator<f32> {
             After::Relevance(score, id) => Paginator(field, false, id, score),
             rest => panic!("Can't handle {:?}", rest),
         }
+    }
+}
+
+pub trait AsPaginator<T> {
+    fn as_paginator(self, field: Field) -> Paginator<T>;
+}
+
+impl AsPaginator<u64> for After {
+    fn as_paginator(self, field: Field) -> Paginator<u64> {
+        Paginator::new_u64(field, self)
+    }
+}
+
+impl AsPaginator<f64> for After {
+    fn as_paginator(self, field: Field) -> Paginator<f64> {
+        Paginator::new_f64(field, self)
+    }
+}
+
+impl AsPaginator<f32> for After {
+    fn as_paginator(self, field: Field) -> Paginator<f32> {
+        Paginator::new(field, self)
     }
 }
 
