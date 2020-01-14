@@ -18,7 +18,7 @@ use crate::model::{
 
 use tique::top_collector::{
     fastfield, CheckCondition, CollectionResult, ConditionForSegment, ConditionalTopCollector,
-    CustomScoreTopCollector, ScorerForSegment, SearchMarker, TweakedScoreTopCollector,
+    CustomScoreTopCollector, SearchMarker, TweakedScoreTopCollector,
 };
 
 #[derive(Clone)]
@@ -90,21 +90,21 @@ impl RecipeIndex {
         macro_rules! collect {
             ($type: ty, $field:ident) => {{
                 if ascending {
-                    self.topk_fast_field::<$type, _, _>(
-                        searcher,
-                        query,
+                    let top_collector = CustomScoreTopCollector::new(
                         limit,
-                        after,
+                        after.as_paginator(self.id),
                         fastfield::ascending(self.features.$field),
-                    )
+                    );
+
+                    self.render::<$type, _>(&searcher, query, top_collector)
                 } else {
-                    self.topk_fast_field::<$type, _, _>(
-                        searcher,
-                        query,
+                    let top_collector = CustomScoreTopCollector::new(
                         limit,
-                        after,
+                        after.as_paginator(self.id),
                         fastfield::descending(self.features.$field),
-                    )
+                    );
+
+                    self.render::<$type, _>(&searcher, query, top_collector)
                 }
             }};
         }
@@ -112,18 +112,18 @@ impl RecipeIndex {
         match sort {
             Sort::Relevance => {
                 if ascending {
-                    let condition = Paginator::new(self.id, after);
-                    let top_collector =
-                        TweakedScoreTopCollector::new(limit, condition, |_: &SegmentReader| {
-                            |_doc, score: Score| score.neg()
-                        });
+                    let top_collector = TweakedScoreTopCollector::new(
+                        limit,
+                        after.as_paginator(self.id),
+                        |_: &SegmentReader| |_doc, score: Score| score.neg(),
+                    );
 
-                    self.render::<tantivy::Score, _>(&searcher, query, top_collector)
+                    self.render::<Score, _>(&searcher, query, top_collector)
                 } else {
-                    let condition = Paginator::new(self.id, after);
-                    let top_collector = ConditionalTopCollector::with_limit(limit, condition);
+                    let top_collector =
+                        ConditionalTopCollector::with_limit(limit, after.as_paginator(self.id));
 
-                    self.render::<tantivy::Score, _>(&searcher, query, top_collector)
+                    self.render::<Score, _>(&searcher, query, top_collector)
                 }
             }
             Sort::NumIngredients => collect!(u64, num_ingredients),
@@ -184,25 +184,6 @@ impl RecipeIndex {
         };
 
         Ok((result.total, items, cursor))
-    }
-
-    fn topk_fast_field<T, S, P>(
-        &self,
-        searcher: &Searcher,
-        query: &dyn Query,
-        limit: usize,
-        after: P,
-        scorer: S,
-    ) -> Result<(usize, Vec<RecipeId>, Option<After>)>
-    where
-        T: 'static + Sync + Send + Copy + AsAfter + PartialOrd,
-        S: 'static + ScorerForSegment<T>,
-        P: AsPaginator<T>,
-    {
-        let condition = after.as_paginator(self.id);
-        let top_collector = CustomScoreTopCollector::new(limit, condition, scorer);
-
-        self.render::<T, _>(&searcher, query, top_collector)
     }
 }
 
