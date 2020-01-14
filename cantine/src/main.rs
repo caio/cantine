@@ -75,15 +75,14 @@ pub async fn search(
     state: web::Data<Arc<SearchState>>,
     database: web::Data<RecipeDatabase>,
 ) -> ActixResult<HttpResponse> {
-    let after = match &query.after {
-        None => After::Start,
-        Some(cursor) => {
-            if let Some(after) = cursor_to_after(&database, cursor) {
-                after
-            } else {
-                return Ok(HttpResponse::new(StatusCode::BAD_REQUEST));
-            }
+    let after = if let Some(cursor) = &query.after {
+        let checked_after = cursor_to_after(&database, &cursor);
+        if checked_after.is_none() {
+            return Ok(HttpResponse::new(StatusCode::BAD_REQUEST));
         }
+        checked_after
+    } else {
+        None
     };
 
     let (total_found, recipe_ids, after, agg) =
@@ -105,7 +104,6 @@ pub async fn search(
             After::Relevance(score, _) => SearchCursor::Relevance(score, *last_uuid.as_bytes()),
             After::U64Field(score, _) => SearchCursor::U64Field(score, *last_uuid.as_bytes()),
             After::F64Field(score, _) => SearchCursor::F64Field(score, *last_uuid.as_bytes()),
-            _ => unreachable!(),
         }
     });
 
@@ -132,7 +130,7 @@ pub struct SearchState {
 }
 
 impl SearchState {
-    pub fn search(&self, query: SearchQuery, after: After) -> Result<ExecuteResult> {
+    pub fn search(&self, query: SearchQuery, after: Option<After>) -> Result<ExecuteResult> {
         let limit = query.num_items.unwrap_or(10) as usize;
 
         let searcher = self.reader.searcher();

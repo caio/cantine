@@ -32,7 +32,6 @@ pub struct RecipeIndex {
 const FIELD_ID: &str = "id";
 const FIELD_FULLTEXT: &str = "fulltext";
 const FIELD_FEATURES_BINCODE: &str = "features_bincode";
-const INVALID_RECIPE_ID: RecipeId = 0;
 
 impl RecipeIndex {
     pub fn make_document(&self, recipe: &Recipe) -> Document {
@@ -85,33 +84,67 @@ impl RecipeIndex {
         limit: usize,
         sort: Sort,
         ascending: bool,
-        after: After,
+        after: Option<After>,
     ) -> Result<(usize, Vec<RecipeId>, Option<After>)> {
         macro_rules! collect {
-            ($type: ty, $field:ident) => {{
-                if ascending {
-                    let top_collector = CustomScoreTopCollector::new(
-                        limit,
-                        after.as_paginator(self.id),
-                        fastfield::ascending(self.features.$field),
-                    );
+            ($type: ty, $field:ident) => {
+                match (ascending, after) {
+                    (true, None) => {
+                        let top_collector = CustomScoreTopCollector::new(
+                            limit,
+                            true,
+                            fastfield::ascending(self.features.$field),
+                        );
 
-                    self.render::<$type, _>(&searcher, query, top_collector)
-                } else {
-                    let top_collector = CustomScoreTopCollector::new(
-                        limit,
-                        after.as_paginator(self.id),
-                        fastfield::descending(self.features.$field),
-                    );
+                        self.render::<$type, _>(&searcher, query, top_collector)
+                    }
+                    (false, None) => {
+                        let top_collector = CustomScoreTopCollector::new(
+                            limit,
+                            true,
+                            fastfield::descending(self.features.$field),
+                        );
 
-                    self.render::<$type, _>(&searcher, query, top_collector)
+                        self.render::<$type, _>(&searcher, query, top_collector)
+                    }
+                    (true, Some(after)) => {
+                        let top_collector = CustomScoreTopCollector::new(
+                            limit,
+                            after.as_paginator(self.id),
+                            fastfield::ascending(self.features.$field),
+                        );
+
+                        self.render::<$type, _>(&searcher, query, top_collector)
+                    }
+                    (false, Some(after)) => {
+                        let top_collector = CustomScoreTopCollector::new(
+                            limit,
+                            after.as_paginator(self.id),
+                            fastfield::descending(self.features.$field),
+                        );
+
+                        self.render::<$type, _>(&searcher, query, top_collector)
+                    }
                 }
-            }};
+            };
         }
 
         match sort {
-            Sort::Relevance => {
-                if ascending {
+            Sort::Relevance => match (ascending, after) {
+                (true, None) => {
+                    let top_collector =
+                        TweakedScoreTopCollector::new(limit, true, |_: &SegmentReader| {
+                            |_doc, score: Score| score.neg()
+                        });
+
+                    self.render::<Score, _>(&searcher, query, top_collector)
+                }
+                (false, None) => {
+                    let top_collector = ConditionalTopCollector::with_limit(limit, true);
+
+                    self.render::<Score, _>(&searcher, query, top_collector)
+                }
+                (true, Some(after)) => {
                     let top_collector = TweakedScoreTopCollector::new(
                         limit,
                         after.as_paginator(self.id),
@@ -119,13 +152,14 @@ impl RecipeIndex {
                     );
 
                     self.render::<Score, _>(&searcher, query, top_collector)
-                } else {
+                }
+                (false, Some(after)) => {
                     let top_collector =
                         ConditionalTopCollector::with_limit(limit, after.as_paginator(self.id));
 
                     self.render::<Score, _>(&searcher, query, top_collector)
                 }
-            }
+            },
             Sort::NumIngredients => collect!(u64, num_ingredients),
             Sort::InstructionsLength => collect!(u64, instructions_length),
             Sort::TotalTime => collect!(u64, total_time),
@@ -225,7 +259,6 @@ impl TryFrom<&Schema> for RecipeIndex {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum After {
-    Start,
     Relevance(Score, RecipeId),
     F64Field(f64, RecipeId),
     U64Field(u64, RecipeId),
@@ -274,7 +307,6 @@ impl AsAfter for f32 {
 #[derive(Clone)]
 pub struct PaginationCondition<T> {
     id_reader: FastFieldReader<RecipeId>,
-    is_start: bool,
     ref_id: RecipeId,
     ref_score: T,
 }
@@ -284,9 +316,6 @@ where
     T: 'static + PartialOrd + Clone,
 {
     fn check(&self, _sid: SegmentLocalId, doc_id: DocId, score: T) -> bool {
-        if self.is_start {
-            return true;
-        }
         let recipe_id = self.id_reader.get(doc_id);
         match self.ref_score.partial_cmp(&score) {
             Some(Ordering::Greater) => true,
@@ -302,7 +331,6 @@ pub struct Paginator<T>(Field, bool, RecipeId, T);
 impl Paginator<u64> {
     pub fn new_u64(field: Field, after: After) -> Self {
         match after {
-            After::Start => Paginator(field, true, INVALID_RECIPE_ID, 0),
             After::U64Field(score, id) => Paginator(field, false, id, score),
             rest => panic!("Can't handle {:?}", rest),
         }
@@ -312,7 +340,6 @@ impl Paginator<u64> {
 impl Paginator<f64> {
     pub fn new_f64(field: Field, after: After) -> Self {
         match after {
-            After::Start => Paginator(field, true, INVALID_RECIPE_ID, 0.0),
             After::F64Field(score, id) => Paginator(field, false, id, score),
             rest => panic!("Can't handle {:?}", rest),
         }
@@ -322,7 +349,6 @@ impl Paginator<f64> {
 impl Paginator<f32> {
     pub fn new(field: Field, after: After) -> Self {
         match after {
-            After::Start => Paginator(field, true, INVALID_RECIPE_ID, 0.0),
             After::Relevance(score, id) => Paginator(field, false, id, score),
             rest => panic!("Can't handle {:?}", rest),
         }
@@ -365,7 +391,6 @@ where
 
         PaginationCondition {
             id_reader,
-            is_start: self.1,
             ref_id: self.2,
             ref_score: self.3,
         }

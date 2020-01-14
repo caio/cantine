@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use tantivy::{query::AllQuery, schema::SchemaBuilder, Index, Result};
 
 use cantine::{
-    index::{After, RecipeIndex},
+    index::RecipeIndex,
     model::{Recipe, RecipeId, Sort},
 };
 
@@ -57,7 +57,7 @@ fn pagination_works() -> Result<()> {
     let reader = GLOBAL.index.reader()?;
     let searcher = reader.searcher();
 
-    let mut after = After::Start;
+    let mut after = None;
     let mut seen = HashSet::with_capacity(INDEX_SIZE);
 
     loop {
@@ -71,7 +71,7 @@ fn pagination_works() -> Result<()> {
         }
 
         if let Some(new_after) = next {
-            after = new_after;
+            after = Some(new_after);
         } else {
             break;
         }
@@ -93,7 +93,7 @@ fn sort_works() -> Result<()> {
         INDEX_SIZE,
         Sort::NumIngredients,
         false,
-        After::Start,
+        None,
     )?;
 
     let mut last_num_ingredients = std::u8::MAX;
@@ -118,7 +118,7 @@ fn float_field_sorting() -> Result<()> {
         INDEX_SIZE,
         Sort::ProteinContent,
         false,
-        After::Start,
+        None,
     )?;
 
     let mut last_protein = std::f32::MAX;
@@ -146,7 +146,7 @@ fn ascending_sort() -> Result<()> {
         INDEX_SIZE,
         Sort::InstructionsLength,
         true,
-        After::Start,
+        None,
     )?;
 
     let mut last_len = 0;
@@ -173,23 +173,15 @@ fn ascending_sort_works_for_relevance() -> Result<()> {
 
     let query = parser.parse("potato cheese")?.unwrap();
 
-    let (_total, found_ids, _next) = GLOBAL.cantine.search(
-        &searcher,
-        &query,
-        INDEX_SIZE,
-        Sort::Relevance,
-        false,
-        After::Start,
-    )?;
+    let (_total, found_ids, _next) =
+        GLOBAL
+            .cantine
+            .search(&searcher, &query, INDEX_SIZE, Sort::Relevance, false, None)?;
 
-    let (total, mut asc_found_ids, _next) = GLOBAL.cantine.search(
-        &searcher,
-        &query,
-        INDEX_SIZE,
-        Sort::Relevance,
-        true,
-        After::Start,
-    )?;
+    let (total, mut asc_found_ids, _next) =
+        GLOBAL
+            .cantine
+            .search(&searcher, &query, INDEX_SIZE, Sort::Relevance, true, None)?;
 
     assert!(total > 5);
     // NOTE Flaky test: the only reason the reverse check works
