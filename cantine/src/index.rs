@@ -4,6 +4,7 @@ use bincode;
 use serde::{Deserialize, Serialize};
 use tantivy::{
     self,
+    collector::Collector,
     fastfield::FastFieldReader,
     query::Query,
     schema::{Field, Schema, SchemaBuilder, Value, FAST, STORED, TEXT},
@@ -16,7 +17,7 @@ use crate::model::{
 };
 
 use tique::top_collector::{
-    fastfield, CheckCondition, ConditionForSegment, ConditionalTopCollector,
+    fastfield, CheckCondition, CollectionResult, ConditionForSegment, ConditionalTopCollector,
     CustomScoreTopCollector, ScorerForSegment, SearchMarker, TweakedScoreTopCollector,
 };
 
@@ -129,36 +130,12 @@ impl RecipeIndex {
                             |_doc, score: Score| score.neg()
                         });
 
-                    let result = searcher.search(query, &top_collector)?;
-                    let items = self.addresses_to_ids(&searcher, &result.items)?;
-
-                    let num_items = items.len();
-                    let cursor = if result.visited.saturating_sub(num_items) > 0 {
-                        let last_score = result.items[num_items - 1].score;
-                        let last_id = items[num_items - 1];
-                        Some((last_score, last_id).into())
-                    } else {
-                        None
-                    };
-
-                    Ok((result.total, items, cursor))
+                    self.render::<tantivy::Score, _>(&searcher, query, top_collector)
                 } else {
                     let condition = Paginator::new(self.id, after);
                     let top_collector = ConditionalTopCollector::with_limit(limit, condition);
 
-                    let result = searcher.search(query, &top_collector)?;
-                    let items = self.addresses_to_ids(&searcher, &result.items)?;
-
-                    let num_items = items.len();
-                    let cursor = if result.visited.saturating_sub(num_items) > 0 {
-                        let last_score = result.items[num_items - 1].score;
-                        let last_id = items[num_items - 1];
-                        Some((last_score, last_id).into())
-                    } else {
-                        None
-                    };
-
-                    Ok((result.total, items, cursor))
+                    self.render::<tantivy::Score, _>(&searcher, query, top_collector)
                 }
             }
             Sort::NumIngredients => collect_unsigned!(num_ingredients),
@@ -195,6 +172,31 @@ impl RecipeIndex {
 
         Ok(searcher.search(query, &collector)?)
     }
+
+    fn render<T, C>(
+        &self,
+        searcher: &Searcher,
+        query: &dyn Query,
+        collector: C,
+    ) -> Result<(usize, Vec<RecipeId>, Option<After>)>
+    where
+        T: 'static + Sync + Send + Copy + AsAfter,
+        C: Collector<Fruit = CollectionResult<T>>,
+    {
+        let result = searcher.search(query, &collector)?;
+        let items = self.addresses_to_ids(&searcher, &result.items)?;
+
+        let num_items = items.len();
+        let cursor = if result.visited.saturating_sub(num_items) > 0 {
+            let last_score = result.items[num_items - 1].score;
+            let last_id = items[num_items - 1];
+            Some(last_score.as_after(last_id))
+        } else {
+            None
+        };
+
+        Ok((result.total, items, cursor))
+    }
 }
 
 macro_rules! impl_typed_topk_fn {
@@ -214,19 +216,7 @@ macro_rules! impl_typed_topk_fn {
                 let condition = Paginator::$paginator(self.id, after);
                 let top_collector = CustomScoreTopCollector::new(limit, condition, scorer);
 
-                let result = searcher.search(query, &top_collector)?;
-                let items = self.addresses_to_ids(&searcher, &result.items)?;
-
-                let num_items = items.len();
-                let cursor = if result.visited.saturating_sub(num_items) > 0 {
-                    let last_score = result.items[num_items - 1].score;
-                    let last_id = items[num_items - 1];
-                    Some((last_score, last_id).into())
-                } else {
-                    None
-                };
-
-                Ok((result.total, items, cursor))
+                self.render::<$type, _>(&searcher, query, top_collector)
             }
         }
     };
@@ -294,6 +284,28 @@ impl From<(f64, RecipeId)> for After {
 impl From<(u64, RecipeId)> for After {
     fn from(src: (u64, RecipeId)) -> Self {
         After::U64Field(src.0, src.1)
+    }
+}
+
+pub trait AsAfter {
+    fn as_after(self, id: RecipeId) -> After;
+}
+
+impl AsAfter for u64 {
+    fn as_after(self, id: RecipeId) -> After {
+        (self, id).into()
+    }
+}
+
+impl AsAfter for f64 {
+    fn as_after(self, id: RecipeId) -> After {
+        (self, id).into()
+    }
+}
+
+impl AsAfter for f32 {
+    fn as_after(self, id: RecipeId) -> After {
+        (self, id).into()
     }
 }
 
