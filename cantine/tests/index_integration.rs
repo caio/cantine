@@ -2,7 +2,11 @@ use serde_json;
 
 use once_cell::sync::Lazy;
 use std::collections::{HashMap, HashSet};
-use tantivy::{query::AllQuery, schema::SchemaBuilder, Index, Result};
+use tantivy::{
+    query::{AllQuery, RangeQuery},
+    schema::SchemaBuilder,
+    Index, Result,
+};
 
 use cantine::{
     index::RecipeIndex,
@@ -96,69 +100,132 @@ fn sort_works() -> Result<()> {
         None,
     )?;
 
-    let mut last_num_ingredients = std::u8::MAX;
+    let mut last = None;
     for id in found_ids {
         let recipe = GLOBAL.db.get(&id).unwrap();
-        let num_ingredients = recipe.features.num_ingredients;
-        assert!(num_ingredients <= last_num_ingredients);
-        last_num_ingredients = num_ingredients;
-    }
-
-    Ok(())
-}
-
-#[test]
-fn float_field_sorting() -> Result<()> {
-    let reader = GLOBAL.index.reader()?;
-    let searcher = reader.searcher();
-
-    let (_total, found_ids, _next) = GLOBAL.cantine.search(
-        &searcher,
-        &AllQuery,
-        INDEX_SIZE,
-        Sort::ProteinContent,
-        false,
-        None,
-    )?;
-
-    let mut last_protein = std::f32::MAX;
-    for id in found_ids {
-        let recipe = GLOBAL.db.get(&id).unwrap();
-        if let Some(protein_content) = recipe.features.protein_content {
-            assert!(protein_content <= last_protein);
-            last_protein = protein_content;
+        let current = recipe.features.num_ingredients;
+        if let Some(prev) = last {
+            assert!(current <= prev);
         }
+        last = Some(current)
     }
 
-    assert!(last_protein < std::f32::MAX);
-
-    Ok(())
-}
-
-#[test]
-fn ascending_sort() -> Result<()> {
-    let reader = GLOBAL.index.reader()?;
-    let searcher = reader.searcher();
-
-    let (_total, found_ids, _next) = GLOBAL.cantine.search(
+    let (_total, asc_found_ids, _next) = GLOBAL.cantine.search(
         &searcher,
         &AllQuery,
         INDEX_SIZE,
-        Sort::InstructionsLength,
+        Sort::NumIngredients,
         true,
         None,
     )?;
 
-    let mut last_len = 0;
-    for id in found_ids {
+    let mut last = None;
+    for id in asc_found_ids {
         let recipe = GLOBAL.db.get(&id).unwrap();
-        let cur_len = recipe.features.instructions_length;
-        assert!(cur_len >= last_len);
-        last_len = cur_len;
+        let current = recipe.features.num_ingredients;
+        if let Some(prev) = last {
+            assert!(current >= prev);
+        }
+        last = Some(current)
     }
 
     Ok(())
 }
+
+macro_rules! stress_sort_pagination {
+    ($name: ident, $sort: expr, $field: ident, $type: ident, $range: ident) => {
+        #[test]
+        fn $name() -> Result<()> {
+            let reader = GLOBAL.index.reader()?;
+            let searcher = reader.searcher();
+
+            // Ensure we only get hits that actually have the feature
+            let query = RangeQuery::$range(
+                GLOBAL.cantine.features.$field,
+                std::$type::MIN..std::$type::MAX,
+            );
+
+            // Descending
+            let mut after = None;
+            loop {
+                let (_total, found_ids, next) = GLOBAL
+                    .cantine
+                    .search(&searcher, &query, 10, $sort, false, after)?;
+
+                let mut last_val = None;
+                for id in found_ids {
+                    let recipe = GLOBAL.db.get(&id).unwrap();
+                    let current = recipe.features.$field.unwrap();
+                    if let Some(last) = last_val {
+                        assert!(current <= last)
+                    }
+                    last_val = Some(current);
+                }
+
+                if let Some(new_after) = next {
+                    after = Some(new_after);
+                } else {
+                    break;
+                }
+            }
+
+            // Ascending
+            let mut after = None;
+            loop {
+                let (_total, found_ids, next) = GLOBAL
+                    .cantine
+                    .search(&searcher, &query, 10, $sort, true, after)?;
+
+                let mut last_val = None;
+                for id in found_ids {
+                    let recipe = GLOBAL.db.get(&id).unwrap();
+                    let current = recipe.features.$field.unwrap();
+                    if let Some(last) = last_val {
+                        assert!(current >= last)
+                    }
+                    last_val = Some(current);
+                }
+
+                if let Some(new_after) = next {
+                    after = Some(new_after);
+                } else {
+                    break;
+                }
+            }
+
+            Ok(())
+        }
+    };
+}
+
+stress_sort_pagination!(sort_total_time, Sort::TotalTime, total_time, u64, new_u64);
+stress_sort_pagination!(sort_cook_time, Sort::CookTime, cook_time, u64, new_u64);
+stress_sort_pagination!(sort_prep_time, Sort::PrepTime, prep_time, u64, new_u64);
+stress_sort_pagination!(sort_calories, Sort::Calories, calories, u64, new_u64);
+
+stress_sort_pagination!(
+    sort_fat_content,
+    Sort::FatContent,
+    fat_content,
+    f64,
+    new_f64
+);
+
+stress_sort_pagination!(
+    sort_carb_content,
+    Sort::CarbContent,
+    carb_content,
+    f64,
+    new_f64
+);
+
+stress_sort_pagination!(
+    sort_protein_content,
+    Sort::ProteinContent,
+    protein_content,
+    f64,
+    new_f64
+);
 
 #[test]
 fn ascending_sort_works_for_relevance() -> Result<()> {
