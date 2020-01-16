@@ -128,20 +128,55 @@ pub struct Features {
     pub diet_paleo: Option<f32>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "snake_case")]
-// XXX This can be derived from Features too
 pub enum Sort {
     Relevance,
-    NumIngredients,
-    InstructionsLength,
-    TotalTime,
-    CookTime,
-    PrepTime,
+    RelevanceAsc,
+
     Calories,
-    FatContent,
+    CaloriesAsc,
     CarbContent,
+    CarbContentAsc,
+    CookTime,
+    CookTimeAsc,
+    FatContent,
+    FatContentAsc,
+    InstructionsLength,
+    InstructionsLengthAsc,
+    NumIngredients,
+    NumIngredientsAsc,
+    PrepTime,
+    PrepTimeAsc,
     ProteinContent,
+    ProteinContentAsc,
+    TotalTime,
+    TotalTimeAsc,
+}
+
+impl Sort {
+    pub const VALUES: [Self; 20] = [
+        Sort::Relevance,
+        Sort::RelevanceAsc,
+        Sort::Calories,
+        Sort::CaloriesAsc,
+        Sort::CarbContent,
+        Sort::CarbContentAsc,
+        Sort::CookTime,
+        Sort::CookTimeAsc,
+        Sort::FatContent,
+        Sort::FatContentAsc,
+        Sort::InstructionsLength,
+        Sort::InstructionsLengthAsc,
+        Sort::NumIngredients,
+        Sort::NumIngredientsAsc,
+        Sort::PrepTime,
+        Sort::PrepTimeAsc,
+        Sort::ProteinContent,
+        Sort::ProteinContentAsc,
+        Sort::TotalTime,
+        Sort::TotalTimeAsc,
+    ];
 }
 
 #[derive(Serialize, Deserialize, Debug, Default)]
