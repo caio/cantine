@@ -1,28 +1,42 @@
 # Cantine
 
-A cooking recipe search JSON API.
+A cooking recipe search JSON API with over a million recipes.
 
 ## Walkthrough
 
-The API is publicly accessible:
+The API is publicly accessible at `https://caio.co/recipes/api/v0`.
+
+You can search via `POST` on `/search`:
 
 ```bash
-export API=https://caio.co/recipes/api/v0
-export CT="Content-Type: application/json"
-```
-
-You can query via `POST` on `/search`:
-
-```bash
-curl -d'{ "fulltext": "bacon", "num_items": 3 }' -H "${CT}" ${API}/search
+curl -H "Content-Type: application/json" -d'{ "fulltext": "bacon" }' https://caio.co/recipes/api/v0/search
 ```
 
 The output will contain an array under `items` with each item
 containing fields like `name`, `crawl_url`, `num_ingredients`,
 `image` and more.
 
-If you want more details about a specic recipe, you can `GET`
-at `/recipe/{uuid}`
+If you want more details about a specific recipe, you can `GET`
+at `/recipe/{uuid}`.
+
+There's one more useful endpoint you can `GET`: `/info`.  We'll
+refer to it in more detail later, but it basically describes
+some of the features we support.
+
+Now, to make things easier to read we'll create a simple function
+in bash:
+
+```bash
+export API=https://caio.co/recipes/api/v0
+function search() { curl -XPOST "$API/search" -H "Content-Type: application/json" -d"$1"; echo; }
+```
+
+So we can do a useful search for recipes with bacon, the
+phrase "deep fry" and *without* eggs:
+
+```bash
+search '{ "fulltext": "bacon -egg \"deep fry\"" }'
+```
 
 ### Pagination
 
@@ -34,22 +48,28 @@ with the value you got from `next`, you get (surprise!) the
 next results:
 
 ```bash
-curl -d'{ "fulltext": "bacon", "after": "AAAAAABAy6c0cM0Rb7VSU3OJkjB7_hHxeA" }' -H "${CT}" ${API}/search
+search '{ "fulltext": "bacon", "after": "AAAAAABAy6c0cM0Rb7VSU3OJkjB7_hHxeA" }'
 ```
 
 Notice that the result contains a `next` field again? So long
 as a result contains a `next` you can keep using it as `after`
 to paginate through a result set of any size.
 
+### Sorting
+
+From the `/info` endpoint you can learn all the valid sort
+options.  Currently the default is "relevance", you can sort by
+every feature sans diet-related ones and you can change the order
+to ascending.
+
+```bash
+search '{ "sort": "num_ingredients_asc" }'
+```
 
 ### Querying Features
 
-You can find out about recipe features we know by querying the
-`/info` endpoint:
-
-```bash
-curl $API/info
-```
+From the `/info` endpoint we can also learn about the features we
+know about each recipe.
 
 Here's a commented example of what you would see by looking
 at the output under `features.num_ingredients`:
@@ -65,35 +85,68 @@ at the output under `features.num_ingredients`:
 }
 ```
 
-You can sort by any feature that doesn't start with "diet_" via `sort`
-and change the order to ascending via `ascending` (defaults to `false`):
+#### Filtering
 
-```bash
-curl -d'{ "sort": "num_ingredients", "ascending": true }' -H "${CT}" ${API}/search
-```
-
-And you can query for any feature and value ranges you want. Recipes
+You can query for any feature and value ranges you want. Recipes
 with calories within the `[100,350[` range:
 
 ```bash
-curl -d'{ "filter": { "calories": [100, 350] } }' -H "${CT}" ${API}/search
+search '{ "fulltext": "picanha", "filter": { "calories": [100, 350] } }'
 ```
 
-Maybe you'd like to see a more detailed breakdown of a feature:
+#### Aggregating
+
+You can get a breakdown of any/every feature for arbitrary (half-open)
+ranges.
+
+Maybe you'd like to see a more detailed counts of a search by
+total time:
 
 ```bash
-curl -d'{ "fulltext": "cheese bacon", "agg": { "total_time": [ [0, 15], [15, 60], [60, 240] ] } }' -H "${CT}" ${API}/search
+search '{ "fulltext": "cheese bacon", "agg": { "total_time": [ [0, 15], [15, 60], [60, 240] ] } }'
+```
+
+The output will contain a new `agg` field, that looks something
+like this:
+
+```json
+{
+  "agg": {
+    "total_time": [
+      {
+        "min": 0,
+        "max": 14,
+        "count": 3158
+      },
+      {
+        "min": 15,
+        "max": 58,
+        "count": 8982
+      },
+      {
+        "min": 60,
+        "max": 225,
+        "count": 1594
+      }
+    ]
+}
+```
+
+Which is, in order, the breakdown of each of the ranges we
+requested in the search. So if we add a new filter for `[15,60]`
+to the search we should expect `8982` matching recipes:
+
+```
+search '{ "fulltext": "cheese bacon", "filter": { "total_time": [15, 60] } }'
 ```
 
 Of course, you can filter and aggregate as many features/ranges as
 you want.
 
 **NOTE**: For performance reasons, the `agg` field is omitted from
-the result if too many recipes are found. Adding more filters
-and words to your query always help reducing the number of results.
+the result if too many recipes are found (300k currently).
 
-
-## Notes
+## "Documentation"
 
 This is mostly an exercise in learning rust, so if you are looking for
 well-thought-out things you won't have much luck. The code here is
