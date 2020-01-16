@@ -83,68 +83,45 @@ impl RecipeIndex {
         query: &dyn Query,
         limit: usize,
         sort: Sort,
-        ascending: bool,
         after: Option<After>,
     ) -> Result<(usize, Vec<RecipeId>, Option<After>)> {
         macro_rules! collect {
-            ($type: ty, $field:ident) => {
-                match (ascending, after) {
-                    (true, None) => {
-                        let top_collector = CustomScoreTopCollector::new(
-                            limit,
-                            true,
-                            fastfield::ascending(self.features.$field),
-                        );
+            ($type: ty, $field:ident, $order:ident) => {
+                if let Some(after) = after {
+                    let top_collector = CustomScoreTopCollector::new(
+                        limit,
+                        after.as_paginator(self.id),
+                        fastfield::$order(self.features.$field),
+                    );
 
-                        self.render::<$type, _>(&searcher, query, top_collector)
-                    }
-                    (false, None) => {
-                        let top_collector = CustomScoreTopCollector::new(
-                            limit,
-                            true,
-                            fastfield::descending(self.features.$field),
-                        );
+                    self.render::<$type, _>(&searcher, query, top_collector)
+                } else {
+                    let top_collector = CustomScoreTopCollector::new(
+                        limit,
+                        true,
+                        fastfield::$order(self.features.$field),
+                    );
 
-                        self.render::<$type, _>(&searcher, query, top_collector)
-                    }
-                    (true, Some(after)) => {
-                        let top_collector = CustomScoreTopCollector::new(
-                            limit,
-                            after.as_paginator(self.id),
-                            fastfield::ascending(self.features.$field),
-                        );
-
-                        self.render::<$type, _>(&searcher, query, top_collector)
-                    }
-                    (false, Some(after)) => {
-                        let top_collector = CustomScoreTopCollector::new(
-                            limit,
-                            after.as_paginator(self.id),
-                            fastfield::descending(self.features.$field),
-                        );
-
-                        self.render::<$type, _>(&searcher, query, top_collector)
-                    }
+                    self.render::<$type, _>(&searcher, query, top_collector)
                 }
             };
         }
 
         match sort {
-            Sort::Relevance => match (ascending, after) {
-                (true, None) => {
+            Sort::Relevance => {
+                if let Some(after) = after {
                     let top_collector =
-                        TweakedScoreTopCollector::new(limit, true, |_: &SegmentReader| {
-                            |_doc, score: Score| score.neg()
-                        });
+                        ConditionalTopCollector::with_limit(limit, after.as_paginator(self.id));
 
                     self.render::<Score, _>(&searcher, query, top_collector)
-                }
-                (false, None) => {
+                } else {
                     let top_collector = ConditionalTopCollector::with_limit(limit, true);
 
                     self.render::<Score, _>(&searcher, query, top_collector)
                 }
-                (true, Some(after)) => {
+            }
+            Sort::RelevanceAsc => {
+                if let Some(after) = after {
                     let top_collector = TweakedScoreTopCollector::new(
                         limit,
                         after.as_paginator(self.id),
@@ -152,23 +129,33 @@ impl RecipeIndex {
                     );
 
                     self.render::<Score, _>(&searcher, query, top_collector)
-                }
-                (false, Some(after)) => {
+                } else {
                     let top_collector =
-                        ConditionalTopCollector::with_limit(limit, after.as_paginator(self.id));
+                        TweakedScoreTopCollector::new(limit, true, |_: &SegmentReader| {
+                            |_doc, score: Score| score.neg()
+                        });
 
                     self.render::<Score, _>(&searcher, query, top_collector)
                 }
-            },
-            Sort::NumIngredients => collect!(u64, num_ingredients),
-            Sort::InstructionsLength => collect!(u64, instructions_length),
-            Sort::TotalTime => collect!(u64, total_time),
-            Sort::CookTime => collect!(u64, cook_time),
-            Sort::PrepTime => collect!(u64, prep_time),
-            Sort::Calories => collect!(u64, calories),
-            Sort::FatContent => collect!(f64, fat_content),
-            Sort::CarbContent => collect!(f64, carb_content),
-            Sort::ProteinContent => collect!(f64, protein_content),
+            }
+            Sort::NumIngredients => collect!(u64, num_ingredients, descending),
+            Sort::InstructionsLength => collect!(u64, instructions_length, descending),
+            Sort::TotalTime => collect!(u64, total_time, descending),
+            Sort::CookTime => collect!(u64, cook_time, descending),
+            Sort::PrepTime => collect!(u64, prep_time, descending),
+            Sort::Calories => collect!(u64, calories, descending),
+            Sort::FatContent => collect!(f64, fat_content, descending),
+            Sort::CarbContent => collect!(f64, carb_content, descending),
+            Sort::ProteinContent => collect!(f64, protein_content, descending),
+            Sort::NumIngredientsAsc => collect!(u64, num_ingredients, ascending),
+            Sort::InstructionsLengthAsc => collect!(u64, instructions_length, ascending),
+            Sort::TotalTimeAsc => collect!(u64, total_time, ascending),
+            Sort::CookTimeAsc => collect!(u64, cook_time, ascending),
+            Sort::PrepTimeAsc => collect!(u64, prep_time, ascending),
+            Sort::CaloriesAsc => collect!(u64, calories, ascending),
+            Sort::FatContentAsc => collect!(f64, fat_content, ascending),
+            Sort::CarbContentAsc => collect!(f64, carb_content, ascending),
+            Sort::ProteinContentAsc => collect!(f64, protein_content, ascending),
         }
     }
 

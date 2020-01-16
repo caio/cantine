@@ -1,6 +1,7 @@
 use serde_json;
 
 use once_cell::sync::Lazy;
+use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use tantivy::{
     query::{AllQuery, RangeQuery},
@@ -68,7 +69,7 @@ fn pagination_works() -> Result<()> {
         let (_total, found_ids, next) =
             GLOBAL
                 .cantine
-                .search(&searcher, &AllQuery, 10, Sort::Relevance, false, after)?;
+                .search(&searcher, &AllQuery, 10, Sort::Relevance, after)?;
 
         for id in found_ids {
             seen.insert(id);
@@ -87,18 +88,14 @@ fn pagination_works() -> Result<()> {
 }
 
 #[test]
-fn sort_works() -> Result<()> {
+fn num_ingredients_sort() -> Result<()> {
     let reader = GLOBAL.index.reader()?;
     let searcher = reader.searcher();
 
-    let (_total, found_ids, _next) = GLOBAL.cantine.search(
-        &searcher,
-        &AllQuery,
-        INDEX_SIZE,
-        Sort::NumIngredients,
-        false,
-        None,
-    )?;
+    let (_total, found_ids, _next) =
+        GLOBAL
+            .cantine
+            .search(&searcher, &AllQuery, INDEX_SIZE, Sort::NumIngredients, None)?;
 
     let mut last = None;
     for id in found_ids {
@@ -110,17 +107,16 @@ fn sort_works() -> Result<()> {
         last = Some(current)
     }
 
-    let (_total, asc_found_ids, _next) = GLOBAL.cantine.search(
+    let (_total, found_ids_asc, _next) = GLOBAL.cantine.search(
         &searcher,
         &AllQuery,
         INDEX_SIZE,
-        Sort::NumIngredients,
-        true,
+        Sort::NumIngredientsAsc,
         None,
     )?;
 
     let mut last = None;
-    for id in asc_found_ids {
+    for id in found_ids_asc {
         let recipe = GLOBAL.db.get(&id).unwrap();
         let current = recipe.features.num_ingredients;
         if let Some(prev) = last {
@@ -133,7 +129,7 @@ fn sort_works() -> Result<()> {
 }
 
 macro_rules! stress_sort_pagination {
-    ($name: ident, $sort: expr, $field: ident, $type: ident, $range: ident) => {
+    ($name: ident, $sort: expr, $field: ident, $type: ident, $range: ident, $order: expr) => {
         #[test]
         fn $name() -> Result<()> {
             let reader = GLOBAL.index.reader()?;
@@ -145,43 +141,20 @@ macro_rules! stress_sort_pagination {
                 std::$type::MIN..std::$type::MAX,
             );
 
-            // Descending
             let mut after = None;
             loop {
-                let (_total, found_ids, next) = GLOBAL
-                    .cantine
-                    .search(&searcher, &query, 10, $sort, false, after)?;
+                let (_total, found_ids, next) =
+                    GLOBAL.cantine.search(&searcher, &query, 10, $sort, after)?;
 
                 let mut last_val = None;
                 for id in found_ids {
                     let recipe = GLOBAL.db.get(&id).unwrap();
                     let current = recipe.features.$field.unwrap();
                     if let Some(last) = last_val {
-                        assert!(current <= last)
-                    }
-                    last_val = Some(current);
-                }
-
-                if let Some(new_after) = next {
-                    after = Some(new_after);
-                } else {
-                    break;
-                }
-            }
-
-            // Ascending
-            let mut after = None;
-            loop {
-                let (_total, found_ids, next) = GLOBAL
-                    .cantine
-                    .search(&searcher, &query, 10, $sort, true, after)?;
-
-                let mut last_val = None;
-                for id in found_ids {
-                    let recipe = GLOBAL.db.get(&id).unwrap();
-                    let current = recipe.features.$field.unwrap();
-                    if let Some(last) = last_val {
-                        assert!(current >= last)
+                        let order = current.partial_cmp(&last).unwrap();
+                        if order != Ordering::Equal {
+                            assert_eq!($order, order);
+                        }
                     }
                     last_val = Some(current);
                 }
@@ -198,17 +171,89 @@ macro_rules! stress_sort_pagination {
     };
 }
 
-stress_sort_pagination!(sort_total_time, Sort::TotalTime, total_time, u64, new_u64);
-stress_sort_pagination!(sort_cook_time, Sort::CookTime, cook_time, u64, new_u64);
-stress_sort_pagination!(sort_prep_time, Sort::PrepTime, prep_time, u64, new_u64);
-stress_sort_pagination!(sort_calories, Sort::Calories, calories, u64, new_u64);
+stress_sort_pagination!(
+    sort_total_time,
+    Sort::TotalTime,
+    total_time,
+    u64,
+    new_u64,
+    Ordering::Less
+);
+stress_sort_pagination!(
+    sort_total_time_asc,
+    Sort::TotalTimeAsc,
+    total_time,
+    u64,
+    new_u64,
+    Ordering::Greater
+);
+
+stress_sort_pagination!(
+    sort_cook_time,
+    Sort::CookTime,
+    cook_time,
+    u64,
+    new_u64,
+    Ordering::Less
+);
+stress_sort_pagination!(
+    sort_cook_time_asc,
+    Sort::CookTimeAsc,
+    cook_time,
+    u64,
+    new_u64,
+    Ordering::Greater
+);
+
+stress_sort_pagination!(
+    sort_prep_time,
+    Sort::PrepTime,
+    prep_time,
+    u64,
+    new_u64,
+    Ordering::Less
+);
+stress_sort_pagination!(
+    sort_prep_time_asc,
+    Sort::PrepTimeAsc,
+    prep_time,
+    u64,
+    new_u64,
+    Ordering::Greater
+);
+
+stress_sort_pagination!(
+    sort_calories,
+    Sort::Calories,
+    calories,
+    u64,
+    new_u64,
+    Ordering::Less
+);
+stress_sort_pagination!(
+    sort_calories_asc,
+    Sort::CaloriesAsc,
+    calories,
+    u64,
+    new_u64,
+    Ordering::Greater
+);
 
 stress_sort_pagination!(
     sort_fat_content,
     Sort::FatContent,
     fat_content,
     f64,
-    new_f64
+    new_f64,
+    Ordering::Less
+);
+stress_sort_pagination!(
+    sort_fat_content_asc,
+    Sort::FatContentAsc,
+    fat_content,
+    f64,
+    new_f64,
+    Ordering::Greater
 );
 
 stress_sort_pagination!(
@@ -216,7 +261,16 @@ stress_sort_pagination!(
     Sort::CarbContent,
     carb_content,
     f64,
-    new_f64
+    new_f64,
+    Ordering::Less
+);
+stress_sort_pagination!(
+    sort_carb_content_asc,
+    Sort::CarbContentAsc,
+    carb_content,
+    f64,
+    new_f64,
+    Ordering::Greater
 );
 
 stress_sort_pagination!(
@@ -224,7 +278,16 @@ stress_sort_pagination!(
     Sort::ProteinContent,
     protein_content,
     f64,
-    new_f64
+    new_f64,
+    Ordering::Less
+);
+stress_sort_pagination!(
+    sort_protein_content_asc,
+    Sort::ProteinContentAsc,
+    protein_content,
+    f64,
+    new_f64,
+    Ordering::Greater
 );
 
 #[test]
@@ -243,12 +306,12 @@ fn ascending_sort_works_for_relevance() -> Result<()> {
     let (_total, found_ids, _next) =
         GLOBAL
             .cantine
-            .search(&searcher, &query, INDEX_SIZE, Sort::Relevance, false, None)?;
+            .search(&searcher, &query, INDEX_SIZE, Sort::Relevance, None)?;
 
-    let (total, mut asc_found_ids, _next) =
+    let (total, mut found_ids_asc, _next) =
         GLOBAL
             .cantine
-            .search(&searcher, &query, INDEX_SIZE, Sort::Relevance, true, None)?;
+            .search(&searcher, &query, INDEX_SIZE, Sort::RelevanceAsc, None)?;
 
     assert!(total > 5);
     // NOTE Flaky test: the only reason the reverse check works
@@ -256,8 +319,8 @@ fn ascending_sort_works_for_relevance() -> Result<()> {
     //      score.
     //      The reverse() logic doesn't work when scores are
     //      the same because the topk breaks even by id
-    asc_found_ids.reverse();
-    assert_eq!(found_ids, asc_found_ids);
+    found_ids_asc.reverse();
+    assert_eq!(found_ids, found_ids_asc);
 
     Ok(())
 }

@@ -130,18 +130,28 @@ pub struct Features {
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "snake_case")]
-// XXX This can be derived from Features too
 pub enum Sort {
     Relevance,
-    NumIngredients,
-    InstructionsLength,
-    TotalTime,
-    CookTime,
-    PrepTime,
+    RelevanceAsc,
+
     Calories,
-    FatContent,
+    CaloriesAsc,
     CarbContent,
+    CarbContentAsc,
+    CookTime,
+    CookTimeAsc,
+    FatContent,
+    FatContentAsc,
+    InstructionsLength,
+    InstructionsLengthAsc,
+    NumIngredients,
+    NumIngredientsAsc,
+    PrepTime,
+    PrepTimeAsc,
     ProteinContent,
+    ProteinContentAsc,
+    TotalTime,
+    TotalTimeAsc,
 }
 
 #[derive(Serialize, Deserialize, Debug, Default)]
