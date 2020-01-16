@@ -128,7 +128,7 @@ pub struct Features {
     pub diet_paleo: Option<f32>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "snake_case")]
 pub enum Sort {
     Relevance,
@@ -152,6 +152,31 @@ pub enum Sort {
     ProteinContentAsc,
     TotalTime,
     TotalTimeAsc,
+}
+
+impl Sort {
+    pub const VALUES: [Self; 20] = [
+        Sort::Relevance,
+        Sort::RelevanceAsc,
+        Sort::Calories,
+        Sort::CaloriesAsc,
+        Sort::CarbContent,
+        Sort::CarbContentAsc,
+        Sort::CookTime,
+        Sort::CookTimeAsc,
+        Sort::FatContent,
+        Sort::FatContentAsc,
+        Sort::InstructionsLength,
+        Sort::InstructionsLengthAsc,
+        Sort::NumIngredients,
+        Sort::NumIngredientsAsc,
+        Sort::PrepTime,
+        Sort::PrepTimeAsc,
+        Sort::ProteinContent,
+        Sort::ProteinContentAsc,
+        Sort::TotalTime,
+        Sort::TotalTimeAsc,
+    ];
 }
 
 #[derive(Serialize, Deserialize, Debug, Default)]

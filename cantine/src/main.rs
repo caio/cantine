@@ -54,6 +54,7 @@ pub async fn recipe(
 pub struct IndexInfo {
     pub total_recipes: u64,
     pub features: FeaturesAggregationResult,
+    pub sort: Vec<Sort>,
 }
 
 pub async fn index_info(info: web::Data<IndexInfo>) -> ActixResult<HttpResponse> {
@@ -189,9 +190,12 @@ impl SearchState {
             FeaturesAggregationQuery::full_range(),
         )?;
 
+        let sort = Sort::VALUES.to_vec();
+
         Ok(IndexInfo {
             total_recipes: searcher.num_docs(),
             features,
+            sort,
         })
     }
 }
