@@ -1,5 +1,6 @@
 mod conditional_collector;
 mod custom_score;
+mod ordered;
 mod topk;
 mod tweaked_score;
 
