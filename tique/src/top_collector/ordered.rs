@@ -14,8 +14,8 @@ pub trait TopK<T, D> {
 }
 
 pub trait TopKProvider<T: PartialOrd> {
-    type TK: TopK<T, DocId>;
-    fn new_topk(limit: usize) -> Self::TK;
+    type Child: TopK<T, DocId>;
+    fn new_topk(limit: usize) -> Self::Child;
     fn merge_many(limit: usize, items: Vec<CollectionResult<T>>) -> CollectionResult<T>;
 }
 
@@ -32,7 +32,7 @@ where
     P: 'static + Send + Sync + TopKProvider<Score>,
     CF: ConditionForSegment<T> + Sync,
 {
-    pub fn with_limit(limit: usize, condition_factory: CF) -> Self {
+    pub fn new(limit: usize, condition_factory: CF) -> Self {
         if limit < 1 {
             panic!("Limit must be greater than 0");
         }
@@ -51,7 +51,7 @@ where
     CF: ConditionForSegment<Score> + Sync,
 {
     type Fruit = CollectionResult<Score>;
-    type Child = OrderedSegmentCollector<Score, P::TK, CF::Type>;
+    type Child = OrderedSegmentCollector<Score, P::Child, CF::Type>;
 
     fn requires_scoring(&self) -> bool {
         true
@@ -135,20 +135,14 @@ mod topk {
     pub struct Ascending;
 
     impl<T: PartialOrd> TopKProvider<T> for Ascending {
-        type TK = AscendingTopK<T, DocId>;
+        type Child = AscendingTopK<T, DocId>;
 
-        fn new_topk(limit: usize) -> Self::TK {
-            AscendingTopK {
-                limit,
-                heap: BinaryHeap::with_capacity(limit),
-            }
+        fn new_topk(limit: usize) -> Self::Child {
+            AscendingTopK::new(limit)
         }
 
         fn merge_many(limit: usize, items: Vec<CollectionResult<T>>) -> CollectionResult<T> {
-            let mut topk = AscendingTopK {
-                limit,
-                heap: BinaryHeap::with_capacity(limit),
-            };
+            let mut topk = AscendingTopK::new(limit);
 
             let mut total = 0;
             let mut visited = 0;
@@ -177,9 +171,9 @@ mod topk {
     pub struct Descending;
 
     impl<T: PartialOrd> TopKProvider<T> for Descending {
-        type TK = DescendingTopK<T, DocId>;
+        type Child = DescendingTopK<T, DocId>;
 
-        fn new_topk(limit: usize) -> Self::TK {
+        fn new_topk(limit: usize) -> Self::Child {
             DescendingTopK {
                 limit,
                 heap: BinaryHeap::with_capacity(limit),
@@ -187,10 +181,7 @@ mod topk {
         }
 
         fn merge_many(limit: usize, items: Vec<CollectionResult<T>>) -> CollectionResult<T> {
-            let mut topk = DescendingTopK {
-                limit,
-                heap: BinaryHeap::with_capacity(limit),
-            };
+            let mut topk = DescendingTopK::new(limit);
 
             let mut total = 0;
             let mut visited = 0;
@@ -218,7 +209,7 @@ mod topk {
 
     pub struct AscendingTopK<S, D> {
         limit: usize,
-        heap: BinaryHeap<Scored<S, D>>,
+        heap: BinaryHeap<Scored<S, Reverse<D>>>,
     }
 
     pub struct DescendingTopK<S, D> {
@@ -227,17 +218,27 @@ mod topk {
     }
 
     impl<T: PartialOrd, D: PartialOrd> AscendingTopK<T, D> {
+        fn new(limit: usize) -> Self {
+            Self {
+                limit,
+                heap: BinaryHeap::with_capacity(limit),
+            }
+        }
+
         fn visit(&mut self, score: T, doc: D) {
             if self.heap.len() < self.limit {
-                self.heap.push(Scored { score, doc });
+                self.heap.push(Scored {
+                    score,
+                    doc: Reverse(doc),
+                });
             } else if let Some(mut head) = self.heap.peek_mut() {
                 if match head.score.partial_cmp(&score) {
-                    Some(Ordering::Equal) => doc < head.doc,
-                    Some(Ordering::Less) => true,
+                    Some(Ordering::Equal) => doc < head.doc.0,
+                    Some(Ordering::Greater) => true,
                     _ => false,
                 } {
                     head.score = score;
-                    head.doc = doc;
+                    head.doc.0 = doc;
                 }
             }
         }
@@ -246,7 +247,7 @@ mod topk {
             self.heap
                 .into_sorted_vec()
                 .into_iter()
-                .map(|s| (s.score, s.doc))
+                .map(|s| (s.score, s.doc.0))
                 .collect()
         }
 
@@ -254,12 +255,19 @@ mod topk {
             self.heap
                 .into_vec()
                 .into_iter()
-                .map(|s| (s.score, s.doc))
+                .map(|s| (s.score, s.doc.0))
                 .collect()
         }
     }
 
     impl<T: PartialOrd, D: PartialOrd> DescendingTopK<T, D> {
+        fn new(limit: usize) -> Self {
+            Self {
+                limit,
+                heap: BinaryHeap::with_capacity(limit),
+            }
+        }
+
         fn visit(&mut self, score: T, doc: D) {
             if self.heap.len() < self.limit {
                 self.heap.push(Reverse(Scored { score, doc }));
@@ -319,6 +327,69 @@ mod topk {
             DescendingTopK::into_vec(self)
         }
     }
+
+    #[cfg(test)]
+    mod tests {
+
+        use super::*;
+
+        fn check_topk<S, D, K: TopK<S, D>>(mut topk: K, input: Vec<(S, D)>, wanted: Vec<(S, D)>)
+        where
+            S: PartialOrd + std::fmt::Debug,
+            D: PartialOrd + std::fmt::Debug,
+        {
+            for (score, id) in input {
+                topk.visit(score, id);
+            }
+
+            assert_eq!(wanted, topk.into_sorted_vec());
+        }
+
+        #[test]
+        fn not_at_capacity() {
+            let input = vec![(0.8, 1), (0.2, 3), (0.5, 4), (0.3, 5)];
+            let mut wanted = vec![(0.2, 3), (0.3, 5), (0.5, 4), (0.8, 1)];
+
+            check_topk(AscendingTopK::new(4), input.clone(), wanted.clone());
+
+            wanted.reverse();
+            check_topk(DescendingTopK::new(4), input, wanted);
+        }
+
+        #[test]
+        fn at_capacity() {
+            let input = vec![(0.8, 1), (0.2, 3), (0.3, 5), (0.9, 7), (-0.2, 9)];
+
+            check_topk(
+                AscendingTopK::new(3),
+                input.clone(),
+                vec![(-0.2, 9), (0.2, 3), (0.3, 5)],
+            );
+
+            check_topk(
+                DescendingTopK::new(3),
+                input,
+                vec![(0.9, 7), (0.8, 1), (0.3, 5)],
+            );
+        }
+
+        #[test]
+        fn break_even_scores_by_lowest_doc() {
+            let input = vec![(0.1, 3), (0.1, 1), (0.1, 6), (0.5, 5), (0.5, 4), (0.1, 2)];
+
+            check_topk(
+                AscendingTopK::new(5),
+                input.clone(),
+                vec![(0.1, 1), (0.1, 2), (0.1, 3), (0.1, 6), (0.5, 4)],
+            );
+
+            check_topk(
+                DescendingTopK::new(5),
+                input,
+                vec![(0.5, 4), (0.5, 5), (0.1, 1), (0.1, 2), (0.1, 3)],
+            );
+        }
+    }
 }
 
 #[cfg(test)]
@@ -353,8 +424,8 @@ mod tests {
         let reader = index.reader()?;
         let searcher = reader.searcher();
 
-        let collector_asc = OrderedCollector::<_, topk::Ascending, _>::with_limit(NUM_DOCS, true);
-        let collector_desc = OrderedCollector::<_, topk::Descending, _>::with_limit(NUM_DOCS, true);
+        let collector_asc = OrderedCollector::<_, topk::Ascending, _>::new(NUM_DOCS, true);
+        let collector_desc = OrderedCollector::<_, topk::Descending, _>::new(NUM_DOCS, true);
 
         // Query for "the", which matches all docs and yields
         // a distinct score for each
