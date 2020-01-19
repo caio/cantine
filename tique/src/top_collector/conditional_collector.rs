@@ -165,10 +165,7 @@ where
             .collected
             .into_vec()
             .into_iter()
-            .map(|Scored { score, doc }| Scored {
-                score,
-                doc: DocAddress(segment_id, doc),
-            })
+            .map(|Scored { score, doc }| (score, DocAddress(segment_id, doc)))
             .collect();
 
         CollectionResult {
@@ -198,7 +195,7 @@ where
 pub struct CollectionResult<T> {
     pub total: usize,
     pub visited: usize,
-    pub items: Vec<SearchMarker<T>>,
+    pub items: Vec<(T, DocAddress)>,
 }
 
 impl<T: PartialOrd> CollectionResult<T> {
@@ -211,7 +208,7 @@ impl<T: PartialOrd> CollectionResult<T> {
             total += item.total;
             visited += item.visited;
 
-            for Scored { score, doc } in item.items {
+            for (score, doc) in item.items {
                 topk.visit(score, doc);
             }
         }
@@ -219,7 +216,11 @@ impl<T: PartialOrd> CollectionResult<T> {
         CollectionResult {
             total,
             visited,
-            items: topk.into_sorted_vec(),
+            items: topk
+                .into_sorted_vec()
+                .into_iter()
+                .map(|Scored { score, doc }| (score, doc))
+                .collect(),
         }
     }
 }
@@ -254,9 +255,9 @@ mod tests {
         let result = just_odds.harvest();
         assert_eq!(4, result.total);
         assert_eq!(2, result.visited);
-        for scored in result.items {
-            let DocAddress(seg_id, doc_id) = scored.doc;
-            assert!(condition(seg_id, doc_id, scored.score))
+        for (score, doc) in result.items {
+            let DocAddress(seg_id, doc_id) = doc;
+            assert!(condition(seg_id, doc_id, score))
         }
     }
 
@@ -298,38 +299,32 @@ mod tests {
                 CollectionResult {
                     total: 1,
                     visited: 1,
-                    items: vec![Scored::new(0.5, DocAddress(0, 1))],
+                    items: vec![(0.5, DocAddress(0, 1))],
                 },
                 // S1 has a doc that scored the same as S0, so
                 // it should only appear *after* the one in S0
                 CollectionResult {
                     total: 1,
                     visited: 1,
-                    items: vec![
-                        Scored::new(0.5, DocAddress(1, 1)),
-                        Scored::new(0.6, DocAddress(1, 2)),
-                    ],
+                    items: vec![(0.5, DocAddress(1, 1)), (0.6, DocAddress(1, 2))],
                 },
                 // S2 has two evenly scored docs, the one with
                 // the lowest internal id should appear first
                 CollectionResult {
                     total: 1,
                     visited: 1,
-                    items: vec![
-                        Scored::new(0.2, DocAddress(2, 2)),
-                        Scored::new(0.2, DocAddress(2, 1)),
-                    ],
+                    items: vec![(0.2, DocAddress(2, 2)), (0.2, DocAddress(2, 1))],
                 },
             ])
             .unwrap();
 
         assert_eq!(
             vec![
-                Scored::new(0.6, DocAddress(1, 2)),
-                Scored::new(0.5, DocAddress(0, 1)),
-                Scored::new(0.5, DocAddress(1, 1)),
-                Scored::new(0.2, DocAddress(2, 1)),
-                Scored::new(0.2, DocAddress(2, 2))
+                (0.6, DocAddress(1, 2)),
+                (0.5, DocAddress(0, 1)),
+                (0.5, DocAddress(1, 1)),
+                (0.2, DocAddress(2, 1)),
+                (0.2, DocAddress(2, 2))
             ],
             merged.items
         );

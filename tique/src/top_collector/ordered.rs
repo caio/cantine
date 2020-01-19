@@ -107,10 +107,7 @@ where
             .topk
             .into_vec()
             .into_iter()
-            .map(|(score, doc)| Scored {
-                score,
-                doc: DocAddress(segment_id, doc),
-            })
+            .map(|(score, doc)| (score, DocAddress(segment_id, doc)))
             .collect();
 
         // XXX This is unsorted. It's ok because we sort during
@@ -151,19 +148,15 @@ mod topk {
                 total += item.total;
                 visited += item.visited;
 
-                for collected in item.items {
-                    topk.visit(collected.score, collected.doc);
+                for (score, doc) in item.items {
+                    topk.visit(score, doc);
                 }
             }
 
             CollectionResult {
                 total,
                 visited,
-                items: topk
-                    .into_sorted_vec()
-                    .into_iter()
-                    .map(|(score, doc)| Scored { score, doc })
-                    .collect(),
+                items: topk.into_sorted_vec().into_iter().collect(),
             }
         }
     }
@@ -190,19 +183,15 @@ mod topk {
                 total += item.total;
                 visited += item.visited;
 
-                for collected in item.items {
-                    topk.visit(collected.score, collected.doc);
+                for (score, doc) in item.items {
+                    topk.visit(score, doc);
                 }
             }
 
             CollectionResult {
                 total,
                 visited,
-                items: topk
-                    .into_sorted_vec()
-                    .into_iter()
-                    .map(|(score, doc)| Scored { score, doc })
-                    .collect(),
+                items: topk.into_sorted_vec(),
             }
         }
     }
@@ -441,7 +430,7 @@ mod tests {
         let asc_scores = asc
             .items
             .iter()
-            .map(|scored| scored.score)
+            .map(|(score, _doc)| score)
             .collect::<Vec<_>>();
 
         let mut prev = None;
@@ -455,7 +444,7 @@ mod tests {
         let mut desc_scores = desc
             .items
             .iter()
-            .map(|scored| scored.score)
+            .map(|(score, _doc)| score)
             .collect::<Vec<_>>();
 
         desc_scores.reverse();

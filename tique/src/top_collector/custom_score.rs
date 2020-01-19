@@ -152,7 +152,7 @@ mod tests {
 
         let got = &res.items[0];
         // Is disregarded and doc_id is used instead
-        assert_eq!(got.doc.1, got.score)
+        assert_eq!((got.1).1, got.0)
     }
 
     #[test]
@@ -183,8 +183,8 @@ mod tests {
         assert_eq!(2, result.items.len());
 
         // So we expect that the highest score is 990
-        assert_eq!(result.items[0].score, 990);
-        assert_eq!(result.items[1].score, 980);
+        assert_eq!(result.items[0].0, 990);
+        assert_eq!(result.items[1].0, 980);
 
         Ok(())
     }

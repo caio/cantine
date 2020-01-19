@@ -165,13 +165,13 @@ mod tests {
 
         assert_eq!(100, result.items.len());
         let mut item_iter = result.items.into_iter();
-        let mut last_score = item_iter.next().unwrap().score;
+        let mut last_score = item_iter.next().unwrap().0;
 
         // An AllQuery ends up with every doc scoring the same, so
         // this means highest ids will come first
         for item in item_iter {
-            assert!(last_score > item.score);
-            last_score = item.score;
+            assert!(last_score > item.0);
+            last_score = item.0;
         }
 
         Ok(())

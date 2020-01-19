@@ -94,8 +94,8 @@ mod tests {
     fn just_the_ids<T: PartialOrd>(res: CollectionResult<T>) -> Vec<DocId> {
         res.items
             .into_iter()
-            .map(|item| {
-                let DocAddress(_segment, id) = item.doc;
+            .map(|(_score, doc)| {
+                let DocAddress(_segment, id) = doc;
                 id
             })
             .collect()
@@ -133,7 +133,8 @@ mod tests {
                 let (top, reversed_top) =
                     searcher.search(&AllQuery, &(collector, reversed_collector))?;
 
-                let sorted_scores: Vec<$type> = top.items.iter().map(|r| r.score).collect();
+                let sorted_scores: Vec<$type> =
+                    top.items.iter().map(|(score, _doc)| *score).collect();
                 assert_eq!(
                     $values,
                     sorted_scores.as_slice(),
