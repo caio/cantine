@@ -106,19 +106,16 @@ impl<T: PartialOrd, D: PartialOrd> AscendingTopK<T, D> {
     }
 
     fn visit(&mut self, score: T, doc: D) {
+        let scored = Scored {
+            score,
+            doc: Reverse(doc),
+        };
         if self.heap.len() < self.limit {
-            self.heap.push(Scored {
-                score,
-                doc: Reverse(doc),
-            });
+            self.heap.push(scored);
         } else if let Some(mut head) = self.heap.peek_mut() {
-            if match head.score.partial_cmp(&score) {
-                Some(Ordering::Equal) => doc < head.doc.0,
-                Some(Ordering::Greater) => true,
-                _ => false,
-            } {
-                head.score = score;
-                head.doc.0 = doc;
+            if head.cmp(&scored) == Ordering::Greater {
+                head.score = scored.score;
+                head.doc = scored.doc;
             }
         }
     }
@@ -149,16 +146,13 @@ impl<T: PartialOrd, D: PartialOrd> DescendingTopK<T, D> {
     }
 
     fn visit(&mut self, score: T, doc: D) {
+        let scored = Reverse(Scored { score, doc });
         if self.heap.len() < self.limit {
-            self.heap.push(Reverse(Scored { score, doc }));
+            self.heap.push(scored);
         } else if let Some(mut head) = self.heap.peek_mut() {
-            if match head.0.score.partial_cmp(&score) {
-                Some(Ordering::Equal) => doc < head.0.doc,
-                Some(Ordering::Less) => true,
-                _ => false,
-            } {
-                head.0.score = score;
-                head.0.doc = doc;
+            if head.cmp(&scored) == Ordering::Greater {
+                head.0.score = scored.0.score;
+                head.0.doc = scored.0.doc;
             }
         }
     }
@@ -252,10 +246,11 @@ mod tests {
 
     use super::*;
 
-    fn check_topk<S, D, K: TopK<S, D>>(mut topk: K, input: Vec<(S, D)>, wanted: Vec<(S, D)>)
+    fn check_topk<S, D, K>(mut topk: K, input: Vec<(S, D)>, wanted: Vec<(S, D)>)
     where
         S: PartialOrd + std::fmt::Debug,
         D: PartialOrd + std::fmt::Debug,
+        K: TopK<S, D>,
     {
         for (score, id) in input {
             topk.visit(score, id);
