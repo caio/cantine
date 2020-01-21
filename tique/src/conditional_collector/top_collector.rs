@@ -7,12 +7,12 @@ use tantivy::{
 
 use super::{
     topk::{TopK, TopKProvider},
-    CheckCondition, ConditionForSegment,
+    traits::{CheckCondition, ConditionForSegment},
 };
 
 pub struct TopCollector<T, P, CF> {
     limit: usize,
-    condition_factory: CF,
+    condition_for_segment: CF,
     _score: PhantomData<T>,
     _provider: PhantomData<P>,
 }
@@ -20,16 +20,16 @@ pub struct TopCollector<T, P, CF> {
 impl<T, P, CF> TopCollector<T, P, CF>
 where
     T: PartialOrd,
-    P: 'static + Send + Sync + TopKProvider<Score>,
-    CF: ConditionForSegment<T> + Sync,
+    P: TopKProvider<T>,
+    CF: ConditionForSegment<T>,
 {
-    pub fn new(limit: usize, condition_factory: CF) -> Self {
+    pub fn new(limit: usize, condition_for_segment: CF) -> Self {
         if limit < 1 {
             panic!("Limit must be greater than 0");
         }
         TopCollector {
             limit,
-            condition_factory,
+            condition_for_segment,
             _score: PhantomData,
             _provider: PhantomData,
         }
@@ -39,7 +39,7 @@ where
 impl<P, CF> Collector for TopCollector<Score, P, CF>
 where
     P: 'static + Send + Sync + TopKProvider<Score>,
-    CF: ConditionForSegment<Score> + Sync,
+    CF: Sync + ConditionForSegment<Score>,
 {
     type Fruit = CollectionResult<Score>;
     type Child = TopSegmentCollector<Score, P::Child, CF::Type>;
@@ -60,7 +60,7 @@ where
         Ok(TopSegmentCollector::new(
             segment_id,
             P::new_topk(self.limit),
-            self.condition_factory.for_segment(reader),
+            self.condition_for_segment.for_segment(reader),
         ))
     }
 }
@@ -76,10 +76,11 @@ pub struct TopSegmentCollector<T, K, C> {
 
 impl<T, K, C> TopSegmentCollector<T, K, C>
 where
+    T: Copy,
     K: TopK<T, DocId>,
     C: CheckCondition<T>,
 {
-    fn new(segment_id: SegmentLocalId, topk: K, condition: C) -> Self {
+    pub fn new(segment_id: SegmentLocalId, topk: K, condition: C) -> Self {
         Self {
             total: 0,
             visited: 0,
@@ -94,16 +95,8 @@ where
     fn into_topk(self) -> K {
         self.topk
     }
-}
 
-impl<K, C> SegmentCollector for TopSegmentCollector<Score, K, C>
-where
-    K: TopK<Score, DocId> + 'static,
-    C: CheckCondition<Score>,
-{
-    type Fruit = CollectionResult<Score>;
-
-    fn collect(&mut self, doc: DocId, score: Score) {
+    pub fn collect(&mut self, doc: DocId, score: T) {
         self.total += 1;
         if self
             .condition
@@ -114,7 +107,7 @@ where
         }
     }
 
-    fn harvest(self) -> Self::Fruit {
+    pub fn into_collection_result(self) -> CollectionResult<T> {
         let segment_id = self.segment_id;
         let items = self
             .topk
@@ -131,6 +124,22 @@ where
             visited: self.visited,
             items,
         }
+    }
+}
+
+impl<K, C> SegmentCollector for TopSegmentCollector<Score, K, C>
+where
+    K: 'static + TopK<Score, DocId>,
+    C: CheckCondition<Score>,
+{
+    type Fruit = CollectionResult<Score>;
+
+    fn collect(&mut self, doc: DocId, score: Score) {
+        TopSegmentCollector::collect(self, doc, score)
+    }
+
+    fn harvest(self) -> Self::Fruit {
+        TopSegmentCollector::into_collection_result(self)
     }
 }
 
