@@ -98,7 +98,7 @@ pub struct DescendingTopK<S, D> {
     heap: BinaryHeap<Reverse<Scored<S, D>>>,
 }
 
-impl<T: PartialOrd, D: PartialOrd> AscendingTopK<T, D> {
+impl<T: PartialOrd, D: Ord> AscendingTopK<T, D> {
     pub(crate) fn new(limit: usize) -> Self {
         Self {
             limit,
@@ -138,7 +138,7 @@ impl<T: PartialOrd, D: PartialOrd> AscendingTopK<T, D> {
     }
 }
 
-impl<T: PartialOrd, D: PartialOrd> DescendingTopK<T, D> {
+impl<T: PartialOrd, D: Ord> DescendingTopK<T, D> {
     pub(crate) fn new(limit: usize) -> Self {
         Self {
             limit,
@@ -212,39 +212,39 @@ pub(crate) struct Scored<S, D> {
     pub doc: D,
 }
 
-impl<S: PartialOrd, D: PartialOrd> Scored<S, D> {
+impl<S: PartialOrd, D: Ord> Scored<S, D> {
     pub(crate) fn new(score: S, doc: D) -> Self {
         Self { score, doc }
     }
 }
 
-impl<S: PartialOrd, D: PartialOrd> PartialOrd for Scored<S, D> {
+impl<S: PartialOrd, D: Ord> PartialOrd for Scored<S, D> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl<S: PartialOrd, D: PartialOrd> Ord for Scored<S, D> {
+impl<S: PartialOrd, D: Ord> Ord for Scored<S, D> {
     #[inline]
     fn cmp(&self, other: &Self) -> Ordering {
         // Highest score first
         match self.score.partial_cmp(&other.score) {
             Some(Ordering::Equal) | None => {
                 // Break even by lowest id
-                other.doc.partial_cmp(&self.doc).unwrap_or(Ordering::Equal)
+                other.doc.cmp(&self.doc)
             }
             Some(rest) => rest,
         }
     }
 }
 
-impl<S: PartialOrd, D: PartialOrd> PartialEq for Scored<S, D> {
+impl<S: PartialOrd, D: Ord> PartialEq for Scored<S, D> {
     fn eq(&self, other: &Self) -> bool {
         self.cmp(other) == Ordering::Equal
     }
 }
 
-impl<S: PartialOrd, D: PartialOrd> Eq for Scored<S, D> {}
+impl<S: PartialOrd, D: Ord> Eq for Scored<S, D> {}
 
 #[cfg(test)]
 mod tests {
