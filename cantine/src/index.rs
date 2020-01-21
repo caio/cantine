@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, convert::TryFrom, ops::Neg};
+use std::{cmp::Ordering, convert::TryFrom};
 
 use bincode;
 use serde::{Deserialize, Serialize};
@@ -8,7 +8,8 @@ use tantivy::{
     fastfield::FastFieldReader,
     query::Query,
     schema::{Field, Schema, SchemaBuilder, Value, FAST, STORED, TEXT},
-    DocId, Document, Result, Score, Searcher, SegmentLocalId, SegmentReader, TantivyError,
+    DocAddress, DocId, Document, Result, Score, Searcher, SegmentLocalId, SegmentReader,
+    TantivyError,
 };
 
 use crate::model::{
@@ -16,9 +17,9 @@ use crate::model::{
     Recipe, RecipeId, Sort,
 };
 
-use tique::top_collector::{
-    fastfield, CheckCondition, CollectionResult, ConditionForSegment, ConditionalTopCollector,
-    CustomScoreTopCollector, SearchMarker, TweakedScoreTopCollector,
+use tique::conditional_collector::{
+    traits::{CheckCondition, ConditionForSegment},
+    Ascending, CollectionResult, Descending, TopCollector,
 };
 
 #[derive(Clone)]
@@ -58,15 +59,15 @@ impl RecipeIndex {
         doc
     }
 
-    fn addresses_to_ids<T>(
+    fn items_to_ids<T>(
         &self,
         searcher: &Searcher,
-        addresses: &[SearchMarker<T>],
+        addresses: &[(T, DocAddress)],
     ) -> Result<Vec<RecipeId>> {
         let mut items = Vec::with_capacity(addresses.len());
 
-        for addr in addresses.iter() {
-            let doc = searcher.doc(addr.doc)?;
+        for (_score, addr) in addresses.iter() {
+            let doc = searcher.doc(*addr)?;
             if let Some(&Value::U64(id)) = doc.get_first(self.id) {
                 items.push(id);
             } else {
@@ -88,74 +89,54 @@ impl RecipeIndex {
         macro_rules! collect {
             ($type: ty, $field:ident, $order:ident) => {
                 if let Some(after) = after {
-                    let top_collector = CustomScoreTopCollector::new(
-                        limit,
-                        after.as_paginator(self.id),
-                        fastfield::$order(self.features.$field),
-                    );
+                    let top_collector =
+                        TopCollector::<$type, $order, _>::new(limit, after.as_paginator(self.id))
+                            .top_fast_field(self.features.$field);
 
                     self.render::<$type, _>(&searcher, query, top_collector)
                 } else {
-                    let top_collector = CustomScoreTopCollector::new(
-                        limit,
-                        true,
-                        fastfield::$order(self.features.$field),
-                    );
+                    let top_collector = TopCollector::<$type, $order, _>::new(limit, true)
+                        .top_fast_field(self.features.$field);
 
                     self.render::<$type, _>(&searcher, query, top_collector)
+                }
+            };
+
+            ($order:ident) => {
+                if let Some(after) = after {
+                    let top_collector =
+                        TopCollector::<_, $order, _>::new(limit, after.as_paginator(self.id));
+
+                    self.render::<Score, _>(&searcher, query, top_collector)
+                } else {
+                    let top_collector = TopCollector::<_, $order, _>::new(limit, true);
+
+                    self.render::<Score, _>(&searcher, query, top_collector)
                 }
             };
         }
 
         match sort {
-            Sort::Relevance => {
-                if let Some(after) = after {
-                    let top_collector =
-                        ConditionalTopCollector::with_limit(limit, after.as_paginator(self.id));
-
-                    self.render::<Score, _>(&searcher, query, top_collector)
-                } else {
-                    let top_collector = ConditionalTopCollector::with_limit(limit, true);
-
-                    self.render::<Score, _>(&searcher, query, top_collector)
-                }
-            }
-            Sort::RelevanceAsc => {
-                if let Some(after) = after {
-                    let top_collector = TweakedScoreTopCollector::new(
-                        limit,
-                        after.as_paginator(self.id),
-                        |_: &SegmentReader| |_doc, score: Score| score.neg(),
-                    );
-
-                    self.render::<Score, _>(&searcher, query, top_collector)
-                } else {
-                    let top_collector =
-                        TweakedScoreTopCollector::new(limit, true, |_: &SegmentReader| {
-                            |_doc, score: Score| score.neg()
-                        });
-
-                    self.render::<Score, _>(&searcher, query, top_collector)
-                }
-            }
-            Sort::NumIngredients => collect!(u64, num_ingredients, descending),
-            Sort::InstructionsLength => collect!(u64, instructions_length, descending),
-            Sort::TotalTime => collect!(u64, total_time, descending),
-            Sort::CookTime => collect!(u64, cook_time, descending),
-            Sort::PrepTime => collect!(u64, prep_time, descending),
-            Sort::Calories => collect!(u64, calories, descending),
-            Sort::FatContent => collect!(f64, fat_content, descending),
-            Sort::CarbContent => collect!(f64, carb_content, descending),
-            Sort::ProteinContent => collect!(f64, protein_content, descending),
-            Sort::NumIngredientsAsc => collect!(u64, num_ingredients, ascending),
-            Sort::InstructionsLengthAsc => collect!(u64, instructions_length, ascending),
-            Sort::TotalTimeAsc => collect!(u64, total_time, ascending),
-            Sort::CookTimeAsc => collect!(u64, cook_time, ascending),
-            Sort::PrepTimeAsc => collect!(u64, prep_time, ascending),
-            Sort::CaloriesAsc => collect!(u64, calories, ascending),
-            Sort::FatContentAsc => collect!(f64, fat_content, ascending),
-            Sort::CarbContentAsc => collect!(f64, carb_content, ascending),
-            Sort::ProteinContentAsc => collect!(f64, protein_content, ascending),
+            Sort::Relevance => collect!(Descending),
+            Sort::RelevanceAsc => collect!(Ascending),
+            Sort::NumIngredients => collect!(u64, num_ingredients, Descending),
+            Sort::InstructionsLength => collect!(u64, instructions_length, Descending),
+            Sort::TotalTime => collect!(u64, total_time, Descending),
+            Sort::CookTime => collect!(u64, cook_time, Descending),
+            Sort::PrepTime => collect!(u64, prep_time, Descending),
+            Sort::Calories => collect!(u64, calories, Descending),
+            Sort::FatContent => collect!(f64, fat_content, Descending),
+            Sort::CarbContent => collect!(f64, carb_content, Descending),
+            Sort::ProteinContent => collect!(f64, protein_content, Descending),
+            Sort::NumIngredientsAsc => collect!(u64, num_ingredients, Ascending),
+            Sort::InstructionsLengthAsc => collect!(u64, instructions_length, Ascending),
+            Sort::TotalTimeAsc => collect!(u64, total_time, Ascending),
+            Sort::CookTimeAsc => collect!(u64, cook_time, Ascending),
+            Sort::PrepTimeAsc => collect!(u64, prep_time, Ascending),
+            Sort::CaloriesAsc => collect!(u64, calories, Ascending),
+            Sort::FatContentAsc => collect!(f64, fat_content, Ascending),
+            Sort::CarbContentAsc => collect!(f64, carb_content, Ascending),
+            Sort::ProteinContentAsc => collect!(f64, protein_content, Ascending),
         }
     }
 
@@ -193,11 +174,11 @@ impl RecipeIndex {
         C: Collector<Fruit = CollectionResult<T>>,
     {
         let result = searcher.search(query, &collector)?;
-        let items = self.addresses_to_ids(&searcher, &result.items)?;
+        let items = self.items_to_ids(&searcher, &result.items)?;
 
         let num_items = items.len();
         let cursor = if result.visited.saturating_sub(num_items) > 0 {
-            let last_score = result.items[num_items - 1].score;
+            let last_score = result.items[num_items - 1].0;
             let last_id = items[num_items - 1];
             Some(last_score.as_after(last_id))
         } else {
@@ -302,12 +283,13 @@ impl<T> CheckCondition<T> for PaginationCondition<T>
 where
     T: 'static + PartialOrd + Clone,
 {
-    fn check(&self, _sid: SegmentLocalId, doc_id: DocId, score: T) -> bool {
+    fn check(&self, _sid: SegmentLocalId, doc_id: DocId, score: T, ascending: bool) -> bool {
         let recipe_id = self.id_reader.get(doc_id);
         match self.ref_score.partial_cmp(&score) {
-            Some(Ordering::Greater) => true,
+            Some(Ordering::Greater) => !ascending,
+            Some(Ordering::Less) => ascending,
             Some(Ordering::Equal) => self.ref_id < recipe_id,
-            _ => false,
+            None => false,
         }
     }
 }
