@@ -158,9 +158,10 @@ generation is implemented in `tique`.
 I plan on exploring the whole ecosystem so documentation will come
 someday, but for now here's a brief outline of the modules:
 
-* `tique::top_collector`: A `tantivy` group of top collectors that
+* `tique::conditional_collector`: A `tantivy` group of top collector
+  that has built-in support for ascending/descending ordering and
   allows checking for a condition before collecting a matching
-  document, particularly useful in streaming and highly dynamic
+  document; Particularly useful in streaming and highly dynamic
   filtering contexts. Used in `cantine::index` as a way to navigate
   results without offsets/pages, sort by fields and change ordering.
 
