@@ -3,11 +3,12 @@ use std::{
     collections::BinaryHeap,
 };
 
-use tantivy::{DocAddress, DocId};
+use tantivy::DocId;
 
 use super::CollectionResult;
 
 pub trait TopK<T, D> {
+    const ASCENDING: bool;
     fn visit(&mut self, score: T, doc: D);
     fn into_sorted_vec(self) -> Vec<(T, D)>;
     fn into_vec(self) -> Vec<(T, D)>;
@@ -175,6 +176,8 @@ impl<T: PartialOrd, D: PartialOrd> DescendingTopK<T, D> {
 }
 
 impl<T: PartialOrd> TopK<T, DocId> for AscendingTopK<T, DocId> {
+    const ASCENDING: bool = true;
+
     fn visit(&mut self, score: T, doc: DocId) {
         AscendingTopK::visit(self, score, doc);
     }
@@ -189,6 +192,8 @@ impl<T: PartialOrd> TopK<T, DocId> for AscendingTopK<T, DocId> {
 }
 
 impl<T: PartialOrd> TopK<T, DocId> for DescendingTopK<T, DocId> {
+    const ASCENDING: bool = false;
+
     fn visit(&mut self, score: T, doc: DocId) {
         DescendingTopK::visit(self, score, doc);
     }

@@ -89,6 +89,11 @@ where
             _marker: PhantomData,
         }
     }
+
+    #[cfg(test)]
+    fn into_topk(self) -> K {
+        self.topk
+    }
 }
 
 impl<K, C> SegmentCollector for TopSegmentCollector<Score, K, C>
@@ -100,7 +105,10 @@ where
 
     fn collect(&mut self, doc: DocId, score: Score) {
         self.total += 1;
-        if self.condition.check(self.segment_id, doc, score) {
+        if self
+            .condition
+            .check(self.segment_id, doc, score, K::ASCENDING)
+        {
             self.visited += 1;
             self.topk.visit(score, doc);
         }
@@ -152,7 +160,7 @@ mod tests {
 
         let mut top_collector = TopSegmentCollector::new(0, AscendingTopK::new(LIMIT), true);
 
-        let condition = |_sid, doc, _score| doc % 2 == 1;
+        let condition = |_sid, doc, _score, _asc| doc % 2 == 1;
 
         let mut just_odds = TopSegmentCollector::new(0, AscendingTopK::new(LIMIT), condition);
 
@@ -171,36 +179,76 @@ mod tests {
         assert_eq!(2, result.items.len());
         for (score, doc) in result.items {
             let DocAddress(seg_id, doc_id) = doc;
-            assert!(condition(seg_id, doc_id, score))
+            assert!(condition(seg_id, doc_id, score, true))
         }
+    }
+
+    fn check_segment_collector<K, C>(
+        topk: K,
+        condition: C,
+        input: Vec<(Score, DocId)>,
+        wanted: Vec<(Score, DocId)>,
+    ) where
+        K: TopK<Score, DocId> + 'static,
+        C: CheckCondition<Score>,
+    {
+        let mut collector = TopSegmentCollector::new(0, topk, condition);
+
+        for (score, id) in input {
+            collector.collect(id, score);
+        }
+
+        assert_eq!(wanted, collector.into_topk().into_sorted_vec());
     }
 
     #[test]
     fn collection_with_a_marker_smoke() {
-        // Doc id=4 on segment=0 had score=0.5
+        // XXX property test maybe? Essentially we are creating
+        // a Vec<(Score, DocId)> sorted as `Scored` would,
+        // then we pick an arbitrary position to pivot and
+        // expect the DescendingTopK to pick everything below
+        // and the AscendingTopK to pick everything above
         let marker = (0.5, DocAddress(0, 4));
-        let mut collector = TopSegmentCollector::new(0, DescendingTopK::new(3), marker);
 
-        // Every doc with a higher score has appeared already
-        collector.collect(7, 0.6);
-        collector.collect(5, 0.7);
-        // assert_eq!(0, collector.len());
+        check_segment_collector(
+            DescendingTopK::new(10),
+            marker,
+            vec![
+                // Every doc with a higher score has appeared already
+                (0.6, 7),
+                (0.7, 5),
+                // Docs with the same score, but lower id too
+                (0.5, 3),
+                (0.5, 2),
+                // [pivot] And, of course, the same doc should not be collected
+                (0.5, 4),
+                // Lower scores are in
+                (0.0, 1),
+                // Same score but higher doc, too
+                (0.5, 6),
+            ],
+            vec![(0.5, 6), (0.0, 1)],
+        );
 
-        // Docs with the same score, but lower id too
-        collector.collect(3, 0.5);
-        collector.collect(2, 0.5);
-        // assert_eq!(0, collector.len());
-
-        // And, of course, the same doc should not be collected
-        collector.collect(4, 0.5);
-        // assert_eq!(0, collector.len());
-
-        // Lower scores are in
-        collector.collect(1, 0.0);
-        // Same score but higher doc, too
-        collector.collect(6, 0.5);
-
-        assert_eq!(2, collector.harvest().items.len());
+        check_segment_collector(
+            AscendingTopK::new(10),
+            marker,
+            vec![
+                // Every doc with a higher score should be picked
+                (0.6, 7),
+                (0.7, 5),
+                // Same score but lower id as well
+                (0.5, 3),
+                (0.5, 2),
+                // [pivot] The same doc should not be collected
+                (0.5, 4),
+                // Docs with lower scores are discarded
+                (0.0, 1),
+                // Same score but higher doc is discaraded too
+                (0.5, 6),
+            ],
+            vec![(0.5, 2), (0.5, 3), (0.6, 7), (0.7, 5)],
+        );
     }
 
     #[test]
