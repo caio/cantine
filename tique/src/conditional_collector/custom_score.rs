@@ -15,7 +15,7 @@ use super::{
 pub struct CustomScoreTopCollector<T, P, C, S>
 where
     T: PartialOrd,
-    P: TopKProvider<T>,
+    P: TopKProvider<T, DocId>,
     C: ConditionForSegment<T>,
 {
     limit: usize,
@@ -28,7 +28,7 @@ where
 impl<T, P, C, S> CustomScoreTopCollector<T, P, C, S>
 where
     T: PartialOrd,
-    P: TopKProvider<T>,
+    P: TopKProvider<T, DocId>,
     C: ConditionForSegment<T>,
 {
     pub fn new(limit: usize, condition_for_segment: C, scorer_for_segment: S) -> Self {
@@ -45,7 +45,7 @@ where
 impl<T, P, C, S> Collector for CustomScoreTopCollector<T, P, C, S>
 where
     T: 'static + PartialOrd + Copy + Send + Sync,
-    P: 'static + Send + Sync + TopKProvider<T>,
+    P: 'static + Send + Sync + TopKProvider<T, DocId>,
     C: Sync + ConditionForSegment<T>,
     S: ScorerForSegment<T>,
 {

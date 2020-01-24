@@ -21,7 +21,7 @@ pub struct TopCollector<T, P, CF> {
 impl<T, P, CF> TopCollector<T, P, CF>
 where
     T: PartialOrd,
-    P: TopKProvider<T>,
+    P: TopKProvider<T, DocId>,
     CF: ConditionForSegment<T>,
 {
     pub fn new(limit: usize, condition_for_segment: CF) -> Self {
@@ -41,7 +41,7 @@ macro_rules! impl_top_fast_field {
     ($type: ident, $err: literal) => {
         impl<P, CF> TopCollector<$type, P, CF>
         where
-            P: 'static + Send + Sync + TopKProvider<$type>,
+            P: 'static + Send + Sync + TopKProvider<$type, DocId>,
             CF: Send + Sync + ConditionForSegment<$type>,
         {
             pub fn top_fast_field(
@@ -68,7 +68,7 @@ impl_top_fast_field!(f64, "Field is not a fast f64 field");
 
 impl<P, CF> Collector for TopCollector<Score, P, CF>
 where
-    P: 'static + Send + Sync + TopKProvider<Score>,
+    P: 'static + Send + Sync + TopKProvider<Score, DocId>,
     CF: Sync + ConditionForSegment<Score>,
 {
     type Fruit = CollectionResult<Score>;

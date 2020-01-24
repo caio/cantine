@@ -3,8 +3,6 @@ use std::{
     collections::BinaryHeap,
 };
 
-use tantivy::DocId;
-
 use super::CollectionResult;
 
 pub trait TopK<T, D> {
@@ -14,8 +12,8 @@ pub trait TopK<T, D> {
     fn into_vec(self) -> Vec<(T, D)>;
 }
 
-pub trait TopKProvider<T: PartialOrd> {
-    type Child: TopK<T, DocId>;
+pub trait TopKProvider<T: PartialOrd, D: Ord> {
+    type Child: TopK<T, D>;
 
     fn new_topk(limit: usize) -> Self::Child;
     fn merge_many(limit: usize, items: Vec<CollectionResult<T>>) -> CollectionResult<T>;
@@ -23,8 +21,8 @@ pub trait TopKProvider<T: PartialOrd> {
 
 pub struct Ascending;
 
-impl<T: PartialOrd> TopKProvider<T> for Ascending {
-    type Child = AscendingTopK<T, DocId>;
+impl<T: PartialOrd, D: Ord> TopKProvider<T, D> for Ascending {
+    type Child = AscendingTopK<T, D>;
 
     fn new_topk(limit: usize) -> Self::Child {
         AscendingTopK::new(limit)
@@ -37,8 +35,8 @@ impl<T: PartialOrd> TopKProvider<T> for Ascending {
 
 pub struct Descending;
 
-impl<T: PartialOrd> TopKProvider<T> for Descending {
-    type Child = DescendingTopK<T, DocId>;
+impl<T: PartialOrd, D: Ord> TopKProvider<T, D> for Descending {
+    type Child = DescendingTopK<T, D>;
 
     fn new_topk(limit: usize) -> Self::Child {
         DescendingTopK {
