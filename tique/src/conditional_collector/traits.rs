@@ -27,6 +27,16 @@ impl<T> ConditionForSegment<T> for bool {
     }
 }
 
+impl<T> ConditionForSegment<T> for (T, DocAddress)
+where
+    T: 'static + PartialOrd + Copy,
+{
+    type Type = Self;
+    fn for_segment(&self, _reader: &SegmentReader) -> Self::Type {
+        *self
+    }
+}
+
 pub trait CheckCondition<T>: 'static + Clone {
     fn check(&self, segment_id: SegmentLocalId, doc_id: DocId, score: T, ascending: bool) -> bool;
 }
@@ -48,7 +58,7 @@ where
 
 impl<T> CheckCondition<T> for (T, DocAddress)
 where
-    T: 'static + PartialOrd + Clone + Copy,
+    T: 'static + PartialOrd + Copy,
 {
     fn check(&self, segment_id: SegmentLocalId, doc_id: DocId, score: T, ascending: bool) -> bool {
         let wanted = if ascending {

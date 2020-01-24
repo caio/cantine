@@ -18,6 +18,8 @@ pub struct TopCollector<T, P, CF> {
     _provider: PhantomData<P>,
 }
 
+/// TopCollector is like tantivy's, with ordering and condition
+/// support.
 impl<T, P, CF> TopCollector<T, P, CF>
 where
     T: PartialOrd,
