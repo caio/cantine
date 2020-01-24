@@ -181,6 +181,10 @@ pub struct CollectionResult<T> {
 }
 
 impl<T> CollectionResult<T> {
+    pub fn has_next(&self) -> bool {
+        self.visited - self.items.len() > 0
+    }
+
     pub(crate) fn merge_many<K: TopK<T, DocAddress>>(mut topk: K, items: Vec<Self>) -> Self {
         let mut total = 0;
         let mut visited = 0;

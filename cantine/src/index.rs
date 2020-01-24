@@ -8,8 +8,7 @@ use tantivy::{
     fastfield::FastFieldReader,
     query::Query,
     schema::{Field, Schema, SchemaBuilder, Value, FAST, STORED, TEXT},
-    DocAddress, DocId, Document, Result, Score, Searcher, SegmentLocalId, SegmentReader,
-    TantivyError,
+    DocId, Document, Result, Score, Searcher, SegmentLocalId, SegmentReader, TantivyError,
 };
 
 use crate::model::{
@@ -57,25 +56,6 @@ impl RecipeIndex {
 
         self.features.add_to_doc(&mut doc, &recipe.features);
         doc
-    }
-
-    fn items_to_ids<T>(
-        &self,
-        searcher: &Searcher,
-        addresses: &[(T, DocAddress)],
-    ) -> Result<Vec<RecipeId>> {
-        let mut items = Vec::with_capacity(addresses.len());
-
-        for (_score, addr) in addresses.iter() {
-            let doc = searcher.doc(*addr)?;
-            if let Some(&Value::U64(id)) = doc.get_first(self.id) {
-                items.push(id);
-            } else {
-                panic!("Found document without a stored id");
-            }
-        }
-
-        Ok(items)
     }
 
     pub fn search(
@@ -174,18 +154,31 @@ impl RecipeIndex {
         C: Collector<Fruit = CollectionResult<T>>,
     {
         let result = searcher.search(query, &collector)?;
-        let items = self.items_to_ids(&searcher, &result.items)?;
+        let mut recipe_ids = Vec::with_capacity(result.items.len());
 
-        let num_items = items.len();
-        let cursor = if result.visited.saturating_sub(num_items) > 0 {
-            let last_score = result.items[num_items - 1].0;
-            let last_id = items[num_items - 1];
-            Some(last_score.as_after(last_id))
+        let has_next = result.has_next();
+        let last = result
+            .items
+            .into_iter()
+            .flat_map(|(score, addr)| {
+                searcher.doc(addr).map(|doc| {
+                    if let Some(&Value::U64(recipe_id)) = doc.get_first(self.id) {
+                        recipe_ids.push(recipe_id);
+                        (score, recipe_id)
+                    } else {
+                        panic!("Found doc with non-U64 id field");
+                    }
+                })
+            })
+            .last();
+
+        let cursor = if has_next {
+            last.map(|(score, id)| score.as_after(id))
         } else {
             None
         };
 
-        Ok((result.total, items, cursor))
+        Ok((result.total, recipe_ids, cursor))
     }
 }
 
