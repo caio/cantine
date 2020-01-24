@@ -31,25 +31,7 @@ impl<T: PartialOrd> TopKProvider<T> for Ascending {
     }
 
     fn merge_many(limit: usize, items: Vec<CollectionResult<T>>) -> CollectionResult<T> {
-        let mut topk = AscendingTopK::new(limit);
-
-        let mut total = 0;
-        let mut visited = 0;
-
-        for item in items {
-            total += item.total;
-            visited += item.visited;
-
-            for (score, doc) in item.items {
-                topk.visit(score, doc);
-            }
-        }
-
-        CollectionResult {
-            total,
-            visited,
-            items: topk.into_sorted_vec().into_iter().collect(),
-        }
+        CollectionResult::merge_many(AscendingTopK::new(limit), items)
     }
 }
 
@@ -66,25 +48,7 @@ impl<T: PartialOrd> TopKProvider<T> for Descending {
     }
 
     fn merge_many(limit: usize, items: Vec<CollectionResult<T>>) -> CollectionResult<T> {
-        let mut topk = DescendingTopK::new(limit);
-
-        let mut total = 0;
-        let mut visited = 0;
-
-        for item in items {
-            total += item.total;
-            visited += item.visited;
-
-            for (score, doc) in item.items {
-                topk.visit(score, doc);
-            }
-        }
-
-        CollectionResult {
-            total,
-            visited,
-            items: topk.into_sorted_vec(),
-        }
+        CollectionResult::merge_many(DescendingTopK::new(limit), items)
     }
 }
 
@@ -175,34 +139,34 @@ impl<T: PartialOrd, D: Ord> DescendingTopK<T, D> {
     }
 }
 
-impl<T: PartialOrd> TopK<T, DocId> for AscendingTopK<T, DocId> {
+impl<T: PartialOrd, D: Ord> TopK<T, D> for AscendingTopK<T, D> {
     const ASCENDING: bool = true;
 
-    fn visit(&mut self, score: T, doc: DocId) {
+    fn visit(&mut self, score: T, doc: D) {
         AscendingTopK::visit(self, score, doc);
     }
 
-    fn into_sorted_vec(self) -> Vec<(T, DocId)> {
+    fn into_sorted_vec(self) -> Vec<(T, D)> {
         AscendingTopK::into_sorted_vec(self)
     }
 
-    fn into_vec(self) -> Vec<(T, DocId)> {
+    fn into_vec(self) -> Vec<(T, D)> {
         AscendingTopK::into_vec(self)
     }
 }
 
-impl<T: PartialOrd> TopK<T, DocId> for DescendingTopK<T, DocId> {
+impl<T: PartialOrd, D: Ord> TopK<T, D> for DescendingTopK<T, D> {
     const ASCENDING: bool = false;
 
-    fn visit(&mut self, score: T, doc: DocId) {
+    fn visit(&mut self, score: T, doc: D) {
         DescendingTopK::visit(self, score, doc);
     }
 
-    fn into_sorted_vec(self) -> Vec<(T, DocId)> {
+    fn into_sorted_vec(self) -> Vec<(T, D)> {
         DescendingTopK::into_sorted_vec(self)
     }
 
-    fn into_vec(self) -> Vec<(T, DocId)> {
+    fn into_vec(self) -> Vec<(T, D)> {
         DescendingTopK::into_vec(self)
     }
 }

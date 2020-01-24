@@ -180,6 +180,28 @@ pub struct CollectionResult<T> {
     pub items: Vec<(T, DocAddress)>,
 }
 
+impl<T> CollectionResult<T> {
+    pub(crate) fn merge_many<K: TopK<T, DocAddress>>(mut topk: K, items: Vec<Self>) -> Self {
+        let mut total = 0;
+        let mut visited = 0;
+
+        for item in items {
+            total += item.total;
+            visited += item.visited;
+
+            for (score, doc) in item.items {
+                topk.visit(score, doc);
+            }
+        }
+
+        CollectionResult {
+            total,
+            visited,
+            items: topk.into_sorted_vec(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
