@@ -137,7 +137,7 @@ where
         }
     }
 
-    pub fn into_collection_result(self) -> CollectionResult<T> {
+    pub fn into_unsorted_collection_result(self) -> CollectionResult<T> {
         let segment_id = self.segment_id;
         let items = self
             .topk
@@ -146,9 +146,6 @@ where
             .map(|(score, doc)| (score, DocAddress(segment_id, doc)))
             .collect();
 
-        // XXX This is unsorted. It's ok because we sort during
-        // merge, but using the same time to mean two things is
-        // rather confusing
         CollectionResult {
             total: self.total,
             visited: self.visited,
@@ -169,7 +166,7 @@ where
     }
 
     fn harvest(self) -> Self::Fruit {
-        TopSegmentCollector::into_collection_result(self)
+        TopSegmentCollector::into_unsorted_collection_result(self)
     }
 }
 

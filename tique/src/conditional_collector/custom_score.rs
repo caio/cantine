@@ -113,7 +113,7 @@ where
     }
 
     fn harvest(self) -> Self::Fruit {
-        self.collector.into_collection_result()
+        self.collector.into_unsorted_collection_result()
     }
 }
 
