@@ -34,9 +34,7 @@
 //! let id_field = builder.add_u64_field("id_field", FAST | STORED);
 //!
 //! let index = Index::create_in_ram(builder.build());
-//! // There will be a few more `unwrap()`s later on too.
-//! // Do something better than this in real code.
-//! let mut writer = index.writer_with_num_threads(1, 3_000_000).unwrap();
+//! let mut writer = index.writer_with_num_threads(1, 3_000_000)?;
 //!
 //! for i in 0..NUM_DOCS {
 //!     let mut doc = Document::new();
@@ -45,14 +43,14 @@
 //!     writer.add_document(doc);
 //! }
 //!
-//! writer.commit().unwrap();
+//! writer.commit()?;
 //!
 //! // Now let's search our index
-//! let reader = index.reader().unwrap();
+//! let reader = index.reader()?;
 //! let searcher = reader.searcher();
 //!
 //! let (tantivy_top, tique_top) = searcher.search(
-//!     &AllQuery, &(tantivy_collector, tique_collector)).unwrap();
+//!     &AllQuery, &(tantivy_collector, tique_collector))?;
 //!
 //! assert_eq!(tantivy_top.len(), tique_top.items.len());
 //! // Phew!
@@ -84,8 +82,8 @@
 //! // to keep memory stable while spending more CPU time doing
 //! // comparisons:
 //!
-//! let tique_next_collector =
-//!     TopCollector::<_, Descending, _>::new(K, tique_top.items.into_iter().last().unwrap());
+//! let last_result = tique_top.items.into_iter().last().unwrap();
+//! let tique_next_collector = TopCollector::<_, Descending, _>::new(K, last_result);
 //!
 //! // One disadvantage of this approach is that you can't simply
 //! // skip to an arbitrary page. When that's a requirement, the
@@ -93,13 +91,13 @@
 //! // certain threshold, then switch to cursor-based.
 //! // You can even use tantivy's result to paginate:
 //!
+//! let last_tantivy_result = tantivy_top.into_iter().last().unwrap();
 //! let tique_next_collector_via_tantivy =
-//!     TopCollector::<_, Descending, _>::new(K, tantivy_top.into_iter().last().unwrap());
+//!     TopCollector::<_, Descending, _>::new(K, last_tantivy_result);
 //!
 //! let (tantivy_until_next, tique_next, tique_same_next) = searcher.search(
 //!     &AllQuery,
-//!     &(tantivy_next_collector,tique_next_collector, tique_next_collector_via_tantivy))
-//!     .unwrap();
+//!     &(tantivy_next_collector,tique_next_collector, tique_next_collector_via_tantivy))?;
 //!
 //! assert_eq!(tique_next.items, tique_same_next.items);
 //! assert_eq!(tantivy_until_next[K..], tique_next.items[..]);
@@ -115,7 +113,7 @@
 //!         .top_fast_field(id_field);
 //!
 //! let (min_rank, top_ids) =
-//!     searcher.search(&AllQuery, &(min_rank_collector, top_ids_collector)).unwrap();
+//!     searcher.search(&AllQuery, &(min_rank_collector, top_ids_collector))?;
 //!
 //! assert_eq!(
 //!     vec![99, 98, 97],
@@ -143,11 +141,11 @@
 //!     TopCollector::<f64, Descending, _>::new(PAGE_SIZE, true)
 //!         .top_fast_field(rank_field);
 //!
-//! let page = searcher.search(&AllQuery, &first_page_collector).unwrap();
+//! let page = searcher.search(&AllQuery, &first_page_collector)?;
 //!
 //! let mut result : Vec<(f64, u64)> = Vec::new();
 //! for (score, addr) in page.items.iter() {
-//!     let doc = searcher.doc(*addr).unwrap();
+//!     let doc = searcher.doc(*addr)?;
 //!     if let Some(&Value::U64(public_id)) = doc.get_first(id_field) {
 //!         result.push((*score, public_id));
 //!     }
@@ -155,12 +153,15 @@
 //!
 //! // So whenever `page.has_next()` is true, `result.last()` will
 //! // contain the cursor for our next page.
-//! // And you can keep paginating beaking even via the
-//! // public id as follows:
+//! assert!(page.has_next());
 //! let (ref_score, ref_id) = *result.last().unwrap();
 //!
+//! // And you can keep paginating beaking even via the
+//! // public id as follows:
+//!
 //! let paginator = move |reader: &SegmentReader| {
-//!     let id_reader = reader.fast_fields().u64(id_field).unwrap();
+//!     let id_reader = reader.fast_fields().u64(id_field)
+//!         .expect("id field is u64 FAST");
 //!
 //!     move |_segment_id, doc_id, score, is_ascending: bool| {
 //!         let public_id = id_reader.get(doc_id);
@@ -184,9 +185,11 @@
 //!
 //! let (two_pages, second_page) = searcher.search(
 //!     &AllQuery,
-//!     &(two_pages_collector, second_page_collector)).unwrap();
+//!     &(two_pages_collector, second_page_collector))?;
 //!
 //! assert_eq!(two_pages.items[PAGE_SIZE..], second_page.items[..]);
+//!
+//! # Ok::<(), tantivy::Error>(())
 //! ```
 mod custom_score;
 mod top_collector;
