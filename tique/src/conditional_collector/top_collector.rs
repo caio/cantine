@@ -11,21 +11,74 @@ use super::{
     CustomScoreTopCollector,
 };
 
+/// TopCollector is like tantivy's, with ordering and condition
+/// support.
+///
+/// # Examples
+///
+/// ## A top-collector that behaves like `tantivy`s
+///
+/// The first `Score` type is usually inferred but we need to be
+/// explicit for this example.
+///
+/// ```rust
+/// # use tique::conditional_collector::{TopCollector,Descending};
+/// let collector =
+///     TopCollector::<tantivy::Score, Descending, _>::new(10, true);
+/// ```
+///
+/// ## Custom condition from a closure.
+///
+/// ```rust
+/// # use tantivy::{Score,SegmentReader};
+/// # use tique::conditional_collector::{TopCollector,Ascending};
+/// let condition_for_segment = |reader: &SegmentReader| {
+///     // Fetch useful stuff from the `reader`, then:
+///     |segment_id, doc_id, score, is_ascending| {
+///         // Express whatever logic you want
+///         true
+///     }
+/// };
+///
+/// let collector =
+///     TopCollector::<Score, Ascending, _>::new(20, condition_for_segment);
+/// ```
+///
+/// ## Using a fast field as the score
+///
+/// *CAUTION*: Using a field that is not `FAST` or is of a different
+/// type than the one you specify will lead to a panic at runtime.
+///
+/// ```rust
+/// # use tique::conditional_collector::{Ascending, Descending, TopCollector};
+/// # let rank_field = tantivy::schema::Field::from_field_id(0);
+/// # let id_field = tantivy::schema::Field::from_field_id(1);
+/// # let limit = 10;
+/// # let condition = true;
+/// let min_rank_collector =
+///     TopCollector::<f64, Ascending, _>::new(limit, condition)
+///         .top_fast_field(rank_field);
+///
+/// let top_ids_collector =
+///     TopCollector::<u64, Descending, _>::new(limit, condition)
+///         .top_fast_field(id_field);
+///
+/// ```
 pub struct TopCollector<T, P, CF> {
     limit: usize,
     condition_for_segment: CF,
     _score: PhantomData<T>,
     _provider: PhantomData<P>,
 }
-
-/// TopCollector is like tantivy's, with ordering and condition
-/// support.
 impl<T, P, CF> TopCollector<T, P, CF>
 where
     T: PartialOrd,
     P: TopKProvider<T, DocId>,
     CF: ConditionForSegment<T>,
 {
+    /// Creates a new TopCollector with capacity of `limit`
+    /// and respecting the given `ConditionForSegment`
+    /// implementation.
     pub fn new(limit: usize, condition_for_segment: CF) -> Self {
         if limit < 1 {
             panic!("Limit must be greater than 0");
@@ -46,6 +99,9 @@ macro_rules! impl_top_fast_field {
             P: 'static + Send + Sync + TopKProvider<$type, DocId>,
             CF: Send + Sync + ConditionForSegment<$type>,
         {
+            /// Transforms this collector into one that sorts by the given
+            /// fast field. Will panic if the field is not FAST or the wrong
+            /// type.
             pub fn top_fast_field(
                 self,
                 field: tantivy::schema::Field,
