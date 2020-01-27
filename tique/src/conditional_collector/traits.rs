@@ -71,33 +71,3 @@ where
             == wanted
     }
 }
-
-pub trait ScorerForSegment<T>: Sync {
-    type Type: DocScorer<T>;
-    fn for_segment(&self, reader: &SegmentReader) -> Self::Type;
-}
-
-impl<T, C, F> ScorerForSegment<T> for F
-where
-    F: 'static + Sync + Send + Fn(&SegmentReader) -> C,
-    C: DocScorer<T>,
-{
-    type Type = C;
-
-    fn for_segment(&self, reader: &SegmentReader) -> Self::Type {
-        (self)(reader)
-    }
-}
-
-pub trait DocScorer<T>: 'static {
-    fn score(&self, doc_id: DocId) -> T;
-}
-
-impl<F, T> DocScorer<T> for F
-where
-    F: 'static + Sync + Send + Fn(DocId) -> T,
-{
-    fn score(&self, doc_id: DocId) -> T {
-        (self)(doc_id)
-    }
-}

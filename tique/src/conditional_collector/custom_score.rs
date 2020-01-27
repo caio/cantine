@@ -1,17 +1,36 @@
 use std::marker::PhantomData;
 
 use tantivy::{
-    collector::{Collector, SegmentCollector},
+    collector::{Collector, CustomScorer, CustomSegmentScorer, SegmentCollector},
     DocId, Result, Score, SegmentLocalId, SegmentReader,
 };
 
 use super::{
     top_collector::TopSegmentCollector,
     topk::{TopK, TopKProvider},
-    traits::{CheckCondition, ConditionForSegment, DocScorer, ScorerForSegment},
+    traits::{CheckCondition, ConditionForSegment},
     CollectionResult,
 };
 
+/// A TopCollector that allows you to provide the score
+///
+/// # Example
+///
+///
+/// ```rust
+/// # use tique::conditional_collector::{CustomScoreTopCollector, Descending};
+/// # use tantivy::{SegmentReader, DocId};
+/// # let limit = 10;
+/// # let condition = true;
+///
+/// // Any tantivy::collector::CustomScorer is valid
+/// let scorer = |reader: &SegmentReader| {
+///     |doc_id: DocId| -720
+/// };
+///
+/// let custom_collector =
+///     CustomScoreTopCollector::<i64, Descending, _, _>::new(limit, condition, scorer);
+/// ```
 pub struct CustomScoreTopCollector<T, P, C, S>
 where
     T: PartialOrd,
@@ -47,10 +66,10 @@ where
     T: 'static + PartialOrd + Copy + Send + Sync,
     P: 'static + Send + Sync + TopKProvider<T, DocId>,
     C: Sync + ConditionForSegment<T>,
-    S: ScorerForSegment<T>,
+    S: CustomScorer<T>,
 {
     type Fruit = CollectionResult<T>;
-    type Child = CustomScoreTopSegmentCollector<T, C::Type, S::Type, P::Child>;
+    type Child = CustomScoreTopSegmentCollector<T, C::Type, S::Child, P::Child>;
 
     fn requires_scoring(&self) -> bool {
         false
@@ -65,7 +84,7 @@ where
         segment_id: SegmentLocalId,
         reader: &SegmentReader,
     ) -> Result<Self::Child> {
-        let scorer = self.scorer_for_segment.for_segment(reader);
+        let scorer = self.scorer_for_segment.segment_scorer(reader)?;
         Ok(CustomScoreTopSegmentCollector::new(
             segment_id,
             P::new_topk(self.limit),
@@ -103,7 +122,7 @@ where
     T: 'static + PartialOrd + Copy + Send + Sync,
     K: 'static + TopK<T, DocId>,
     C: CheckCondition<T>,
-    S: DocScorer<T>,
+    S: CustomSegmentScorer<T>,
 {
     type Fruit = CollectionResult<T>;
 

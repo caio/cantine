@@ -11,8 +11,8 @@ use super::{
     CustomScoreTopCollector,
 };
 
-/// TopCollector is like tantivy's, with ordering and condition
-/// support.
+/// A TopCollector like tantivy's, with added support for ordering
+/// and conditions.
 ///
 /// # Examples
 ///
