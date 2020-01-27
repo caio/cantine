@@ -4,6 +4,9 @@ use tantivy::{DocAddress, DocId, SegmentLocalId, SegmentReader};
 
 use super::topk::Scored;
 
+/// A trait that allows defining arbitrary conditions to be checked
+/// before considering a matching document for inclusion in the
+/// top results.
 pub trait ConditionForSegment<T>: Clone {
     type Type: CheckCondition<T>;
     fn for_segment(&self, reader: &SegmentReader) -> Self::Type;
@@ -37,6 +40,9 @@ where
     }
 }
 
+/// The condition that gets checked before collection. In order for
+/// a document to appear in the results it must first return true
+/// for `check`.
 pub trait CheckCondition<T>: 'static + Clone {
     fn check(&self, segment_id: SegmentLocalId, doc_id: DocId, score: T, ascending: bool) -> bool;
 }

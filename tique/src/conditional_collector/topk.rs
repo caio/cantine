@@ -19,6 +19,7 @@ pub trait TopKProvider<T: PartialOrd, D: Ord> {
     fn merge_many(limit: usize, items: Vec<CollectionResult<T>>) -> CollectionResult<T>;
 }
 
+/// Marker to create a TopCollector in *ascending* order
 pub struct Ascending;
 
 impl<T: PartialOrd, D: Ord> TopKProvider<T, D> for Ascending {
@@ -33,6 +34,7 @@ impl<T: PartialOrd, D: Ord> TopKProvider<T, D> for Ascending {
     }
 }
 
+/// Marker to create a TopCollector in *descending* order
 pub struct Descending;
 
 impl<T: PartialOrd, D: Ord> TopKProvider<T, D> for Descending {

@@ -268,14 +268,23 @@ where
     }
 }
 
+/// The basic result type, containing the top selected items and
+/// additional metadata.
 #[derive(Debug)]
 pub struct CollectionResult<T> {
+    /// How many documents were seen. Analogous to the result of a
+    /// simple count collector.
     pub total: usize,
+    /// How many of the documents we saw actually passed our
+    /// condition
     pub visited: usize,
+    /// The top found items, as you would get from `tantivy::TopDocs`
     pub items: Vec<(T, DocAddress)>,
 }
 
 impl<T> CollectionResult<T> {
+    /// Wether the same query that created this result would have
+    /// more results if we paginated (or increased the top-k limit)
     pub fn has_next(&self) -> bool {
         self.visited - self.items.len() > 0
     }
