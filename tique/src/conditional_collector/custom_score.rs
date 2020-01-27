@@ -12,26 +12,7 @@ use super::{
     CollectionResult,
 };
 
-/// A TopCollector that allows you to provide the score
-///
-/// # Example
-///
-///
-/// ```rust
-/// # use tique::conditional_collector::{CustomScoreTopCollector, Descending};
-/// # use tantivy::{SegmentReader, DocId};
-/// # let limit = 10;
-/// # let condition = true;
-///
-/// // Any tantivy::collector::CustomScorer is valid
-/// let scorer = |reader: &SegmentReader| {
-///     |doc_id: DocId| -720
-/// };
-///
-/// let custom_collector =
-///     CustomScoreTopCollector::<i64, Descending, _, _>::new(limit, condition, scorer);
-/// ```
-pub struct CustomScoreTopCollector<T, P, C, S>
+pub(crate) struct CustomScoreTopCollector<T, P, C, S>
 where
     T: PartialOrd,
     P: TopKProvider<T, DocId>,

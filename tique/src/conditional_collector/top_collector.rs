@@ -1,14 +1,14 @@
 use std::marker::PhantomData;
 
 use tantivy::{
-    collector::{Collector, SegmentCollector},
+    collector::{Collector, CustomScorer, SegmentCollector},
     DocAddress, DocId, Result, Score, SegmentLocalId, SegmentReader,
 };
 
 use super::{
+    custom_score::CustomScoreTopCollector,
     topk::{TopK, TopKProvider},
     traits::{CheckCondition, ConditionForSegment},
-    CustomScoreTopCollector,
 };
 
 /// A TopCollector like tantivy's, with added support for ordering
@@ -44,7 +44,27 @@ use super::{
 ///     TopCollector::<Score, Ascending, _>::new(20, condition_for_segment);
 /// ```
 ///
+/// ## Customizing the Score
+///
+/// ```rust
+/// # use tique::conditional_collector::{TopCollector, Ascending};
+/// # use tantivy::{SegmentReader, DocId};
+/// # let limit = 10;
+/// # let condition = true;
+/// // Any `tantivy::collector::CustomScorer` is valid
+/// let scorer = |reader: &SegmentReader| {
+///     |doc_id: DocId| -720
+/// };
+///
+/// let custom_collector =
+///     TopCollector::<i64, Ascending, _>::new(limit, condition)
+///         .with_custom_scorer(scorer);
+/// ```
+///
 /// ## Using a fast field as the score
+///
+/// One typical use-case for customizing scores is sorting by a
+/// fast field, so we provide a helper for that.
 ///
 /// *CAUTION*: Using a field that is not `FAST` or is of a different
 /// type than the one you specify will lead to a panic at runtime.
@@ -62,7 +82,6 @@ use super::{
 /// let top_ids_collector =
 ///     TopCollector::<u64, Descending, _>::new(limit, condition)
 ///         .top_fast_field(id_field);
-///
 /// ```
 pub struct TopCollector<T, P, CF> {
     limit: usize,
@@ -70,6 +89,7 @@ pub struct TopCollector<T, P, CF> {
     _score: PhantomData<T>,
     _provider: PhantomData<P>,
 }
+
 impl<T, P, CF> TopCollector<T, P, CF>
 where
     T: PartialOrd,
@@ -89,6 +109,26 @@ where
             _score: PhantomData,
             _provider: PhantomData,
         }
+    }
+}
+
+impl<T, P, CF> TopCollector<T, P, CF>
+where
+    T: 'static + Copy + Send + Sync + PartialOrd,
+    P: 'static + Send + Sync + TopKProvider<T, DocId>,
+    CF: Send + Sync + ConditionForSegment<T>,
+{
+    /// Transforms this collector into that that uses the given
+    /// scorer instead of the default scoring functionality.
+    pub fn with_custom_scorer<C: CustomScorer<T>>(
+        self,
+        custom_scorer: C,
+    ) -> impl Collector<Fruit = CollectionResult<T>> {
+        CustomScoreTopCollector::<T, P, _, _>::new(
+            self.limit,
+            self.condition_for_segment,
+            custom_scorer,
+        )
     }
 }
 
