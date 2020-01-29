@@ -4,12 +4,17 @@ version = "0.1.0"
 authors = ["Caio Romão <contact@caio.co>"]
 edition = "2018"
 
+[features]
+default = []
+unstable = ["tique_derive", "serde", "byteorder", "nom"]
+
 [dependencies]
-tique_derive = { path = "../tique_derive" }
 tantivy = "0.11"
-serde = { version = "1", features = ["derive"] }
-byteorder = "1.3"
-nom = "5"
+
+tique_derive = { path = "./tique_derive", optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+byteorder = { version = "1.3", optional = true }
+nom = { version = "5", optional = true }
 
 [dev-dependencies]
 zerocopy = "0.2"

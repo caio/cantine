@@ -1,18 +1,18 @@
 use std::marker::PhantomData;
 
 use tantivy::{
-    collector::{Collector, SegmentCollector},
+    collector::{Collector, CustomScorer, CustomSegmentScorer, SegmentCollector},
     DocId, Result, Score, SegmentLocalId, SegmentReader,
 };
 
 use super::{
     top_collector::TopSegmentCollector,
     topk::{TopK, TopKProvider},
-    traits::{CheckCondition, ConditionForSegment, DocScorer, ScorerForSegment},
+    traits::{CheckCondition, ConditionForSegment},
     CollectionResult,
 };
 
-pub struct CustomScoreTopCollector<T, P, C, S>
+pub(crate) struct CustomScoreTopCollector<T, P, C, S>
 where
     T: PartialOrd,
     P: TopKProvider<T, DocId>,
@@ -47,10 +47,10 @@ where
     T: 'static + PartialOrd + Copy + Send + Sync,
     P: 'static + Send + Sync + TopKProvider<T, DocId>,
     C: Sync + ConditionForSegment<T>,
-    S: ScorerForSegment<T>,
+    S: CustomScorer<T>,
 {
     type Fruit = CollectionResult<T>;
-    type Child = CustomScoreTopSegmentCollector<T, C::Type, S::Type, P::Child>;
+    type Child = CustomScoreTopSegmentCollector<T, C::Type, S::Child, P::Child>;
 
     fn requires_scoring(&self) -> bool {
         false
@@ -65,7 +65,7 @@ where
         segment_id: SegmentLocalId,
         reader: &SegmentReader,
     ) -> Result<Self::Child> {
-        let scorer = self.scorer_for_segment.for_segment(reader);
+        let scorer = self.scorer_for_segment.segment_scorer(reader)?;
         Ok(CustomScoreTopSegmentCollector::new(
             segment_id,
             P::new_topk(self.limit),
@@ -103,7 +103,7 @@ where
     T: 'static + PartialOrd + Copy + Send + Sync,
     K: 'static + TopK<T, DocId>,
     C: CheckCondition<T>,
-    S: DocScorer<T>,
+    S: CustomSegmentScorer<T>,
 {
     type Fruit = CollectionResult<T>;
 

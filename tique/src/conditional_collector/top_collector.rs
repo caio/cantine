@@ -1,16 +1,88 @@
 use std::marker::PhantomData;
 
 use tantivy::{
-    collector::{Collector, SegmentCollector},
+    collector::{Collector, CustomScorer, SegmentCollector},
     DocAddress, DocId, Result, Score, SegmentLocalId, SegmentReader,
 };
 
 use super::{
+    custom_score::CustomScoreTopCollector,
     topk::{TopK, TopKProvider},
     traits::{CheckCondition, ConditionForSegment},
-    CustomScoreTopCollector,
 };
 
+/// A TopCollector like tantivy's, with added support for ordering
+/// and conditions.
+///
+/// # Examples
+///
+/// ## A top-collector that behaves like `tantivy`s
+///
+/// The first `Score` type is usually inferred but we need to be
+/// explicit for this example.
+///
+/// ```rust
+/// # use tique::conditional_collector::{TopCollector,Descending};
+/// let collector =
+///     TopCollector::<tantivy::Score, Descending, _>::new(10, true);
+/// ```
+///
+/// ## Custom condition from a closure.
+///
+/// ```rust
+/// # use tantivy::{Score,SegmentReader};
+/// # use tique::conditional_collector::{TopCollector,Ascending};
+/// let condition_for_segment = |reader: &SegmentReader| {
+///     // Fetch useful stuff from the `reader`, then:
+///     |segment_id, doc_id, score, is_ascending| {
+///         // Express whatever logic you want
+///         true
+///     }
+/// };
+///
+/// let collector =
+///     TopCollector::<Score, Ascending, _>::new(20, condition_for_segment);
+/// ```
+///
+/// ## Customizing the Score
+///
+/// ```rust
+/// # use tique::conditional_collector::{TopCollector, Ascending};
+/// # use tantivy::{SegmentReader, DocId};
+/// # let limit = 10;
+/// # let condition = true;
+/// // Any `tantivy::collector::CustomScorer` is valid
+/// let scorer = |reader: &SegmentReader| {
+///     |doc_id: DocId| -720
+/// };
+///
+/// let custom_collector =
+///     TopCollector::<i64, Ascending, _>::new(limit, condition)
+///         .with_custom_scorer(scorer);
+/// ```
+///
+/// ## Using a fast field as the score
+///
+/// One typical use-case for customizing scores is sorting by a
+/// fast field, so we provide a helper for that.
+///
+/// *CAUTION*: Using a field that is not `FAST` or is of a different
+/// type than the one you specify will lead to a panic at runtime.
+///
+/// ```rust
+/// # use tique::conditional_collector::{Ascending, Descending, TopCollector};
+/// # let rank_field = tantivy::schema::Field::from_field_id(0);
+/// # let id_field = tantivy::schema::Field::from_field_id(1);
+/// # let limit = 10;
+/// # let condition = true;
+/// let min_rank_collector =
+///     TopCollector::<f64, Ascending, _>::new(limit, condition)
+///         .top_fast_field(rank_field);
+///
+/// let top_ids_collector =
+///     TopCollector::<u64, Descending, _>::new(limit, condition)
+///         .top_fast_field(id_field);
+/// ```
 pub struct TopCollector<T, P, CF> {
     limit: usize,
     condition_for_segment: CF,
@@ -24,6 +96,9 @@ where
     P: TopKProvider<T, DocId>,
     CF: ConditionForSegment<T>,
 {
+    /// Creates a new TopCollector with capacity of `limit`
+    /// and respecting the given `ConditionForSegment`
+    /// implementation.
     pub fn new(limit: usize, condition_for_segment: CF) -> Self {
         if limit < 1 {
             panic!("Limit must be greater than 0");
@@ -37,6 +112,26 @@ where
     }
 }
 
+impl<T, P, CF> TopCollector<T, P, CF>
+where
+    T: 'static + Copy + Send + Sync + PartialOrd,
+    P: 'static + Send + Sync + TopKProvider<T, DocId>,
+    CF: Send + Sync + ConditionForSegment<T>,
+{
+    /// Transforms this collector into that that uses the given
+    /// scorer instead of the default scoring functionality.
+    pub fn with_custom_scorer<C: CustomScorer<T>>(
+        self,
+        custom_scorer: C,
+    ) -> impl Collector<Fruit = CollectionResult<T>> {
+        CustomScoreTopCollector::<T, P, _, _>::new(
+            self.limit,
+            self.condition_for_segment,
+            custom_scorer,
+        )
+    }
+}
+
 macro_rules! impl_top_fast_field {
     ($type: ident, $err: literal) => {
         impl<P, CF> TopCollector<$type, P, CF>
@@ -44,6 +139,9 @@ macro_rules! impl_top_fast_field {
             P: 'static + Send + Sync + TopKProvider<$type, DocId>,
             CF: Send + Sync + ConditionForSegment<$type>,
         {
+            /// Transforms this collector into one that sorts by the given
+            /// fast field. Will panic if the field is not FAST or the wrong
+            /// type.
             pub fn top_fast_field(
                 self,
                 field: tantivy::schema::Field,
@@ -170,14 +268,23 @@ where
     }
 }
 
+/// The basic result type, containing the top selected items and
+/// additional metadata.
 #[derive(Debug)]
 pub struct CollectionResult<T> {
+    /// How many documents were seen. Analogous to the result of a
+    /// simple count collector.
     pub total: usize,
+    /// How many of the documents we saw actually passed our
+    /// condition
     pub visited: usize,
+    /// The top found items, as you would get from `tantivy::TopDocs`
     pub items: Vec<(T, DocAddress)>,
 }
 
 impl<T> CollectionResult<T> {
+    /// Wether the same query that created this result would have
+    /// more results if we paginated (or increased the top-k limit)
     pub fn has_next(&self) -> bool {
         self.visited - self.items.len() > 0
     }

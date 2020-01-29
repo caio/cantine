@@ -4,6 +4,9 @@ use tantivy::{DocAddress, DocId, SegmentLocalId, SegmentReader};
 
 use super::topk::Scored;
 
+/// A trait that allows defining arbitrary conditions to be checked
+/// before considering a matching document for inclusion in the
+/// top results.
 pub trait ConditionForSegment<T>: Clone {
     type Type: CheckCondition<T>;
     fn for_segment(&self, reader: &SegmentReader) -> Self::Type;
@@ -27,6 +30,19 @@ impl<T> ConditionForSegment<T> for bool {
     }
 }
 
+impl<T> ConditionForSegment<T> for (T, DocAddress)
+where
+    T: 'static + PartialOrd + Copy,
+{
+    type Type = Self;
+    fn for_segment(&self, _reader: &SegmentReader) -> Self::Type {
+        *self
+    }
+}
+
+/// The condition that gets checked before collection. In order for
+/// a document to appear in the results it must first return true
+/// for `check`.
 pub trait CheckCondition<T>: 'static + Clone {
     fn check(&self, segment_id: SegmentLocalId, doc_id: DocId, score: T, ascending: bool) -> bool;
 }
@@ -48,7 +64,7 @@ where
 
 impl<T> CheckCondition<T> for (T, DocAddress)
 where
-    T: 'static + PartialOrd + Clone + Copy,
+    T: 'static + PartialOrd + Copy,
 {
     fn check(&self, segment_id: SegmentLocalId, doc_id: DocId, score: T, ascending: bool) -> bool {
         let wanted = if ascending {
@@ -59,35 +75,5 @@ where
 
         Scored::new(self.0, self.1).cmp(&Scored::new(score, DocAddress(segment_id, doc_id)))
             == wanted
-    }
-}
-
-pub trait ScorerForSegment<T>: Sync {
-    type Type: DocScorer<T>;
-    fn for_segment(&self, reader: &SegmentReader) -> Self::Type;
-}
-
-impl<T, C, F> ScorerForSegment<T> for F
-where
-    F: 'static + Sync + Send + Fn(&SegmentReader) -> C,
-    C: DocScorer<T>,
-{
-    type Type = C;
-
-    fn for_segment(&self, reader: &SegmentReader) -> Self::Type {
-        (self)(reader)
-    }
-}
-
-pub trait DocScorer<T>: 'static {
-    fn score(&self, doc_id: DocId) -> T;
-}
-
-impl<F, T> DocScorer<T> for F
-where
-    F: 'static + Sync + Send + Fn(DocId) -> T,
-{
-    fn score(&self, doc_id: DocId) -> T {
-        (self)(doc_id)
     }
 }
