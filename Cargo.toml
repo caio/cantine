@@ -3,4 +3,5 @@
 members = [
     "cantine",
     "tique",
+    "tique_derive",
 ]
