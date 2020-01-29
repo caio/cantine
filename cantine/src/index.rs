@@ -17,8 +17,7 @@ use crate::model::{
 };
 
 use tique::conditional_collector::{
-    traits::{CheckCondition, ConditionForSegment},
-    Ascending, CollectionResult, Descending, TopCollector,
+    Ascending, CheckCondition, CollectionResult, ConditionForSegment, Descending, TopCollector,
 };
 
 #[derive(Clone)]
