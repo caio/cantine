@@ -1,0 +1,13 @@
+[package]
+name = "cantine_derive"
+version = "0.1.0"
+authors = ["Caio Romão <contact@caio.co>"]
+edition = "2018"
+
+[dependencies]
+cantine_derive_internal = { path = "./internal" }
+serde = { version = "1.0" }
+tantivy = "0.11"
+
+[dev-dependencies]
+serde = { version = "1.0", features = ["derive"] }

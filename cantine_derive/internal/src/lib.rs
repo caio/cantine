@@ -356,7 +356,7 @@ fn make_agg_result(input: &DeriveInput) -> TokenStream2 {
 
         quote_spanned! { field.span()=>
             #[serde(skip_serializing_if = "Vec::is_empty")]
-            pub #name: Vec<tique::RangeStats<#ty>>
+            pub #name: Vec<cantine_derive::RangeStats<#ty>>
         }
     });
 

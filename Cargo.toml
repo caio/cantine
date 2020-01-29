@@ -2,6 +2,6 @@
 
 members = [
     "cantine",
+    "cantine_derive",
     "tique",
-    "tique_derive",
 ]

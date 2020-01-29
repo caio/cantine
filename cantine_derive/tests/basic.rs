@@ -6,7 +6,7 @@ use tantivy::{
     Document, Index, SegmentReader,
 };
 
-use tique::{FilterAndAggregation, RangeStats};
+use cantine_derive::{FilterAndAggregation, RangeStats};
 
 #[derive(FilterAndAggregation, Default)]
 pub struct Feat {

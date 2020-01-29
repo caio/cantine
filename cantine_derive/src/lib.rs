@@ -1,6 +1,8 @@
 use serde::Serialize;
 use std::ops::Range;
 
+pub use cantine_derive_internal::FilterAndAggregation;
+
 #[derive(Serialize, Debug, Clone)]
 pub struct RangeStats<T> {
     pub min: T,
