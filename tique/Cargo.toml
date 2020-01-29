@@ -1,21 +1,21 @@
 [package]
 name = "tique"
 version = "0.1.0"
+
+license = "MIT"
+description = "Utilities to drive a tantivy search index"
+keywords = ["tantivy", "pagination", "aggregation", "collector"]
+
+repository = "https://github.com/caio/cantine/tree/master/tique"
+homepage = "https://github.com/caio/cantine/"
 authors = ["Caio Romão <contact@caio.co>"]
+readme = "README.markdown"
 edition = "2018"
 
 [features]
 default = []
-unstable = ["tique_derive", "serde", "byteorder", "nom"]
+unstable = ["nom"]
 
 [dependencies]
 tantivy = "0.11"
-
-tique_derive = { path = "./tique_derive", optional = true }
-serde = { version = "1", features = ["derive"], optional = true }
-byteorder = { version = "1.3", optional = true }
 nom = { version = "5", optional = true }
-
-[dev-dependencies]
-zerocopy = "0.2"
-rand = "0.7"

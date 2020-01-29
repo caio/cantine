@@ -9,7 +9,7 @@ use tantivy::Score;
 use uuid::{self, Uuid};
 
 use crate::database::DatabaseRecord;
-use tique::FilterAndAggregation;
+use cantine_derive::FilterAndAggregation;
 
 #[derive(Deserialize, Serialize, Debug, PartialEq, Clone)]
 pub struct Recipe {

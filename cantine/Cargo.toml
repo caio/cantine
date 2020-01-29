@@ -8,6 +8,7 @@ default-run = "cantine"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+cantine_derive = { path = "../cantine_derive" }
 tique = { path = "../tique", features = ["unstable"] }
 actix-rt = "1.0"
 actix-service = "1.0"
