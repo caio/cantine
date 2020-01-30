@@ -3,6 +3,7 @@ name = "cantine_derive"
 version = "0.1.0"
 authors = ["Caio Romão <contact@caio.co>"]
 edition = "2018"
+publish = false
 
 [dependencies]
 cantine_derive_internal = { path = "./internal" }
