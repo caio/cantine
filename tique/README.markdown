@@ -1,4 +1,6 @@
 # tique
+![crates.io](https://img.shields.io/crates/v/tique.svg)
+![docs.rs](https://docs.rs/tique/badge.svg)
 
 Utilities to drive a tantivy search index
 
@@ -19,15 +21,11 @@ let min_rank_collector =
 
 Check the module docs for more details.
 
-### Unstable
+## Unstable
 
 This crate also contains unpolished functionality that is made availble
 through the `unstable` feature flag:
 
-* `tique::query_parser`: A very simple query parser that only knows
-  about term and phrase queries (and their negation). Mostly an excuse
-  to play with `nom`
-
-* `tique_derive::FilterAndAggregation`: Takes a struct of (possibly
-  `Option`) primitives and generates a bunch of code to assist with
-  indexing, filtering and aggregating.
+* `query_parser`: A very simple query parser that only knows about term
+  and phrase queries (and their negation). Mostly an excuse to play
+  with `nom`
