@@ -26,10 +26,6 @@
 //! * `tique::query_parser`: A very simple query parser that only knows
 //!   about term and phrase queries (and their negation). Mostly an excuse
 //!   to play with `nom`
-//!
-//! * `tique_derive::FilterAndAggregation`: Takes a struct of (possibly
-//!   `Option`) primitives and generates a bunch of code to assist with
-//!   indexing, filtering and aggregating.
 pub mod conditional_collector;
 
 #[cfg(feature = "unstable")]
