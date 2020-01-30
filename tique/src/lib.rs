@@ -17,15 +17,6 @@
 //! ```
 //!
 //! Check the module docs for more details.
-//!
-//! ## Unstable
-//!
-//! This crate also contains unpolished functionality that is made availble
-//! through the `unstable` feature flag:
-//!
-//! * `tique::query_parser`: A very simple query parser that only knows
-//!   about term and phrase queries (and their negation). Mostly an excuse
-//!   to play with `nom`
 pub mod conditional_collector;
 
 #[cfg(feature = "unstable")]
