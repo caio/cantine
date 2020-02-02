@@ -9,6 +9,7 @@ use std::{
 };
 
 use crossbeam_channel::unbounded;
+use env_logger;
 use serde_json;
 
 use tantivy::{self, directory::MmapDirectory, schema::SchemaBuilder, Index, Result};
@@ -140,6 +141,8 @@ fn get_usize_from_env_or(key: &str, default: usize) -> usize {
 }
 
 fn main() -> Result<()> {
+    env_logger::init();
+
     let output_dir = env::args()
         .nth(1)
         .expect("First parameter must be the output directory");
