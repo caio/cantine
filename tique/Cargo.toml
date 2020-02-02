@@ -6,8 +6,8 @@ license = "MIT"
 description = "Utilities to drive a tantivy search index"
 keywords = ["tantivy", "pagination", "aggregation", "collector"]
 
-repository = "https://github.com/caio/cantine/tree/master/tique"
-homepage = "https://github.com/caio/cantine/"
+repository = "https://github.com/caio/cantine/"
+homepage = "https://github.com/caio/cantine/tree/master/tique"
 authors = ["Caio Romão <contact@caio.co>"]
 readme = "README.markdown"
 edition = "2018"
