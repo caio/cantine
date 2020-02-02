@@ -1,8 +1,8 @@
 use std::{
+    env,
     io::{self, BufRead},
-    num::NonZeroUsize,
     path::Path,
-    result::Result as StdResult,
+    str::FromStr,
     sync::{mpsc::channel, Arc, RwLock},
     thread::spawn,
     time::Instant,
@@ -10,7 +10,6 @@ use std::{
 
 use crossbeam_channel::unbounded;
 use serde_json;
-use structopt::StructOpt;
 
 use tantivy::{self, directory::MmapDirectory, schema::SchemaBuilder, Index, Result};
 
@@ -19,33 +18,20 @@ use cantine::index::RecipeIndex;
 use cantine::model::Recipe;
 
 /// Loads recipes as json into cantine's database and index
-#[derive(Debug, StructOpt)]
-#[structopt(name = "load")]
+#[derive(Debug)]
 pub struct LoadOptions {
     /// Size for tantivy's writer buffer in MBs
-    #[structopt(short, long, default_value = "1000")]
-    buffer_size: NonZeroUsize,
+    buffer_size: usize,
     /// How many recipes to ingest before comitting
-    #[structopt(short, long, default_value = "300000")]
-    commit_every: NonZeroUsize,
+    commit_every: usize,
     /// Number of worker threads to start
-    #[structopt(short, long, default_value = "4")]
-    num_producers: NonZeroUsize,
+    num_producers: usize,
     /// Path to a non-existing directory
-    #[structopt(validator = does_not_exist)]
     output_dir: String,
 }
 
-fn does_not_exist(dir_path: String) -> StdResult<(), String> {
-    if Path::new(dir_path.as_str()).exists() {
-        Err("Path already exists".to_owned())
-    } else {
-        Ok(())
-    }
-}
-
 fn load(options: LoadOptions) -> Result<()> {
-    println!("Started with {:?}", &options);
+    log::info!("Started with {:?}", &options);
 
     let base_path = Path::new(options.output_dir.as_str());
     let db_path = base_path.join("database");
@@ -65,10 +51,10 @@ fn load(options: LoadOptions) -> Result<()> {
     // A MpSc channel to control index commit and write to db
     let (recipe_sender, recipe_receiver) = channel();
 
-    let buffer_size = options.buffer_size.get();
+    let buffer_size = options.buffer_size;
     let writer = Arc::new(RwLock::new(index.writer(buffer_size * 1_000_000)?));
 
-    let num_producers = options.num_producers.get();
+    let num_producers = options.num_producers;
     let mut workers = Vec::with_capacity(num_producers);
     for _ in 0..num_producers {
         let receiver = line_receiver.clone();
@@ -101,10 +87,10 @@ fn load(options: LoadOptions) -> Result<()> {
             num_recipes += 1;
             db.append(&recipe)?;
 
-            if num_recipes % options.commit_every.get() == 0 {
+            if num_recipes % options.commit_every == 0 {
                 writer.write()?.commit()?;
 
-                println!(
+                log::info!(
                     "DiskWriter: {} Documents so far (@ {} secs).",
                     num_recipes,
                     cur.elapsed().as_secs()
@@ -114,7 +100,7 @@ fn load(options: LoadOptions) -> Result<()> {
 
         writer.write()?.commit()?;
 
-        println!(
+        log::info!(
             "DiskWriter: Wrote {} documents in {} seconds",
             num_recipes,
             cur.elapsed().as_secs()
@@ -137,11 +123,39 @@ fn load(options: LoadOptions) -> Result<()> {
 
     disk_writer.join().unwrap()?;
 
-    println!("Done!");
+    log::info!("Done!");
 
     Ok(())
 }
 
+const BUFFER_SIZE: &str = "BUFFER_SIZE";
+const COMMIT_EVERY: &str = "COMMIT_EVERY";
+const NUM_PRODUCERS: &str = "NUM_PRODUCERS";
+
+fn get_usize_from_env_or(key: &str, default: usize) -> usize {
+    env::var(key)
+        .ok()
+        .map(|v| usize::from_str(&v).expect("valid usize"))
+        .unwrap_or(default)
+}
+
 fn main() -> Result<()> {
-    load(LoadOptions::from_args())
+    let output_dir = env::args()
+        .nth(1)
+        .expect("First parameter must be the output directory");
+
+    let buffer_size = get_usize_from_env_or(BUFFER_SIZE, 1000);
+
+    let commit_every = get_usize_from_env_or(COMMIT_EVERY, 300_000);
+
+    let num_producers = get_usize_from_env_or(NUM_PRODUCERS, 4);
+
+    let options = LoadOptions {
+        output_dir,
+        buffer_size,
+        commit_every,
+        num_producers,
+    };
+
+    load(options)
 }

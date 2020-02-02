@@ -1,8 +1,7 @@
-use std::{convert::TryFrom, path::PathBuf, sync::Arc};
+use std::{convert::TryFrom, env, io, path::Path, str::FromStr, sync::Arc};
 
 use env_logger;
 use serde::Serialize;
-use structopt::StructOpt;
 use tique::queryparser::QueryParser;
 use uuid::Uuid;
 
@@ -23,15 +22,6 @@ use cantine::{
         RecipeInfo, SearchCursor, SearchQuery, SearchResult, Sort,
     },
 };
-
-#[derive(Debug, StructOpt)]
-pub struct ApiOptions {
-    /// Path to the data directory
-    base_path: PathBuf,
-    /// Only aggregate when found less recipes than given threshold
-    #[structopt(short, long)]
-    agg_threshold: Option<usize>,
-}
 
 type RecipeDatabase = Arc<DatabaseReader<Recipe>>;
 
@@ -200,13 +190,31 @@ impl SearchState {
     }
 }
 
+const BASE_DIR: &str = "BASE_DIR";
+const AGG_THRESHOLD: &str = "AGG_THRESHOLD";
+
+fn get_env(key: &str) -> Result<String> {
+    env::var(key).map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, key).into())
+}
+
 #[actix_rt::main]
 async fn main() -> Result<()> {
     env_logger::init();
-    let options = ApiOptions::from_args();
 
-    let index_path = options.base_path.join("tantivy");
-    let db_path = options.base_path.join("database");
+    let base_dir = get_env(BASE_DIR)?;
+    let threshold = get_env(AGG_THRESHOLD)
+        .ok()
+        .map(|v| usize::from_str(&v).expect("valid usize"));
+
+    log::info!(
+        "Starting with base_dir={} agg_threshold={:?}",
+        base_dir,
+        threshold
+    );
+
+    let base_path = Path::new(&base_dir);
+    let index_path = base_path.join("tantivy");
+    let db_path = base_path.join("database");
 
     let index = Index::open_in_dir(&index_path)?;
     let recipe_index = RecipeIndex::try_from(&index.schema())?;
@@ -216,13 +224,12 @@ async fn main() -> Result<()> {
         true,
     );
 
-    let agg_threshold = options.agg_threshold.unwrap_or(std::usize::MAX);
     let reader = index.reader()?;
     let search_state = Arc::new(SearchState {
         reader,
         recipe_index,
         query_parser,
-        agg_threshold,
+        agg_threshold: threshold.unwrap_or(std::usize::MAX),
     });
 
     let database: RecipeDatabase = Arc::new(DatabaseReader::open(&db_path)?);
