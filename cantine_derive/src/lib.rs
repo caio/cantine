@@ -96,20 +96,21 @@ where
     Q: 'static + Clone + Sync,
     A: 'static + Mergeable + for<'a> From<&'a Q>,
     F: 'static + Sync + Fn(&SegmentReader) -> R,
-    R: 'static + Fn(DocId) -> Option<T>,
+    R: 'static + FeatureForDoc<T>,
 {
     type Fruit = A;
-    type Child = AggSegmentCollector<A, Q, R>;
+    type Child = FeatureSegmentCollector<T, A, Q, R>;
 
     fn for_segment(
         &self,
         _segment_id: SegmentLocalId,
         segment_reader: &SegmentReader,
     ) -> Result<Self::Child> {
-        Ok(AggSegmentCollector {
+        Ok(FeatureSegmentCollector {
             agg: A::from(&self.query),
             query: self.query.clone(),
             reader: (self.reader_factory)(segment_reader),
+            _marker: PhantomData,
         })
     }
 
@@ -130,23 +131,37 @@ where
     }
 }
 
-struct AggSegmentCollector<A, Q, F> {
+pub trait FeatureForDoc<T> {
+    fn for_doc(&self, doc: DocId) -> Option<T>;
+}
+
+impl<T, F> FeatureForDoc<T> for F
+where
+    F: Fn(DocId) -> Option<T>,
+{
+    fn for_doc(&self, doc: DocId) -> Option<T> {
+        (self)(doc)
+    }
+}
+
+struct FeatureSegmentCollector<T, A, Q, F> {
     agg: A,
     query: Q,
     reader: F,
+    _marker: PhantomData<T>,
 }
 
-impl<T, A, Q, F> SegmentCollector for AggSegmentCollector<A, Q, F>
+impl<T, A, Q, F> SegmentCollector for FeatureSegmentCollector<T, A, Q, F>
 where
     T: 'static + Feature<Q, Agg = A>,
     Q: 'static,
     A: 'static + Mergeable + for<'a> From<&'a Q>,
-    F: 'static + Fn(DocId) -> Option<T>,
+    F: 'static + FeatureForDoc<T>,
 {
     type Fruit = A;
 
     fn collect(&mut self, doc: DocId, _score: Score) {
-        if let Some(item) = (self.reader)(doc) {
+        if let Some(item) = self.reader.for_doc(doc) {
             item.collect_into(&self.query, &mut self.agg);
         }
     }
