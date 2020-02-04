@@ -1,13 +1,11 @@
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-};
+use bincode;
 
+use serde::{Deserialize, Serialize};
 use tantivy::{query::AllQuery, schema::SchemaBuilder, Document, Index, SegmentReader};
 
 use cantine_derive::{AggregationQuery, FeatureCollector, RangeStats};
 
-#[derive(AggregationQuery, Default)]
+#[derive(AggregationQuery, Serialize, Deserialize, Default)]
 pub struct Feat {
     pub a: u64,
     pub b: Option<i16>,
@@ -114,50 +112,40 @@ fn agg_query_full_range_generation() {
 fn collector_integration() -> tantivy::Result<()> {
     let mut builder = SchemaBuilder::new();
 
-    let id_field = builder.add_u64_field("id", tantivy::schema::FAST);
+    let bytes_field = builder.add_bytes_field("bincode_feat");
 
     let index = Index::create_in_ram(builder.build());
-
     let mut writer = index.writer_with_num_threads(1, 3_000_000)?;
-    let mut db = HashMap::new();
 
-    let mut add_feat = |id: u64, feat| {
+    let add_feat = |feat| {
         let mut doc = Document::new();
+        doc.add_bytes(
+            bytes_field,
+            bincode::serialize(&feat).expect("serialize ok"),
+        );
 
-        doc.add_u64(id_field, id);
         writer.add_document(doc);
-
-        db.insert(id, feat);
     };
 
-    add_feat(
-        1,
-        Feat {
-            a: 1,
-            c: 1.0,
-            ..Feat::default()
-        },
-    );
+    add_feat(Feat {
+        a: 1,
+        c: 1.0,
+        ..Feat::default()
+    });
 
-    add_feat(
-        2,
-        Feat {
-            a: 2,
-            b: Some(2),
-            c: 2.0,
-            ..Feat::default()
-        },
-    );
+    add_feat(Feat {
+        a: 2,
+        b: Some(2),
+        c: 2.0,
+        ..Feat::default()
+    });
 
-    add_feat(
-        3,
-        Feat {
-            a: 3,
-            b: Some(3),
-            c: 3.0,
-            d: Some(3.0),
-        },
-    );
+    add_feat(Feat {
+        a: 3,
+        b: Some(3),
+        c: 3.0,
+        d: Some(3.0),
+    });
 
     writer.commit()?;
 
@@ -168,15 +156,10 @@ fn collector_integration() -> tantivy::Result<()> {
         d: vec![42.0..100.0],
     };
 
-    let db = Arc::new(Mutex::new(db));
     let collector =
         FeatureCollector::<Feat, _, _>::new(query, move |seg_reader: &SegmentReader| {
-            let id_reader = seg_reader.fast_fields().u64(id_field).unwrap();
-            let db = db.clone();
-            move |doc| {
-                let id = id_reader.get(doc);
-                db.lock().unwrap().remove(&id)
-            }
+            let reader = seg_reader.fast_fields().bytes(bytes_field).unwrap();
+            move |doc| bincode::deserialize(reader.get_bytes(doc)).ok()
         });
 
     let reader = index.reader()?;
