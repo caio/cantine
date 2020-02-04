@@ -67,19 +67,36 @@ pub trait Feature<TQuery>: Sync {
     fn collect_into(&self, query: &TQuery, agg: &mut Self::Agg);
 }
 
+pub trait FeatureForSegment<T>: Sync {
+    type Output: FeatureForDoc<T>;
+    fn for_segment(&self, reader: &SegmentReader) -> Self::Output;
+}
+
+impl<T, F, O> FeatureForSegment<T> for F
+where
+    F: Sync + Fn(&SegmentReader) -> O,
+    O: FeatureForDoc<T>,
+{
+    type Output = O;
+
+    fn for_segment(&self, reader: &SegmentReader) -> Self::Output {
+        (self)(reader)
+    }
+}
+
 struct FeatureCollector<T, Q, F> {
     query: Q,
     reader_factory: F,
     _marker: PhantomData<T>,
 }
 
-impl<T, A, Q, F, R> FeatureCollector<T, Q, F>
+impl<T, A, Q, F, O> FeatureCollector<T, Q, F>
 where
     T: 'static + Feature<Q, Agg = A>,
     Q: 'static + Clone + Sync,
     A: 'static + Mergeable + for<'a> From<&'a Q>,
-    F: 'static + Sync + Fn(&SegmentReader) -> R,
-    R: 'static + Fn(DocId) -> Option<T>,
+    F: FeatureForSegment<T, Output = O>,
+    O: 'static + FeatureForDoc<T>,
 {
     pub fn new(query: Q, reader_factory: F) -> Self {
         Self {
@@ -90,16 +107,16 @@ where
     }
 }
 
-impl<T, A, Q, F, R> Collector for FeatureCollector<T, Q, F>
+impl<T, A, Q, F, O> Collector for FeatureCollector<T, Q, F>
 where
     T: 'static + Feature<Q, Agg = A>,
     Q: 'static + Clone + Sync,
     A: 'static + Mergeable + for<'a> From<&'a Q>,
-    F: 'static + Sync + Fn(&SegmentReader) -> R,
-    R: 'static + FeatureForDoc<T>,
+    F: FeatureForSegment<T, Output = O>,
+    O: 'static + FeatureForDoc<T>,
 {
     type Fruit = A;
-    type Child = FeatureSegmentCollector<T, A, Q, R>;
+    type Child = FeatureSegmentCollector<T, A, Q, O>;
 
     fn for_segment(
         &self,
@@ -109,7 +126,7 @@ where
         Ok(FeatureSegmentCollector {
             agg: A::from(&self.query),
             query: self.query.clone(),
-            reader: (self.reader_factory)(segment_reader),
+            reader: self.reader_factory.for_segment(segment_reader),
             _marker: PhantomData,
         })
     }
