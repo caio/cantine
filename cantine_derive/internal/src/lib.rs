@@ -8,19 +8,25 @@ use syn::{
     PathArguments, Type, Visibility,
 };
 
-#[proc_macro_derive(FilterAndAggregation)]
+#[proc_macro_derive(FilterQuery)]
 pub fn derive_filter_and_agg(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
-
     let filter_query = make_filter_query(&input);
+
+    TokenStream::from(quote! {
+        #filter_query
+    })
+}
+
+#[proc_macro_derive(AggregationQuery)]
+pub fn derive_agg(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
 
     let agg_query = make_agg_query(&input);
     let agg_result = make_agg_result(&input);
     let collector = impl_collector_traits(&input);
 
     TokenStream::from(quote! {
-        #filter_query
-
         #agg_query
         #agg_result
         #collector

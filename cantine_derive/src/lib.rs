@@ -6,7 +6,7 @@ use tantivy::{
     DocId, Result, Score, SegmentLocalId, SegmentReader,
 };
 
-pub use cantine_derive_internal::FilterAndAggregation;
+pub use cantine_derive_internal::{AggregationQuery, FilterQuery};
 
 #[derive(Serialize, Debug, Clone)]
 pub struct RangeStats<T> {
