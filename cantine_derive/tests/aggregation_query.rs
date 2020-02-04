@@ -156,11 +156,10 @@ fn collector_integration() -> tantivy::Result<()> {
         d: vec![42.0..100.0],
     };
 
-    let collector =
-        FeatureCollector::<Feat, _, _>::new(query, move |seg_reader: &SegmentReader| {
-            let reader = seg_reader.fast_fields().bytes(bytes_field).unwrap();
-            move |doc| bincode::deserialize(reader.get_bytes(doc)).ok()
-        });
+    let collector = FeatureCollector::<Feat, _>::new(query, move |seg_reader: &SegmentReader| {
+        let reader = seg_reader.fast_fields().bytes(bytes_field).unwrap();
+        move |doc| bincode::deserialize(reader.get_bytes(doc)).ok()
+    });
 
     let reader = index.reader()?;
     let searcher = reader.searcher();

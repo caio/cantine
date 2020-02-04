@@ -1,4 +1,4 @@
-use std::{marker::PhantomData, ops::Range};
+use std::ops::Range;
 
 use serde::Serialize;
 use tantivy::{
@@ -85,29 +85,26 @@ where
     }
 }
 
-pub struct FeatureCollector<T, Q, F> {
-    query: Q,
+pub struct FeatureCollector<T: Feature, F> {
+    query: T::Query,
     reader_factory: F,
-    _marker: PhantomData<T>,
 }
 
-impl<T, Q, F, O> FeatureCollector<T, Q, F>
+impl<T, F, O> FeatureCollector<T, F>
 where
     T: 'static + Feature,
-    Q: 'static + Clone + Sync,
     F: FeatureForSegment<T, Output = O>,
     O: 'static + FeatureForDoc<T>,
 {
-    pub fn new(query: Q, reader_factory: F) -> Self {
+    pub fn new(query: T::Query, reader_factory: F) -> Self {
         Self {
             query,
             reader_factory,
-            _marker: PhantomData,
         }
     }
 }
 
-impl<T, F, O> Collector for FeatureCollector<T, T::Query, F>
+impl<T, F, O> Collector for FeatureCollector<T, F>
 where
     T: 'static + Feature,
     F: FeatureForSegment<T, Output = O>,
@@ -236,7 +233,7 @@ mod tests {
         let reader = index.reader()?;
         let searcher = reader.searcher();
 
-        let ranges_collector = FeatureCollector::<i16, _, _>::new(
+        let ranges_collector = FeatureCollector::<i16, _>::new(
             vec![-10..0, 0..10, -2..4],
             move |reader: &SegmentReader| {
                 let bytes_reader = reader.fast_fields().bytes(bytes_field).unwrap();
