@@ -84,7 +84,7 @@ where
     }
 }
 
-struct FeatureCollector<T, Q, F> {
+pub struct FeatureCollector<T, Q, F> {
     query: Q,
     reader_factory: F,
     _marker: PhantomData<T>,
@@ -161,7 +161,7 @@ where
     }
 }
 
-struct FeatureSegmentCollector<T, A, Q, F> {
+pub struct FeatureSegmentCollector<T, A, Q, F> {
     agg: A,
     query: Q,
     reader: F,
