@@ -24,43 +24,11 @@ pub fn derive_agg(input: TokenStream) -> TokenStream {
 
     let agg_query = make_agg_query(&input);
     let agg_result = make_agg_result(&input);
-    let collector = impl_collector_traits(&input);
 
     TokenStream::from(quote! {
         #agg_query
         #agg_result
-        #collector
     })
-}
-
-fn impl_collector_traits(input: &DeriveInput) -> TokenStream2 {
-    let meta = &input.ident;
-    let agg = format_ident!("{}AggregationResult", meta);
-    let query = format_ident!("{}AggregationQuery", meta);
-
-    quote! {
-        impl cantine_derive::Mergeable for #agg {
-            fn merge_same_size(&mut self, other: &Self) {
-                <#agg>::merge_same_size(self, other);
-            }
-        }
-
-        impl cantine_derive::Feature<#query> for #meta {
-            type Agg = #agg;
-
-            fn collect_into(&self, query: &#query, agg: &mut #agg) {
-                agg.collect(&query, &self);
-            }
-        }
-
-        impl cantine_derive::Feature<#query> for &#meta {
-            type Agg = #agg;
-
-            fn collect_into(&self, query: &#query, agg: &mut #agg) {
-                agg.collect(&query, &self);
-            }
-        }
-    }
 }
 
 fn make_filter_query(input: &DeriveInput) -> TokenStream2 {
@@ -359,14 +327,34 @@ fn make_agg_result(input: &DeriveInput) -> TokenStream2 {
             #(#fields),*
         }
 
+        impl cantine_derive::Feature for #feature {
+            type Query = #agg_query;
+            type Agg = #name;
+        }
+
+        impl cantine_derive::Aggregator<#agg_query, #feature> for #name {
+            fn merge_same_size(&mut self, other: &Self) {
+                <#name>::merge_same_size(self, other);
+            }
+
+            fn collect(&mut self, query: &#agg_query, feature: &#feature) {
+                <#name>::collect(self, query, feature);
+            }
+
+            fn from_query(query: &#agg_query) -> Self {
+                <#name>::from(query)
+            }
+        }
+
         impl #name {
-            pub fn merge_same_size(&mut self, other: &Self) {
+            fn merge_same_size(&mut self, other: &Self) {
                 #(#merge_code);*
             }
 
-            pub fn collect(&mut self, query: &#agg_query, feature: &#feature) {
+            fn collect(&mut self, query: &#agg_query, feature: &#feature) {
                 #(#collect_code);*
             }
+
         }
 
         impl From<&#agg_query> for #name {
