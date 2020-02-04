@@ -16,7 +16,7 @@ pub fn derive_filter_and_agg(input: TokenStream) -> TokenStream {
 
     let agg_query = make_agg_query(&input);
     let agg_result = make_agg_result(&input);
-    let collector = make_collector(&input);
+    let collector = impl_collector_traits(&input);
 
     TokenStream::from(quote! {
         #filter_query
@@ -27,89 +27,31 @@ pub fn derive_filter_and_agg(input: TokenStream) -> TokenStream {
     })
 }
 
-fn make_collector(input: &DeriveInput) -> TokenStream2 {
+fn impl_collector_traits(input: &DeriveInput) -> TokenStream2 {
     let meta = &input.ident;
     let agg = format_ident!("{}AggregationResult", meta);
     let query = format_ident!("{}AggregationQuery", meta);
 
-    let collector = format_ident!("{}Collector", meta);
-    let segment_collector = format_ident!("{}SegmentColletor", meta);
-
     quote! {
-        pub struct #collector<F> {
-            agg: #agg,
-            query: #query,
-            reader_factory: F,
-        }
-
-        impl<F, R> #collector<F>
-        where
-            F: 'static + Sync + Fn(&tantivy::SegmentReader) -> R,
-            R: 'static + Fn(tantivy::DocId, &#query, &mut #agg),
-        {
-            pub fn new(query: #query, reader_factory: F) -> Self {
-                let agg = <#agg>::from(&query);
-                Self {
-                    agg, query, reader_factory
-                }
+        impl cantine_derive::Mergeable for #agg {
+            fn merge_same_size(&mut self, other: &Self) {
+                <#agg>::merge_same_size(self, other);
             }
         }
 
-        pub struct #segment_collector<F> {
-            agg: #agg,
-            query: #query,
-            reader: F,
-        }
+        impl cantine_derive::Feature<#query> for #meta {
+            type Agg = #agg;
 
-        impl<F, R> tantivy::collector::Collector for #collector<F>
-        where
-            F: 'static + Sync + Fn(&tantivy::SegmentReader) -> R,
-            R: 'static + Fn(tantivy::DocId, &#query, &mut #agg),
-        {
-            type Fruit = #agg;
-            type Child = #segment_collector<R>;
-
-            fn for_segment(
-                &self,
-                _segment_id: tantivy::SegmentLocalId,
-                segment_reader: &tantivy::SegmentReader,
-            ) -> tantivy::Result<Self::Child> {
-                Ok(#segment_collector {
-                    agg: self.agg.clone(),
-                    query: self.query.clone(),
-                    reader: (self.reader_factory)(segment_reader),
-                })
-            }
-
-            fn requires_scoring(&self) -> bool {
-                false
-            }
-
-            fn merge_fruits(&self, fruits: Vec<Self::Fruit>) -> tantivy::Result<Self::Fruit> {
-                let mut iter = fruits.into_iter();
-
-                let mut first = iter.next().expect("Always at least one fruit");
-
-                for fruit in iter {
-                    first.merge_same_size(&fruit);
-                }
-
-                Ok(first)
+            fn collect_into(&self, query: &#query, agg: &mut #agg) {
+                agg.collect(&query, &self);
             }
         }
 
-        impl<F> tantivy::collector::SegmentCollector for #segment_collector<F>
-        where
-            F: 'static + Fn(tantivy::DocId, &#query, &mut #agg),
-        {
-            type Fruit = #agg;
+        impl cantine_derive::Feature<#query> for &#meta {
+            type Agg = #agg;
 
-            fn collect(&mut self, doc: tantivy::DocId, _score: tantivy::Score) {
-                (self.reader)(doc, &self.query, &mut self.agg);
-            }
-
-            fn harvest(self) -> Self::Fruit {
-                self.agg
+            fn collect_into(&self, query: &#query, agg: &mut #agg) {
+                agg.collect(&query, &self);
             }
         }
     }

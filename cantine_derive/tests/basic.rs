@@ -1,4 +1,9 @@
-use std::{collections::HashMap, convert::TryFrom, ops::Range, sync::Arc};
+use std::{
+    collections::HashMap,
+    convert::TryFrom,
+    ops::Range,
+    sync::{Arc, Mutex},
+};
 
 use tantivy::{
     query::AllQuery,
@@ -6,7 +11,7 @@ use tantivy::{
     Document, Index, SegmentReader,
 };
 
-use cantine_derive::{FilterAndAggregation, RangeStats};
+use cantine_derive::{FeatureCollector, FilterAndAggregation, RangeStats};
 
 #[derive(FilterAndAggregation, Default)]
 pub struct Feat {
@@ -201,7 +206,7 @@ fn collector_integration() -> tantivy::Result<()> {
 
     let index = Index::create_in_ram(builder.build());
 
-    let mut writer = index.writer_with_num_threads(1, 50_000_000)?;
+    let mut writer = index.writer_with_num_threads(1, 3_000_000)?;
     let mut db = HashMap::new();
 
     let mut add_feat = |id: u64, feat| {
@@ -252,15 +257,16 @@ fn collector_integration() -> tantivy::Result<()> {
         d: vec![42.0..100.0],
     };
 
-    let db = Arc::new(db);
-    let collector = FeatCollector::new(query, move |seg_reader: &SegmentReader| {
-        let id_reader = seg_reader.fast_fields().u64(id_field).unwrap();
-        let db = db.clone();
-        move |doc, query, agg| {
-            let id = id_reader.get(doc);
-            agg.collect(query, db.get(&id).unwrap());
-        }
-    });
+    let db = Arc::new(Mutex::new(db));
+    let collector =
+        FeatureCollector::<Feat, _, _>::new(query, move |seg_reader: &SegmentReader| {
+            let id_reader = seg_reader.fast_fields().u64(id_field).unwrap();
+            let db = db.clone();
+            move |doc| {
+                let id = id_reader.get(doc);
+                db.lock().unwrap().remove(&id)
+            }
+        });
 
     let reader = index.reader()?;
     let searcher = reader.searcher();
