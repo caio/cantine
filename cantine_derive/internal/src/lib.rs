@@ -18,7 +18,7 @@ pub fn derive_filter_and_agg(input: TokenStream) -> TokenStream {
     })
 }
 
-#[proc_macro_derive(AggregationQuery)]
+#[proc_macro_derive(Aggregable)]
 pub fn derive_agg(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
 
@@ -327,7 +327,7 @@ fn make_agg_result(input: &DeriveInput) -> TokenStream2 {
             #(#fields),*
         }
 
-        impl cantine_derive::Feature for #feature {
+        impl cantine_derive::Aggregable for #feature {
             type Query = #agg_query;
             type Agg = #name;
         }

@@ -3,9 +3,9 @@ use bincode;
 use serde::{Deserialize, Serialize};
 use tantivy::{query::AllQuery, schema::SchemaBuilder, Document, Index, SegmentReader};
 
-use cantine_derive::{AggregationQuery, FeatureCollector, RangeStats};
+use cantine_derive::{Aggregable, AggregableCollector, RangeStats};
 
-#[derive(AggregationQuery, Serialize, Deserialize, Default)]
+#[derive(Aggregable, Serialize, Deserialize, Default)]
 pub struct Feat {
     pub a: u64,
     pub b: Option<i16>,
@@ -156,10 +156,11 @@ fn collector_integration() -> tantivy::Result<()> {
         d: vec![42.0..100.0],
     };
 
-    let collector = FeatureCollector::<Feat, _>::new(query, move |seg_reader: &SegmentReader| {
-        let reader = seg_reader.fast_fields().bytes(bytes_field).unwrap();
-        move |doc| bincode::deserialize(reader.get_bytes(doc)).ok()
-    });
+    let collector =
+        AggregableCollector::<Feat, _>::new(query, move |seg_reader: &SegmentReader| {
+            let reader = seg_reader.fast_fields().bytes(bytes_field).unwrap();
+            move |doc| bincode::deserialize(reader.get_bytes(doc)).ok()
+        });
 
     let reader = index.reader()?;
     let searcher = reader.searcher();

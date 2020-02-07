@@ -6,7 +6,7 @@ use tantivy::{
     DocId, Result, Score, SegmentLocalId, SegmentReader,
 };
 
-pub use cantine_derive_internal::{AggregationQuery, FilterQuery};
+pub use cantine_derive_internal::{Aggregable, FilterQuery};
 
 #[derive(Serialize, Debug, Clone)]
 pub struct RangeStats<T> {
@@ -63,20 +63,20 @@ pub trait Aggregator<Q, F>: Send + Sync {
     fn from_query(query: &Q) -> Self;
 }
 
-pub trait Feature: Sized + Sync {
+pub trait Aggregable: Sized + Sync {
     type Query: Sync + Clone;
     type Agg: Aggregator<Self::Query, Self>;
 }
 
-pub trait FeatureForSegment<T>: Sync {
-    type Output: FeatureForDoc<T>;
+pub trait AggregableForSegment<T>: Sync {
+    type Output: AggregableForDoc<T>;
     fn for_segment(&self, reader: &SegmentReader) -> Self::Output;
 }
 
-impl<T, F, O> FeatureForSegment<T> for F
+impl<T, F, O> AggregableForSegment<T> for F
 where
     F: Sync + Fn(&SegmentReader) -> O,
-    O: FeatureForDoc<T>,
+    O: AggregableForDoc<T>,
 {
     type Output = O;
 
@@ -85,16 +85,16 @@ where
     }
 }
 
-pub struct FeatureCollector<T: Feature, F> {
+pub struct AggregableCollector<T: Aggregable, F> {
     query: T::Query,
     reader_factory: F,
 }
 
-impl<T, F, O> FeatureCollector<T, F>
+impl<T, F, O> AggregableCollector<T, F>
 where
-    T: 'static + Feature,
-    F: FeatureForSegment<T, Output = O>,
-    O: 'static + FeatureForDoc<T>,
+    T: 'static + Aggregable,
+    F: AggregableForSegment<T, Output = O>,
+    O: 'static + AggregableForDoc<T>,
 {
     pub fn new(query: T::Query, reader_factory: F) -> Self {
         Self {
@@ -104,21 +104,21 @@ where
     }
 }
 
-impl<T, F, O> Collector for FeatureCollector<T, F>
+impl<T, F, O> Collector for AggregableCollector<T, F>
 where
-    T: 'static + Feature,
-    F: FeatureForSegment<T, Output = O>,
-    O: 'static + FeatureForDoc<T>,
+    T: 'static + Aggregable,
+    F: AggregableForSegment<T, Output = O>,
+    O: 'static + AggregableForDoc<T>,
 {
     type Fruit = T::Agg;
-    type Child = FeatureSegmentCollector<T, O>;
+    type Child = AggregableSegmentCollector<T, O>;
 
     fn for_segment(
         &self,
         _segment_id: SegmentLocalId,
         segment_reader: &SegmentReader,
     ) -> Result<Self::Child> {
-        Ok(FeatureSegmentCollector {
+        Ok(AggregableSegmentCollector {
             agg: T::Agg::from_query(&self.query),
             query: self.query.clone(),
             reader: self.reader_factory.for_segment(segment_reader),
@@ -144,11 +144,11 @@ where
     }
 }
 
-pub trait FeatureForDoc<T> {
+pub trait AggregableForDoc<T> {
     fn for_doc(&self, doc: DocId) -> Option<T>;
 }
 
-impl<T, F> FeatureForDoc<T> for F
+impl<T, F> AggregableForDoc<T> for F
 where
     F: Fn(DocId) -> Option<T>,
 {
@@ -157,16 +157,16 @@ where
     }
 }
 
-pub struct FeatureSegmentCollector<T: Feature, F> {
+pub struct AggregableSegmentCollector<T: Aggregable, F> {
     agg: T::Agg,
     query: T::Query,
     reader: F,
 }
 
-impl<T, F> SegmentCollector for FeatureSegmentCollector<T, F>
+impl<T, F> SegmentCollector for AggregableSegmentCollector<T, F>
 where
-    T: 'static + Feature,
-    F: 'static + FeatureForDoc<T>,
+    T: 'static + Aggregable,
+    F: 'static + AggregableForDoc<T>,
 {
     type Fruit = T::Agg;
 
@@ -209,7 +209,7 @@ mod tests {
         }
     }
 
-    impl Feature for i16 {
+    impl Aggregable for i16 {
         type Query = Vec<Range<i16>>;
         type Agg = Vec<i16>;
     }
@@ -233,7 +233,7 @@ mod tests {
         let reader = index.reader()?;
         let searcher = reader.searcher();
 
-        let ranges_collector = FeatureCollector::<i16, _>::new(
+        let ranges_collector = AggregableCollector::<i16, _>::new(
             vec![-10..0, 0..10, -2..4],
             move |reader: &SegmentReader| {
                 let bytes_reader = reader.fast_fields().bytes(bytes_field).unwrap();
