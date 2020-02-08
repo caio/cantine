@@ -8,7 +8,7 @@ use syn::{
     PathArguments, Type, Visibility,
 };
 
-#[proc_macro_derive(FilterQuery)]
+#[proc_macro_derive(Filterable)]
 pub fn derive_filter_and_agg(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let filter_query = make_filter_query(&input);
@@ -69,7 +69,7 @@ fn make_filter_query(input: &DeriveInput) -> TokenStream2 {
         };
 
         quote_spanned! { field.span()=>
-            #name: builder.#method(#quoted, tantivy::schema::INDEXED | tantivy::schema::FAST)
+            #name: builder.#method(#quoted, flags.clone())
         }
     });
 
@@ -193,10 +193,36 @@ fn make_filter_query(input: &DeriveInput) -> TokenStream2 {
             #(#index_fields),*
         }
 
+        impl cantine_derive::Filterable for #feat {
+            type Query = #name;
+            type Schema = #index_name;
+
+            fn load_schema(schema: &tantivy::schema::Schema) -> tantivy::Result<Self::Schema> {
+                Self::Schema::try_from(schema)
+            }
+
+            fn create_schema<O: Into<tantivy::schema::IntOptions>>(
+                builder: &mut tantivy::schema::SchemaBuilder,
+                options: O,
+            ) -> Self::Schema {
+                Self::Schema::with_flags(builder, options)
+            }
+        }
+
+        impl cantine_derive::FilterableSchema<#feat, #name> for #index_name {
+            fn add_to_doc(&self, doc: &mut tantivy::Document, item: &#feat) {
+                <#index_name>::add_to_doc(self, doc, item)
+            }
+
+            fn interpret(&self, query: &#name) -> Vec<Box<dyn tantivy::query::Query>> {
+                <#index_name>::interpret(self, query)
+            }
+        }
+
         impl std::convert::TryFrom<&tantivy::schema::Schema> for #index_name {
             type Error = tantivy::TantivyError;
 
-            fn try_from(schema: &tantivy::schema::Schema) -> std::result::Result<Self, Self::Error> {
+            fn try_from(schema: &tantivy::schema::Schema) -> Result<Self, Self::Error> {
                 Ok(Self {
                     #(#try_from_decls),*
                 })
@@ -205,9 +231,7 @@ fn make_filter_query(input: &DeriveInput) -> TokenStream2 {
 
         impl From<&mut tantivy::schema::SchemaBuilder> for #index_name {
             fn from(builder: &mut tantivy::schema::SchemaBuilder) -> Self {
-                Self {
-                    #(#from_decls),*
-                }
+                Self::with_flags(builder, tantivy::schema::INDEXED)
             }
         }
 
@@ -220,6 +244,22 @@ fn make_filter_query(input: &DeriveInput) -> TokenStream2 {
 
             pub fn add_to_doc(&self, doc: &mut tantivy::Document, feat: &#feat) {
                 #(#add_to_doc_code);*
+            }
+
+            pub fn with_flags<O: Into<tantivy::schema::IntOptions>>(
+                builder: &mut tantivy::schema::SchemaBuilder,
+                flags: O
+            ) -> Self {
+                let flags = flags.into();
+                let new = Self {
+                    #(#from_decls),*
+                };
+
+                if ! flags.is_indexed() {
+                    panic!("Missing required INDEXED option");
+                }
+
+                new
             }
         }
     }

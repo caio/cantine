@@ -3,10 +3,25 @@ use std::ops::Range;
 use serde::Serialize;
 use tantivy::{
     collector::{Collector, SegmentCollector},
-    DocId, Result, Score, SegmentLocalId, SegmentReader,
+    query::Query,
+    schema::{IntOptions, Schema, SchemaBuilder},
+    DocId, Document, Result, Score, SegmentLocalId, SegmentReader,
 };
 
-pub use cantine_derive_internal::{Aggregable, FilterQuery};
+pub use cantine_derive_internal::{Aggregable, Filterable};
+
+pub trait Filterable: Sized {
+    type Query;
+    type Schema: FilterableSchema<Self, Self::Query>;
+
+    fn create_schema<O: Into<IntOptions>>(builder: &mut SchemaBuilder, options: O) -> Self::Schema;
+    fn load_schema(schema: &Schema) -> Result<Self::Schema>;
+}
+
+pub trait FilterableSchema<T, Q>: Sized {
+    fn add_to_doc(&self, doc: &mut Document, item: &T);
+    fn interpret(&self, query: &Q) -> Vec<Box<dyn Query>>;
+}
 
 #[derive(Serialize, Debug, Clone)]
 pub struct RangeStats<T> {

@@ -1,13 +1,13 @@
 use std::convert::TryFrom;
 
 use tantivy::{
-    schema::{SchemaBuilder, Value},
+    schema::{SchemaBuilder, Value, FAST, INDEXED},
     Document,
 };
 
-use cantine_derive::FilterQuery;
+use cantine_derive::Filterable;
 
-#[derive(FilterQuery, Default)]
+#[derive(Filterable, Default)]
 pub struct Feat {
     pub a: u64,
     pub b: Option<i16>,
@@ -15,34 +15,36 @@ pub struct Feat {
     pub d: Option<f64>,
 }
 
+type Query = <Feat as Filterable>::Query;
+
+#[test]
+#[should_panic]
+fn cannot_create_without_indexed_flag() {
+    let mut builder = SchemaBuilder::new();
+    Feat::create_schema(&mut builder, FAST);
+}
+
 #[test]
 fn filter_fields_can_read_and_write_from_schema() {
     let mut builder = SchemaBuilder::new();
-    let original = FeatFilterFields::from(&mut builder);
-    let loaded = FeatFilterFields::try_from(&builder.build()).unwrap();
+    let original = Feat::create_schema(&mut builder, INDEXED | FAST);
+    let loaded = Feat::load_schema(&builder.build()).unwrap();
     assert_eq!(original, loaded);
 }
 
 #[test]
 fn filter_query_interpretation() {
     let mut builder = SchemaBuilder::new();
-    let fields = FeatFilterFields::from(&mut builder);
+    let fields = Feat::create_schema(&mut builder, INDEXED);
 
-    assert_eq!(
-        0,
-        fields
-            .interpret(&FeatFilterQuery {
-                ..FeatFilterQuery::default()
-            })
-            .len()
-    );
+    assert_eq!(0, fields.interpret(&Query { ..Query::default() }).len());
 
     assert_eq!(
         1,
         fields
-            .interpret(&FeatFilterQuery {
+            .interpret(&Query {
                 a: Some(0..10),
-                ..FeatFilterQuery::default()
+                ..Query::default()
             })
             .len()
     );
@@ -50,10 +52,10 @@ fn filter_query_interpretation() {
     assert_eq!(
         2,
         fields
-            .interpret(&FeatFilterQuery {
+            .interpret(&Query {
                 a: Some(0..10),
                 c: Some(1.1..2.2),
-                ..FeatFilterQuery::default()
+                ..Query::default()
             })
             .len()
     );
@@ -62,7 +64,7 @@ fn filter_query_interpretation() {
 #[test]
 fn add_to_doc_sets_fields_properly() {
     let mut builder = SchemaBuilder::new();
-    let fields = FeatFilterFields::from(&mut builder);
+    let fields = Feat::create_schema(&mut builder, INDEXED);
 
     let mut doc = Document::new();
 
