@@ -7,14 +7,16 @@ use tantivy::{
     collector::Collector,
     fastfield::FastFieldReader,
     query::Query,
-    schema::{Field, Schema, SchemaBuilder, Value, FAST, STORED, TEXT},
+    schema::{Field, Schema, SchemaBuilder, Value, FAST, INDEXED, STORED, TEXT},
     DocId, Document, Result, Score, Searcher, SegmentLocalId, SegmentReader, TantivyError,
 };
 
 use crate::model::{
-    FeaturesAggregationQuery, FeaturesAggregationResult, FeaturesCollector, FeaturesFilterFields,
-    Recipe, RecipeId, Sort,
+    Features, FeaturesAggregationQuery, FeaturesAggregationResult, FeaturesFilterFields, Recipe,
+    RecipeId, Sort,
 };
+
+use cantine_derive::{AggregableCollector, Filterable};
 
 use tique::conditional_collector::{
     Ascending, CheckCondition, CollectionResult, ConditionForSegment, Descending, TopCollector,
@@ -126,18 +128,15 @@ impl RecipeIndex {
         agg_query: FeaturesAggregationQuery,
     ) -> Result<FeaturesAggregationResult> {
         let features_field = self.features_bincode;
-        let collector = FeaturesCollector::new(agg_query, move |reader: &SegmentReader| {
-            let features_reader = reader
-                .fast_fields()
-                .bytes(features_field)
-                .expect("bytes field is indexed");
+        let collector =
+            AggregableCollector::<Features, _>::new(agg_query, move |reader: &SegmentReader| {
+                let features_reader = reader
+                    .fast_fields()
+                    .bytes(features_field)
+                    .expect("bytes field is indexed");
 
-            move |doc, query, agg| {
-                let buf = features_reader.get_bytes(doc);
-                let features = bincode::deserialize(buf).unwrap();
-                agg.collect(query, &features);
-            }
-        });
+                move |doc| bincode::deserialize(features_reader.get_bytes(doc)).ok()
+            });
 
         Ok(searcher.search(query, &collector)?)
     }
@@ -187,7 +186,7 @@ impl From<&mut SchemaBuilder> for RecipeIndex {
             id: builder.add_u64_field(FIELD_ID, STORED | FAST),
             fulltext: builder.add_text_field(FIELD_FULLTEXT, TEXT),
             features_bincode: builder.add_bytes_field(FIELD_FEATURES_BINCODE),
-            features: FeaturesFilterFields::from(builder),
+            features: Features::create_schema(builder, INDEXED | FAST),
         }
     }
 }

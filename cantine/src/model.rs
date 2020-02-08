@@ -9,7 +9,7 @@ use tantivy::Score;
 use uuid::{self, Uuid};
 
 use crate::database::DatabaseRecord;
-use cantine_derive::FilterAndAggregation;
+use cantine_derive::{Aggregable, Filterable};
 
 #[derive(Deserialize, Serialize, Debug, PartialEq, Clone)]
 pub struct Recipe {
@@ -107,7 +107,7 @@ impl From<Recipe> for RecipeCard {
     }
 }
 
-#[derive(FilterAndAggregation, Serialize, Deserialize, Debug, Default, PartialEq, Clone)]
+#[derive(Filterable, Aggregable, Serialize, Deserialize, Debug, Default, PartialEq, Clone)]
 pub struct Features {
     pub num_ingredients: u8,
     pub instructions_length: u32,
@@ -127,6 +127,12 @@ pub struct Features {
     pub diet_keto: Option<f32>,
     pub diet_paleo: Option<f32>,
 }
+
+pub type FeaturesFilterQuery = <Features as Filterable>::Query;
+pub type FeaturesFilterFields = <Features as Filterable>::Schema;
+
+pub type FeaturesAggregationQuery = <Features as Aggregable>::Query;
+pub type FeaturesAggregationResult = <Features as Aggregable>::Agg;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "snake_case")]
