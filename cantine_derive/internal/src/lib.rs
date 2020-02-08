@@ -33,7 +33,7 @@ pub fn derive_agg(input: TokenStream) -> TokenStream {
 
 fn make_filter_query(input: &DeriveInput) -> TokenStream2 {
     let feat = &input.ident;
-    let name = format_ident!("{}FilterQuery", &input.ident);
+    let name = format_ident!("FilterableFilterQuery{}", &input.ident);
 
     let fields: Vec<_> = get_public_struct_fields(&input).cloned().collect();
 
@@ -47,7 +47,7 @@ fn make_filter_query(input: &DeriveInput) -> TokenStream2 {
         }
     });
 
-    let index_name = format_ident!("{}FilterFields", &input.ident);
+    let index_name = format_ident!("FilterableFilterFields{}", &input.ident);
     let index_fields = fields.iter().map(|field| {
         let name = &field.ident;
         quote_spanned! { field.span()=>
@@ -57,8 +57,8 @@ fn make_filter_query(input: &DeriveInput) -> TokenStream2 {
 
     let from_decls = fields.iter().map(|field| {
         let name = field.ident.as_ref().unwrap();
-        let schema_name = format_ident!("_filter_{}", &name);
-        let quoted = format!("\"{}\"", schema_name);
+        let field_name = format_ident!("Filterable_field_{}", &name);
+        let quoted = format!("\"{}\"", field_name);
         let ty = extract_type_if_option(&field.ty).unwrap_or(&field.ty);
         let field_type = get_field_type(&ty);
 
@@ -75,9 +75,9 @@ fn make_filter_query(input: &DeriveInput) -> TokenStream2 {
 
     let try_from_decls = fields.iter().map(|field| {
         if let Some(name) = &field.ident {
-            let schema_name = format_ident!("_filter_{}", &name);
-            let err_msg = format!("Missing field for {} ({})", name, schema_name);
-            let quoted = format!("\"{}\"", schema_name);
+            let field_name = format_ident!("Filterable_field_{}", &name);
+            let err_msg = format!("Missing field for {} ({})", name, field_name);
+            let quoted = format!("\"{}\"", field_name);
             quote_spanned! { field.span()=>
                 #name: schema.get_field(#quoted).ok_or_else(
                     || tantivy::TantivyError::SchemaError(#err_msg.to_string()))?
@@ -266,7 +266,7 @@ fn make_filter_query(input: &DeriveInput) -> TokenStream2 {
 }
 
 fn make_agg_query(input: &DeriveInput) -> TokenStream2 {
-    let name = format_ident!("{}AggregationQuery", &input.ident);
+    let name = format_ident!("AggregableAggregationQuery{}", &input.ident);
 
     let fields = get_public_struct_fields(&input).map(|field| {
         let name = &field.ident;
@@ -304,7 +304,7 @@ fn make_agg_query(input: &DeriveInput) -> TokenStream2 {
 
 fn make_agg_result(input: &DeriveInput) -> TokenStream2 {
     let feature = &input.ident;
-    let name = format_ident!("{}AggregationResult", &input.ident);
+    let name = format_ident!("AggregableAggregationResult{}", &input.ident);
 
     let fields = get_public_struct_fields(&input).map(|field| {
         let name = &field.ident;
@@ -325,7 +325,7 @@ fn make_agg_result(input: &DeriveInput) -> TokenStream2 {
         }
     });
 
-    let agg_query = format_ident!("{}AggregationQuery", &input.ident);
+    let agg_query = format_ident!("AggregableAggregationQuery{}", &input.ident);
     let convert_code = get_public_struct_fields(&input).map(|field| {
         let name = &field.ident;
         quote_spanned! { field.span()=>

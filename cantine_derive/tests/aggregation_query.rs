@@ -13,6 +13,9 @@ pub struct Feat {
     pub d: Option<f64>,
 }
 
+type FeatAggregationResult = <Feat as Aggregable>::Agg;
+type FeatAggregationQuery = <Feat as Aggregable>::Query;
+
 #[test]
 fn aggregation_result_from_query() {
     let res = FeatAggregationResult::from(FeatAggregationQuery {
