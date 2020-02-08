@@ -1,6 +1,6 @@
 # tique
-![crates.io](https://img.shields.io/crates/v/tique.svg)
-![docs.rs](https://docs.rs/tique/badge.svg)
+[![crates.io](https://img.shields.io/crates/v/tique.svg)](https://crates.io/crates/tique)
+[![docs.rs](https://docs.rs/tique/badge.svg)](https://docs.rs/tique)
 
 Utilities to drive a tantivy search index
 

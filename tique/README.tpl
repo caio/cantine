@@ -1,6 +1,6 @@
 # {{crate}}
-![crates.io](https://img.shields.io/crates/v/{{crate}}.svg)
-![docs.rs](https://docs.rs/{{crate}}/badge.svg)
+[![crates.io](https://img.shields.io/crates/v/{{crate}}.svg)](https://crates.io/crates/tique)
+[![docs.rs](https://docs.rs/{{crate}}/badge.svg)](https://docs.rs/tique)
 
 {{readme}}
 
