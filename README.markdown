@@ -30,7 +30,7 @@ You can use the sample data to run a tiny version of the API:
 
 ```bash
 cargo run --bin load /tmp/cantine < cantine/tests/sample_recipes.jsonlines
-RUST_LOG=debug cargo run /tmp/cantine
+RUST_LOG=debug BASE_DIR=/tmp/cantine cargo run
 ```
 
 ## API Tutorial
