@@ -1,5 +1,3 @@
-use std::convert::TryFrom;
-
 use tantivy::{
     schema::{SchemaBuilder, Value, FAST, INDEXED},
     Document,

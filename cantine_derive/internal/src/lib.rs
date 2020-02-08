@@ -223,9 +223,7 @@ fn make_filter_query(input: &DeriveInput) -> TokenStream2 {
             type Error = tantivy::TantivyError;
 
             fn try_from(schema: &tantivy::schema::Schema) -> Result<Self, Self::Error> {
-                Ok(Self {
-                    #(#try_from_decls),*
-                })
+                <#index_name>::try_from(schema)
             }
         }
 
@@ -260,6 +258,12 @@ fn make_filter_query(input: &DeriveInput) -> TokenStream2 {
                 }
 
                 new
+            }
+
+            pub fn try_from(schema: &tantivy::schema::Schema) -> tantivy::Result<Self> {
+                Ok(Self {
+                    #(#try_from_decls),*
+                })
             }
         }
     }
