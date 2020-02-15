@@ -19,5 +19,7 @@
 //! Check the module docs for more details.
 pub mod conditional_collector;
 
+pub mod topterms;
+
 #[cfg(feature = "unstable")]
 pub mod queryparser;
