@@ -2,7 +2,7 @@ use std::{collections::HashMap, str};
 
 use tantivy::{
     query::BooleanQuery,
-    schema::{Field, IndexRecordOption},
+    schema::{Field, FieldType, IndexRecordOption, Schema},
     tokenizer::BoxedTokenizer,
     DocAddress, DocSet, Index, IndexReader, Postings, Result, Searcher, SkipResult, Term,
 };
@@ -75,12 +75,20 @@ where
 }
 
 impl TopTerms {
-    pub fn new(index: Index, fields: Vec<Field>) -> Result<Self> {
+    pub fn new(index: &Index, fields: Vec<Field>) -> Result<Self> {
         let mut field_tokenizers = Vec::new();
 
         for field in fields.into_iter() {
-            let tok = index.tokenizer_for_field(field)?;
-            field_tokenizers.push((field, tok));
+            if field_is_valid(&index.schema(), field) {
+                let tok = index.tokenizer_for_field(field)?;
+                field_tokenizers.push((field, tok));
+            } else {
+                let msg = format!(
+                    "Field '{}' is not a text field with frequencies (TEXT)",
+                    index.schema().get_field_name(field)
+                );
+                return Err(tantivy::TantivyError::SchemaError(msg));
+            }
         }
 
         Ok(Self {
@@ -179,13 +187,23 @@ impl Keywords {
     // TODO into_boosted_query, using the scaled tf/idf scores scaled with
 }
 
+fn field_is_valid(schema: &Schema, field: Field) -> bool {
+    if let FieldType::Str(opts) = schema.get_field_entry(field).field_type() {
+        opts.get_indexing_options()
+            .map(|opts| opts.index_option().has_freq())
+            .unwrap_or(false)
+    } else {
+        false
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     use tantivy::{
         doc,
-        schema::{SchemaBuilder, TEXT},
+        schema::{SchemaBuilder, INDEXED, STRING, TEXT},
         tokenizer::SimpleTokenizer,
     };
 
@@ -231,6 +249,21 @@ mod tests {
         });
 
         Ok(())
+    }
+
+    #[test]
+    fn text_fields_are_valid() {
+        let mut builder = SchemaBuilder::new();
+
+        let invalid = builder.add_text_field("string", STRING);
+        let also_invalid = builder.add_u64_field("non_str", INDEXED);
+        let valid = builder.add_text_field("text", TEXT);
+
+        let schema = builder.build();
+
+        assert!(!field_is_valid(&schema, invalid));
+        assert!(!field_is_valid(&schema, also_invalid));
+        assert!(field_is_valid(&schema, valid));
     }
 
     #[test]
@@ -284,7 +317,7 @@ mod tests {
             )
         }
 
-        let topterms = TopTerms::new(index.clone(), vec![source, quote])?;
+        let topterms = TopTerms::new(&index, vec![source, quote])?;
 
         let keyword_filter = |term: &Term, _tf, doc_freq, num_docs| {
             // Only words with more than characters 3
