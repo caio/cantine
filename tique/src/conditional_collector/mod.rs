@@ -98,7 +98,7 @@
 //! Check `examples/conditional_collector_tutorial.rs` for more details.
 mod custom_score;
 mod top_collector;
-mod topk;
+pub(crate) mod topk;
 mod traits;
 
 pub use top_collector::{CollectionResult, TopCollector};
