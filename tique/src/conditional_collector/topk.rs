@@ -7,9 +7,9 @@ use super::CollectionResult;
 
 pub trait TopK<T, D> {
     const ASCENDING: bool;
-    fn visit(&mut self, score: T, doc: D);
-    fn into_sorted_vec(self) -> Vec<(T, D)>;
-    fn into_vec(self) -> Vec<(T, D)>;
+    fn visit(&mut self, doc: D, score: T);
+    fn into_sorted_vec(self) -> Vec<(D, T)>;
+    fn into_vec(self) -> Vec<(D, T)>;
 }
 
 pub trait TopKProvider<T: PartialOrd, D: Ord> {
@@ -70,7 +70,7 @@ impl<T: PartialOrd, D: Ord> AscendingTopK<T, D> {
         }
     }
 
-    fn visit(&mut self, score: T, doc: D) {
+    fn visit(&mut self, doc: D, score: T) {
         let scored = Scored {
             score,
             doc: Reverse(doc),
@@ -85,19 +85,19 @@ impl<T: PartialOrd, D: Ord> AscendingTopK<T, D> {
         }
     }
 
-    fn into_sorted_vec(self) -> Vec<(T, D)> {
+    fn into_sorted_vec(self) -> Vec<(D, T)> {
         self.heap
             .into_sorted_vec()
             .into_iter()
-            .map(|s| (s.score, s.doc.0))
+            .map(|s| (s.doc.0, s.score))
             .collect()
     }
 
-    fn into_vec(self) -> Vec<(T, D)> {
+    fn into_vec(self) -> Vec<(D, T)> {
         self.heap
             .into_vec()
             .into_iter()
-            .map(|s| (s.score, s.doc.0))
+            .map(|s| (s.doc.0, s.score))
             .collect()
     }
 }
@@ -110,7 +110,7 @@ impl<T: PartialOrd, D: Ord> DescendingTopK<T, D> {
         }
     }
 
-    fn visit(&mut self, score: T, doc: D) {
+    fn visit(&mut self, doc: D, score: T) {
         let scored = Reverse(Scored { score, doc });
         if self.heap.len() < self.limit {
             self.heap.push(scored);
@@ -122,19 +122,19 @@ impl<T: PartialOrd, D: Ord> DescendingTopK<T, D> {
         }
     }
 
-    fn into_sorted_vec(self) -> Vec<(T, D)> {
+    fn into_sorted_vec(self) -> Vec<(D, T)> {
         self.heap
             .into_sorted_vec()
             .into_iter()
-            .map(|s| (s.0.score, s.0.doc))
+            .map(|s| (s.0.doc, s.0.score))
             .collect()
     }
 
-    fn into_vec(self) -> Vec<(T, D)> {
+    fn into_vec(self) -> Vec<(D, T)> {
         self.heap
             .into_vec()
             .into_iter()
-            .map(|s| (s.0.score, s.0.doc))
+            .map(|s| (s.0.doc, s.0.score))
             .collect()
     }
 }
@@ -142,15 +142,15 @@ impl<T: PartialOrd, D: Ord> DescendingTopK<T, D> {
 impl<T: PartialOrd, D: Ord> TopK<T, D> for AscendingTopK<T, D> {
     const ASCENDING: bool = true;
 
-    fn visit(&mut self, score: T, doc: D) {
-        AscendingTopK::visit(self, score, doc);
+    fn visit(&mut self, doc: D, score: T) {
+        AscendingTopK::visit(self, doc, score);
     }
 
-    fn into_sorted_vec(self) -> Vec<(T, D)> {
+    fn into_sorted_vec(self) -> Vec<(D, T)> {
         AscendingTopK::into_sorted_vec(self)
     }
 
-    fn into_vec(self) -> Vec<(T, D)> {
+    fn into_vec(self) -> Vec<(D, T)> {
         AscendingTopK::into_vec(self)
     }
 }
@@ -158,15 +158,15 @@ impl<T: PartialOrd, D: Ord> TopK<T, D> for AscendingTopK<T, D> {
 impl<T: PartialOrd, D: Ord> TopK<T, D> for DescendingTopK<T, D> {
     const ASCENDING: bool = false;
 
-    fn visit(&mut self, score: T, doc: D) {
-        DescendingTopK::visit(self, score, doc);
+    fn visit(&mut self, doc: D, score: T) {
+        DescendingTopK::visit(self, doc, score);
     }
 
-    fn into_sorted_vec(self) -> Vec<(T, D)> {
+    fn into_sorted_vec(self) -> Vec<(D, T)> {
         DescendingTopK::into_sorted_vec(self)
     }
 
-    fn into_vec(self) -> Vec<(T, D)> {
+    fn into_vec(self) -> Vec<(D, T)> {
         DescendingTopK::into_vec(self)
     }
 }
@@ -222,10 +222,16 @@ mod tests {
         K: TopK<S, D>,
     {
         for (score, id) in input {
-            topk.visit(score, id);
+            topk.visit(id, score);
         }
 
-        assert_eq!(wanted, topk.into_sorted_vec());
+        assert_eq!(
+            wanted,
+            topk.into_sorted_vec()
+                .into_iter()
+                .map(|(doc, score)| (score, doc))
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]

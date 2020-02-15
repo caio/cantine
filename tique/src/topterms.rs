@@ -39,12 +39,11 @@ where
 
     while let Some((bytes, terminfo)) = termstream.next() {
         if let Ok(text) = str::from_utf8(bytes) {
-            let term = Term::from_field_text(field, text);
-
             let mut postings =
                 inverted_index.read_postings_from_terminfo(terminfo, IndexRecordOption::WithFreqs);
 
             if postings.skip_next(doc_id) == SkipResult::Reached {
+                let term = Term::from_field_text(field, text);
                 consumer(term, postings.term_freq());
             }
         }
@@ -160,12 +159,7 @@ impl Keywords {
     }
 
     pub fn into_sorted_vec(self) -> Vec<(Term, f32)> {
-        self.0
-            .into_sorted_vec()
-            .into_iter()
-            // FIXME What was I thinking when I made the whole topk api backwards?
-            .map(|(score, term)| (term, score))
-            .collect()
+        self.0.into_sorted_vec()
     }
 
     pub fn into_query(self) -> BooleanQuery {
@@ -173,13 +167,13 @@ impl Keywords {
             self.0
                 .into_vec()
                 .into_iter()
-                .map(|(_score, term)| term)
+                .map(|(term, _score)| term)
                 .collect(),
         )
     }
 
     fn visit(&mut self, term: Term, score: f32) {
-        self.0.visit(score, term);
+        self.0.visit(term, score);
     }
 
     // TODO into_boosted_query, using the scaled tf/idf scores scaled with

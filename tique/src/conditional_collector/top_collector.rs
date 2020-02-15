@@ -231,7 +231,7 @@ where
             .check(self.segment_id, doc, score, K::ASCENDING)
         {
             self.visited += 1;
-            self.topk.visit(score, doc);
+            self.topk.visit(doc, score);
         }
     }
 
@@ -241,7 +241,7 @@ where
             .topk
             .into_vec()
             .into_iter()
-            .map(|(score, doc)| (score, DocAddress(segment_id, doc)))
+            .map(|(doc, score)| (score, DocAddress(segment_id, doc)))
             .collect();
 
         CollectionResult {
@@ -298,14 +298,18 @@ impl<T> CollectionResult<T> {
             visited += item.visited;
 
             for (score, doc) in item.items {
-                topk.visit(score, doc);
+                topk.visit(doc, score);
             }
         }
 
         CollectionResult {
             total,
             visited,
-            items: topk.into_sorted_vec(),
+            items: topk
+                .into_sorted_vec()
+                .into_iter()
+                .map(|(doc, score)| (score, doc))
+                .collect(),
         }
     }
 }
@@ -370,7 +374,15 @@ mod tests {
             collector.collect(id, score);
         }
 
-        assert_eq!(wanted, collector.into_topk().into_sorted_vec());
+        assert_eq!(
+            wanted,
+            collector
+                .into_topk()
+                .into_sorted_vec()
+                .into_iter()
+                .map(|(id, score)| (score, id))
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]
