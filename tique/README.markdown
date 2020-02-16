@@ -6,7 +6,10 @@ Utilities to drive a tantivy search index
 
 ## Overview
 
-### `conditional_collector`
+Here's a brief overview of the functionality we provide. Check the
+module docs for more details and examples.
+
+### conditional_collector
 
 Collectors with built-in support for changing the ordering and
 cursor-based pagination (or rather: support for conditionally
@@ -19,7 +22,15 @@ let min_rank_collector =
     TopCollector::<f64, Ascending, _>::new(10, true).top_fast_field(f64_field);
 ```
 
-Check the module docs for more details.
+### topterms
+
+Uses your index to find keywords and similar items to your documents
+or any arbitrary input.
+
+```rust
+let topterms = TopTerms::new(&index, vec![body, title])?;
+let keywords = topterms.extract(5, "the quick fox jumps over the lazy dog");
+```
 
 ## Unstable
 
