@@ -1,10 +1,10 @@
 [package]
 name = "tique"
-version = "0.1.1"
+version = "0.2.0"
 
 license = "MIT"
 description = "Utilities to drive a tantivy search index"
-keywords = ["tantivy", "pagination", "aggregation", "collector"]
+keywords = ["tantivy", "pagination", "aggregation", "collector", "similarity"]
 
 repository = "https://github.com/caio/cantine/"
 homepage = "https://github.com/caio/cantine/tree/master/tique"
