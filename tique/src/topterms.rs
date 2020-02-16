@@ -1,3 +1,77 @@
+//! Extract keywords and search for similar documents based on the
+//! contents of your index.
+//!
+//! This module implements the same idea as Lucene's MoreLikeThis.
+//! You can read more about the idea in the [original's documentation][mlt],
+//! but here's a gist of how it works:
+//!
+//! 1. Counts the words (Terms) from an arbitrary input: may be a string
+//!    or the address of a document you already indexed; Then
+//!
+//! 2. Ranks each word using the frequencies from `1` and information from
+//!    the index (how often it appears in the corpus, how many documents have
+//!    it)
+//!
+//! The result is a set of terms that are most relevant to represent your
+//! input in relation to your current index. I.e.: it finds words that are
+//! important and unique enough to describe your input.
+//!
+//! [mlt]: http://lucene.apache.org/core/8_4_1/queries/org/apache/lucene/queries/mlt/MoreLikeThis.html
+//!
+//! # Examples
+//!
+//! ## Finding Similar Documents
+//!
+//!```rust
+//! # use tantivy::{doc, DocAddress, Index, collector::TopDocs, schema::{Field, Schema, TEXT}};
+//! # use tique::topterms::TopTerms;
+//! # let mut builder = Schema::builder();
+//! # let body = builder.add_text_field("body", TEXT);
+//! # let title = builder.add_text_field("title", TEXT);
+//! # let index = Index::create_in_ram(builder.build());
+//! # let mut writer = index.writer_with_num_threads(1, 3_000_000)?;
+//! # writer.add_document(doc!(body => "body", title => "title"));
+//! # writer.commit()?;
+//! # let doc_address = DocAddress(0, 0);
+//! let topterms = TopTerms::new(&index, vec![body, title])?;
+//! let keywords = topterms.extract_from_doc(10, doc_address);
+//!
+//! # let reader = index.reader()?;
+//! # let searcher = reader.searcher();
+//! let nearest_neighbors =
+//!      searcher.search(&keywords.into_query(), &TopDocs::with_limit(10))?;
+//! # Ok::<(), tantivy::Error>(())
+//!```
+//!
+//! ## Tuning the Keywords Extration
+//!
+//! Depending on how your fields are indexed you might find that the results
+//! from the keyword extration are not very good. Maybe it includes words
+//! that are too uncommon, too small or anything. You can modify how TopDocs
+//! works via a custom `KeywordAcceptor` that you can use via the
+//! `extract_filtered` and `extract_filtered_from_doc` methods:
+//!
+//!```rust
+//! # use tantivy::{Index, schema::{Field, Schema, Term, TEXT}};
+//! # use tique::topterms::TopTerms;
+//! # let mut builder = Schema::builder();
+//! # let fulltext = builder.add_text_field("data", TEXT);
+//! # let index = Index::create_in_ram(builder.build());
+//! # let input = "";
+//! let topterms = TopTerms::new(&index, vec![fulltext])?;
+//!
+//! let keywords = topterms.extract_filtered(
+//!      10,
+//!      input,
+//!      |term: &Term, term_freq, doc_freq, num_docs| {
+//!          // Only words longer than 4 characters and that appear
+//!          // in at least 10 documents
+//!          term.text().chars().count() > 4 && doc_freq >= 10
+//!      }
+//! );
+//! # Ok::<(), tantivy::Error>(())
+//!```
+//!
 use std::{collections::HashMap, str};
 
 use tantivy::{
@@ -13,6 +87,167 @@ use crate::conditional_collector::topk::{DescendingTopK, TopK};
 fn idf(doc_freq: u64, doc_count: u64) -> f32 {
     let x = ((doc_count - doc_freq) as f32 + 0.5) / (doc_freq as f32 + 0.5);
     (1f32 + x).ln()
+}
+
+/// TopTerms extracts the most relevant Keywords from your index
+pub struct TopTerms {
+    reader: IndexReader,
+    field_tokenizers: Vec<(Field, BoxedTokenizer)>,
+}
+
+/// Allows tuning the algorithm to pick the top keywords
+pub trait KeywordAcceptor {
+    /// Decides wether the given Term is an acceptable keyword.
+    ///
+    /// Tunables:
+    ///
+    /// * tf: Term frequency. How often has the given term appeared
+    ///       in the input (i.e.: what you gave to `TopTerms::extract*`)
+    /// * doc_freq: Document frequency: How many documents in the
+    ///       index contain this term
+    /// * num_docs: How many documents are in the index in total
+    fn accept(&self, term: &Term, tf: u32, doc_freq: u64, num_docs: u64) -> bool;
+}
+
+impl KeywordAcceptor for () {
+    fn accept(&self, _: &Term, _: u32, _: u64, _: u64) -> bool {
+        true
+    }
+}
+
+impl<F> KeywordAcceptor for F
+where
+    F: Fn(&Term, u32, u64, u64) -> bool,
+{
+    fn accept(&self, term: &Term, tf: u32, doc_freq: u64, num_docs: u64) -> bool {
+        (self)(term, tf, doc_freq, num_docs)
+    }
+}
+
+impl TopTerms {
+    /// Creates a new TopTerms that will extract keywords by looking at
+    /// the given index fields
+    pub fn new(index: &Index, fields: Vec<Field>) -> Result<Self> {
+        let mut field_tokenizers = Vec::new();
+
+        for field in fields.into_iter() {
+            if field_is_valid(&index.schema(), field) {
+                let tok = index.tokenizer_for_field(field)?;
+                field_tokenizers.push((field, tok));
+            } else {
+                let msg = format!(
+                    "Field '{}' is not a text field with frequencies (TEXT)",
+                    index.schema().get_field_name(field)
+                );
+                return Err(tantivy::TantivyError::SchemaError(msg));
+            }
+        }
+
+        Ok(Self {
+            reader: index.reader()?,
+            field_tokenizers,
+        })
+    }
+
+    /// Extracts the `limit` most relevant terms from the input
+    pub fn extract(&self, limit: usize, input: &str) -> Keywords {
+        self.extract_filtered(limit, input, ())
+    }
+
+    /// Extracts the `limit` most relevant terms from an indexed document
+    pub fn extract_from_doc(&self, limit: usize, addr: DocAddress) -> Keywords {
+        self.extract_filtered_from_doc(limit, addr, ())
+    }
+
+    /// Same as `extract`, but with support inspect/filter the terms as
+    /// they are being picked.
+    pub fn extract_filtered<F: KeywordAcceptor>(
+        &self,
+        limit: usize,
+        input: &str,
+        acceptor: F,
+    ) -> Keywords {
+        let searcher = self.reader.searcher();
+        let num_docs = searcher.num_docs();
+
+        let mut keywords = Keywords::new(limit);
+
+        for (field, tokenizer) in self.field_tokenizers.iter() {
+            let termfreq = termfreq(&input, *field, tokenizer);
+
+            for (term, tf) in termfreq.into_iter() {
+                let doc_freq = searcher.doc_freq(&term);
+
+                if doc_freq > 0 && acceptor.accept(&term, tf, doc_freq, num_docs) {
+                    let score = tf as f32 * idf(doc_freq, num_docs);
+                    keywords.visit(term, score);
+                }
+            }
+        }
+
+        keywords
+    }
+
+    /// Same as `extract_from_doc`, but with support inspect/filter the
+    /// terms as they are being picked.
+    pub fn extract_filtered_from_doc<F: KeywordAcceptor>(
+        &self,
+        limit: usize,
+        addr: DocAddress,
+        acceptor: F,
+    ) -> Keywords {
+        let searcher = self.reader.searcher();
+        let num_docs = searcher.num_docs();
+
+        let mut keywords = Keywords::new(limit);
+
+        for (field, _tokenizer) in self.field_tokenizers.iter() {
+            termfreq_for_doc(&searcher, *field, addr, |term, term_freq| {
+                let doc_freq = searcher.doc_freq(&term);
+                if acceptor.accept(&term, term_freq, doc_freq, num_docs) {
+                    let score = term_freq as f32 * idf(doc_freq, num_docs);
+                    keywords.visit(term, score);
+                }
+            });
+        }
+
+        keywords
+    }
+}
+
+/// Keywords is a collection of Term objects found via TopTerms
+pub struct Keywords(DescendingTopK<f32, Term>);
+
+impl Keywords {
+    /// Convert into a Query. It can be used as a way to approximate a
+    /// nearest neighbors search, so it's expected that results are
+    /// similar to the source used to create this Keywords instance.
+    pub fn into_query(self) -> BooleanQuery {
+        BooleanQuery::new_multiterms_query(
+            self.0
+                .into_vec()
+                .into_iter()
+                .map(|(term, _score)| term)
+                .collect(),
+        )
+    }
+
+    /// Exposes the ordered terms and their scores. Useful if you are
+    /// using the keywords for other purposes, like reporting, feeding
+    /// into a more complex query, etc.
+    pub fn into_sorted_vec(self) -> Vec<(Term, f32)> {
+        self.0.into_sorted_vec()
+    }
+
+    // TODO into_boosted_query, using the scaled tf/idf scores scaled with
+
+    fn new(limit: usize) -> Self {
+        Self(DescendingTopK::new(limit))
+    }
+
+    fn visit(&mut self, term: Term, score: f32) {
+        self.0.visit(term, score);
+    }
 }
 
 fn termfreq(input: &str, field: Field, tokenizer: &BoxedTokenizer) -> HashMap<Term, u32> {
@@ -48,143 +283,6 @@ where
             }
         }
     }
-}
-
-pub struct TopTerms {
-    reader: IndexReader,
-    field_tokenizers: Vec<(Field, BoxedTokenizer)>,
-}
-
-pub trait KeywordAcceptor {
-    fn accept(&self, term: &Term, tf: u32, doc_freq: u64, num_docs: u64) -> bool;
-}
-
-impl KeywordAcceptor for () {
-    fn accept(&self, _: &Term, _: u32, _: u64, _: u64) -> bool {
-        true
-    }
-}
-
-impl<F> KeywordAcceptor for F
-where
-    F: Fn(&Term, u32, u64, u64) -> bool,
-{
-    fn accept(&self, term: &Term, tf: u32, doc_freq: u64, num_docs: u64) -> bool {
-        (self)(term, tf, doc_freq, num_docs)
-    }
-}
-
-impl TopTerms {
-    pub fn new(index: &Index, fields: Vec<Field>) -> Result<Self> {
-        let mut field_tokenizers = Vec::new();
-
-        for field in fields.into_iter() {
-            if field_is_valid(&index.schema(), field) {
-                let tok = index.tokenizer_for_field(field)?;
-                field_tokenizers.push((field, tok));
-            } else {
-                let msg = format!(
-                    "Field '{}' is not a text field with frequencies (TEXT)",
-                    index.schema().get_field_name(field)
-                );
-                return Err(tantivy::TantivyError::SchemaError(msg));
-            }
-        }
-
-        Ok(Self {
-            reader: index.reader()?,
-            field_tokenizers,
-        })
-    }
-
-    pub fn extract(&self, limit: usize, input: &str) -> Keywords {
-        self.extract_filtered(limit, input, ())
-    }
-
-    pub fn extract_from_doc(&self, limit: usize, addr: DocAddress) -> Keywords {
-        self.extract_filtered_from_doc(limit, addr, ())
-    }
-
-    pub fn extract_filtered<F: KeywordAcceptor>(
-        &self,
-        limit: usize,
-        input: &str,
-        acceptor: F,
-    ) -> Keywords {
-        let searcher = self.reader.searcher();
-        let num_docs = searcher.num_docs();
-
-        let mut keywords = Keywords::new(limit);
-
-        for (field, tokenizer) in self.field_tokenizers.iter() {
-            let termfreq = termfreq(&input, *field, tokenizer);
-
-            for (term, tf) in termfreq.into_iter() {
-                let doc_freq = searcher.doc_freq(&term);
-
-                if doc_freq == 0 && acceptor.accept(&term, tf, doc_freq, num_docs) {
-                    continue;
-                }
-
-                let score = tf as f32 * idf(doc_freq, num_docs);
-                keywords.visit(term, score);
-            }
-        }
-
-        keywords
-    }
-
-    pub fn extract_filtered_from_doc<F: KeywordAcceptor>(
-        &self,
-        limit: usize,
-        addr: DocAddress,
-        acceptor: F,
-    ) -> Keywords {
-        let searcher = self.reader.searcher();
-        let num_docs = searcher.num_docs();
-
-        let mut keywords = Keywords::new(limit);
-
-        for (field, _tokenizer) in self.field_tokenizers.iter() {
-            termfreq_for_doc(&searcher, *field, addr, |term, term_freq| {
-                let doc_freq = searcher.doc_freq(&term);
-                if acceptor.accept(&term, term_freq, doc_freq, num_docs) {
-                    let score = term_freq as f32 * idf(doc_freq, num_docs);
-                    keywords.visit(term, score);
-                }
-            });
-        }
-
-        keywords
-    }
-}
-
-pub struct Keywords(DescendingTopK<f32, Term>);
-
-impl Keywords {
-    pub fn new(limit: usize) -> Self {
-        Self(DescendingTopK::new(limit))
-    }
-
-    pub fn into_sorted_vec(self) -> Vec<(Term, f32)> {
-        self.0.into_sorted_vec()
-    }
-
-    pub fn into_query(self) -> BooleanQuery {
-        BooleanQuery::new_multiterms_query(
-            self.0
-                .into_vec()
-                .into_iter()
-                .map(|(term, _score)| term)
-                .collect(),
-        )
-    }
-
-    fn visit(&mut self, term: Term, score: f32) {
-        self.0.visit(term, score);
-    }
-
-    // TODO into_boosted_query, using the scaled tf/idf scores scaled with
 }
 
 fn field_is_valid(schema: &Schema, field: Field) -> bool {

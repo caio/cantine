@@ -2,7 +2,10 @@
 //!
 //! # Overview
 //!
-//! ## `conditional_collector`
+//! Here's a brief overview of the functionality we provide. Check the
+//! module docs for more details and examples.
+//!
+//! ## conditional_collector
 //!
 //! Collectors with built-in support for changing the ordering and
 //! cursor-based pagination (or rather: support for conditionally
@@ -16,9 +19,24 @@
 //!     TopCollector::<f64, Ascending, _>::new(10, true).top_fast_field(f64_field);
 //! ```
 //!
-//! Check the module docs for more details.
-pub mod conditional_collector;
+//! ## topterms
+//!
+//! Uses your index to find keywords and similar items to your documents
+//! or any arbitrary input.
+//!
+//!```rust
+//! # use tantivy::{Index, collector::TopDocs, schema::{Field, Schema, TEXT}};
+//! # use tique::topterms::TopTerms;
+//! # let mut builder = Schema::builder();
+//! # let body = builder.add_text_field("body", TEXT);
+//! # let title = builder.add_text_field("title", TEXT);
+//! # let index = Index::create_in_ram(builder.build());
+//! let topterms = TopTerms::new(&index, vec![body, title])?;
+//! let keywords = topterms.extract(5, "the quick fox jumps over the lazy dog");
+//! # Ok::<(), tantivy::Error>(())
+//!```
 
+pub mod conditional_collector;
 pub mod topterms;
 
 #[cfg(feature = "unstable")]
