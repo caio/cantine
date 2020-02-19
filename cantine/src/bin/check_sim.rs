@@ -16,13 +16,19 @@ use cantine::{
 };
 use tique::topterms::TopTerms;
 
-#[derive(Debug)]
 struct Checked {
     id: RecipeId,
-    num_found: usize,
-    recall: (usize, usize),
-    position: Option<usize>,
     top_pretty: Vec<String>,
+
+    len: usize,
+    simple: Res,
+    weighted: Res,
+}
+
+struct Res {
+    num_found: usize,
+    recall: f32,
+    position: Option<usize>,
 }
 
 fn main() -> Result<()> {
@@ -92,31 +98,40 @@ fn main() -> Result<()> {
                     .map(|term| term.text().to_string())
                     .collect::<Vec<_>>();
 
-                let (_num_matching, more_like_this_ids, _after) = recipe_index.search(
-                    &searcher,
-                    &keywords.into_query(),
-                    11,
-                    Sort::Relevance,
-                    None,
-                )?;
+                let recipe_id = recipe.recipe_id;
+                let canon_sim_ids = recipe.similar_recipe_ids;
+                let src_sim_len = canon_sim_ids.len() as f32;
 
-                let position = more_like_this_ids
-                    .iter()
-                    .position(|&sim_id| recipe.recipe_id == sim_id);
+                let recallfn = |query| -> Result<Res> {
+                    let (_num_matching, similar_ids, _after) =
+                        recipe_index.search(&searcher, &query, 11, Sort::Relevance, None)?;
 
-                let mut hit = 0;
-                for id in recipe.similar_recipe_ids.iter() {
-                    if more_like_this_ids.iter().any(|found_id| found_id == id) {
-                        hit += 1;
+                    let position = similar_ids.iter().position(|&sim_id| recipe_id == sim_id);
+
+                    let mut hit = 0;
+                    for id in canon_sim_ids.iter() {
+                        if similar_ids.iter().any(|found_id| found_id == id) {
+                            hit += 1;
+                        }
                     }
-                }
+
+                    Ok(Res {
+                        num_found: similar_ids.len(),
+                        recall: hit as f32 / src_sim_len,
+                        position,
+                    })
+                };
+
+                let len = keywords.len();
+                let simple = recallfn(keywords.clone().into_query())?;
+                let weighted = recallfn(keywords.into_boosted_query(1.0))?;
 
                 let checked = Checked {
-                    id: recipe.recipe_id,
-                    num_found: more_like_this_ids.len(),
-                    position,
-                    recall: (hit, recipe.similar_recipe_ids.len()),
+                    id: recipe_id,
+                    len,
                     top_pretty,
+                    simple,
+                    weighted,
                 };
 
                 checked_sender.send(checked).expect("send() always works");
@@ -133,15 +148,18 @@ fn main() -> Result<()> {
     }
     drop(id_sender);
 
+    println!("recipe_id,len,top5,simple_weighted_found_delta,simple_pos,weighted_pos,simple_recall,weighted_recall");
     for checked in checked_receiver {
         println!(
-            "{},{},{},{},{},{}",
+            "{},{},{},{},{},{},{},{}",
             checked.id,
+            checked.len,
             checked.top_pretty.join(";"),
-            checked.num_found,
-            checked.recall.0,
-            checked.recall.1,
-            checked.position.map(|p| p as isize).unwrap_or(-1)
+            checked.simple.num_found - checked.weighted.num_found,
+            checked.simple.position.map(|p| p as isize).unwrap_or(-1),
+            checked.weighted.position.map(|p| p as isize).unwrap_or(-1),
+            checked.simple.recall,
+            checked.weighted.recall,
         );
     }
 
