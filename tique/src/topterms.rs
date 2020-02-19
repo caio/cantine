@@ -170,7 +170,7 @@ impl TopTerms {
         let searcher = self.reader.searcher();
         let num_docs = searcher.num_docs();
 
-        let mut keywords = Keywords::new(limit);
+        let mut keywords = DescendingTopK::new(limit);
 
         for (field, tokenizer) in self.field_tokenizers.iter() {
             let termfreq = termfreq(&input, *field, tokenizer);
@@ -185,7 +185,7 @@ impl TopTerms {
             }
         }
 
-        keywords
+        keywords.into()
     }
 
     /// Same as `extract_from_doc`, but with support inspect/filter the
@@ -199,7 +199,7 @@ impl TopTerms {
         let searcher = self.reader.searcher();
         let num_docs = searcher.num_docs();
 
-        let mut keywords = Keywords::new(limit);
+        let mut keywords = DescendingTopK::new(limit);
 
         for (field, _tokenizer) in self.field_tokenizers.iter() {
             termfreq_for_doc(&searcher, *field, addr, |term, term_freq| {
@@ -211,42 +211,40 @@ impl TopTerms {
             });
         }
 
-        keywords
+        keywords.into()
     }
 }
 
 /// Keywords is a collection of Term objects found via TopTerms
-pub struct Keywords(DescendingTopK<f32, Term>);
+pub struct Keywords(Vec<(Term, f32)>);
 
 impl Keywords {
     /// Convert into a Query. It can be used as a way to approximate a
     /// nearest neighbors search, so it's expected that results are
     /// similar to the source used to create this Keywords instance.
     pub fn into_query(self) -> BooleanQuery {
-        BooleanQuery::new_multiterms_query(
-            self.0
-                .into_vec()
-                .into_iter()
-                .map(|(term, _score)| term)
-                .collect(),
-        )
+        BooleanQuery::new_multiterms_query(self.0.into_iter().map(|(term, _score)| term).collect())
+    }
+
+    /// Iterates over the terms of this keywords set, more relevant
+    /// terms appear first
+    pub fn terms(&self) -> impl Iterator<Item = &Term> {
+        self.0.iter().map(|(term, _score)| term)
     }
 
     /// Exposes the ordered terms and their scores. Useful if you are
     /// using the keywords for other purposes, like reporting, feeding
     /// into a more complex query, etc.
     pub fn into_sorted_vec(self) -> Vec<(Term, f32)> {
-        self.0.into_sorted_vec()
+        self.0
     }
 
     // TODO into_boosted_query, using the scaled tf/idf scores scaled with
+}
 
-    fn new(limit: usize) -> Self {
-        Self(DescendingTopK::new(limit))
-    }
-
-    fn visit(&mut self, term: Term, score: f32) {
-        self.0.visit(term, score);
+impl From<DescendingTopK<f32, Term>> for Keywords {
+    fn from(src: DescendingTopK<f32, Term>) -> Self {
+        Self(src.into_sorted_vec())
     }
 }
 
