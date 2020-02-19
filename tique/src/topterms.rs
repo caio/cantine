@@ -23,24 +23,17 @@
 //! ## Finding Similar Documents
 //!
 //!```rust
-//! # use tantivy::{doc, DocAddress, Index, collector::TopDocs, schema::{Field, Schema, TEXT}};
+//! # use tantivy::{DocAddress, Index, Searcher, collector::TopDocs, schema::Field, Result};
 //! # use tique::topterms::TopTerms;
-//! # let mut builder = Schema::builder();
-//! # let body = builder.add_text_field("body", TEXT);
-//! # let title = builder.add_text_field("title", TEXT);
-//! # let index = Index::create_in_ram(builder.build());
-//! # let mut writer = index.writer_with_num_threads(1, 3_000_000)?;
-//! # writer.add_document(doc!(body => "body", title => "title"));
-//! # writer.commit()?;
-//! # let doc_address = DocAddress(0, 0);
+//! # fn example(index: &Index, body: Field, title: Field,
+//! #   doc_address: DocAddress, searcher: &Searcher) -> Result<()> {
 //! let topterms = TopTerms::new(&index, vec![body, title])?;
 //! let keywords = topterms.extract_from_doc(10, doc_address);
 //!
-//! # let reader = index.reader()?;
-//! # let searcher = reader.searcher();
 //! let nearest_neighbors =
 //!      searcher.search(&keywords.into_query(), &TopDocs::with_limit(10))?;
-//! # Ok::<(), tantivy::TantivyError>(())
+//! # Ok(())
+//! # }
 //!```
 //!
 //! ## Tuning the Keywords Extration
@@ -52,12 +45,9 @@
 //! `extract_filtered` and `extract_filtered_from_doc` methods:
 //!
 //!```rust
-//! # use tantivy::{Index, schema::{Field, Schema, Term, TEXT}};
+//! # use tantivy::{Index, schema::{Field, Term}, Result};
 //! # use tique::topterms::TopTerms;
-//! # let mut builder = Schema::builder();
-//! # let fulltext = builder.add_text_field("data", TEXT);
-//! # let index = Index::create_in_ram(builder.build());
-//! # let input = "";
+//! # fn example(index: &Index, fulltext: Field, input: &str) -> Result<()> {
 //! let topterms = TopTerms::new(&index, vec![fulltext])?;
 //!
 //! let keywords = topterms.extract_filtered(
@@ -69,7 +59,8 @@
 //!          term.text().chars().count() > 4 && doc_freq >= 10
 //!      }
 //! );
-//! # Ok::<(), tantivy::TantivyError>(())
+//! # Ok(())
+//! # }
 //!```
 //!
 use std::{collections::HashMap, str};
