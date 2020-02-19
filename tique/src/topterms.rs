@@ -216,6 +216,7 @@ impl TopTerms {
 }
 
 /// Keywords is a collection of Term objects found via TopTerms
+#[derive(Clone)]
 pub struct Keywords(Vec<(Term, f32)>);
 
 impl Keywords {
@@ -249,6 +250,15 @@ impl Keywords {
     /// terms appear first
     pub fn terms(&self) -> impl Iterator<Item = &Term> {
         self.0.iter().map(|(term, _score)| term)
+    }
+
+    /// How many terms this set contains
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
     }
 
     /// Exposes the ordered terms and their scores. Useful if you are
