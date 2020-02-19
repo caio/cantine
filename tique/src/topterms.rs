@@ -75,7 +75,7 @@
 use std::{collections::HashMap, str};
 
 use tantivy::{
-    query::BooleanQuery,
+    query::{BooleanQuery, BoostQuery, Occur, Query, TermQuery},
     schema::{Field, FieldType, IndexRecordOption, Schema},
     tokenizer::TextAnalyzer,
     DocAddress, DocSet, Index, IndexReader, Postings, Result, Searcher, SkipResult, Term,
@@ -226,6 +226,25 @@ impl Keywords {
         BooleanQuery::new_multiterms_query(self.0.into_iter().map(|(term, _score)| term).collect())
     }
 
+    /// Same as `into_query`, but with terms boosted by their
+    /// relative importance. The boost for each term is computed
+    /// as `boost_factor * (score / max_score)`.
+    /// The `boost_factor` parameter is useful when building more
+    /// complex queries; `1.0` is a good default.
+    pub fn into_boosted_query(self, boost_factor: f32) -> BooleanQuery {
+        let max_score = self.0.first().map(|(_term, score)| *score).unwrap_or(0.0);
+
+        let mut clauses: Vec<(Occur, Box<dyn Query>)> = Vec::new();
+
+        for (term, score) in self.0.into_iter() {
+            let boost = boost_factor * (score / max_score);
+            let tq = Box::new(TermQuery::new(term, IndexRecordOption::WithFreqs));
+            clauses.push((Occur::Should, Box::new(BoostQuery::new(tq, boost))));
+        }
+
+        BooleanQuery::from(clauses)
+    }
+
     /// Iterates over the terms of this keywords set, more relevant
     /// terms appear first
     pub fn terms(&self) -> impl Iterator<Item = &Term> {
@@ -238,8 +257,6 @@ impl Keywords {
     pub fn into_sorted_vec(self) -> Vec<(Term, f32)> {
         self.0
     }
-
-    // TODO into_boosted_query, using the scaled tf/idf scores scaled with
 }
 
 impl From<DescendingTopK<f32, Term>> for Keywords {

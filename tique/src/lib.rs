@@ -33,6 +33,8 @@
 //! # let index = Index::create_in_ram(builder.build());
 //! let topterms = TopTerms::new(&index, vec![body, title])?;
 //! let keywords = topterms.extract(5, "the quick fox jumps over the lazy dog");
+//!
+//! let similarity_query = keywords.into_boosted_query(1.0);
 //! # Ok::<(), tantivy::TantivyError>(())
 //!```
 
