@@ -54,6 +54,10 @@ impl<'a, T: Deserialize<'a>> DatabaseReader<T> {
         })
     }
 
+    pub fn ids(&self) -> impl Iterator<Item = &u64> {
+        self.id_index.keys()
+    }
+
     pub fn find_by_id(&'a self, id: u64) -> Option<Result<T>> {
         if let Some(&offset) = self.id_index.get(&id) {
             Some(bincode::deserialize(&self.data[offset..]).map_err(|_| {
