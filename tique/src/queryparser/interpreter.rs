@@ -4,18 +4,18 @@ use tantivy::{
     self,
     query::{AllQuery, BooleanQuery, Occur, PhraseQuery, Query, TermQuery},
     schema::{Field, IndexRecordOption},
-    tokenizer::BoxedTokenizer,
+    tokenizer::TextAnalyzer,
     Result, Term,
 };
 
 pub struct QueryParser {
     field: Field,
-    tokenizer: BoxedTokenizer,
+    tokenizer: TextAnalyzer,
     occur: Occur,
 }
 
 impl QueryParser {
-    pub fn new(field: Field, tokenizer: BoxedTokenizer, match_all: bool) -> QueryParser {
+    pub fn new(field: Field, tokenizer: TextAnalyzer, match_all: bool) -> QueryParser {
         QueryParser {
             field,
             tokenizer,

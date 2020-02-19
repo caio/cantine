@@ -40,7 +40,7 @@
 //! # let searcher = reader.searcher();
 //! let nearest_neighbors =
 //!      searcher.search(&keywords.into_query(), &TopDocs::with_limit(10))?;
-//! # Ok::<(), tantivy::Error>(())
+//! # Ok::<(), tantivy::TantivyError>(())
 //!```
 //!
 //! ## Tuning the Keywords Extration
@@ -69,7 +69,7 @@
 //!          term.text().chars().count() > 4 && doc_freq >= 10
 //!      }
 //! );
-//! # Ok::<(), tantivy::Error>(())
+//! # Ok::<(), tantivy::TantivyError>(())
 //!```
 //!
 use std::{collections::HashMap, str};
@@ -77,7 +77,7 @@ use std::{collections::HashMap, str};
 use tantivy::{
     query::BooleanQuery,
     schema::{Field, FieldType, IndexRecordOption, Schema},
-    tokenizer::BoxedTokenizer,
+    tokenizer::TextAnalyzer,
     DocAddress, DocSet, Index, IndexReader, Postings, Result, Searcher, SkipResult, Term,
 };
 
@@ -92,7 +92,7 @@ fn idf(doc_freq: u64, doc_count: u64) -> f32 {
 /// TopTerms extracts the most relevant Keywords from your index
 pub struct TopTerms {
     reader: IndexReader,
-    field_tokenizers: Vec<(Field, BoxedTokenizer)>,
+    field_tokenizers: Vec<(Field, TextAnalyzer)>,
 }
 
 /// Allows tuning the algorithm to pick the top keywords
@@ -248,7 +248,7 @@ impl From<DescendingTopK<f32, Term>> for Keywords {
     }
 }
 
-fn termfreq(input: &str, field: Field, tokenizer: &BoxedTokenizer) -> HashMap<Term, u32> {
+fn termfreq(input: &str, field: Field, tokenizer: &TextAnalyzer) -> HashMap<Term, u32> {
     let mut termfreq = HashMap::new();
 
     let mut stream = tokenizer.token_stream(&input);

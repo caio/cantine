@@ -33,7 +33,7 @@
 //! # let index = Index::create_in_ram(builder.build());
 //! let topterms = TopTerms::new(&index, vec![body, title])?;
 //! let keywords = topterms.extract(5, "the quick fox jumps over the lazy dog");
-//! # Ok::<(), tantivy::Error>(())
+//! # Ok::<(), tantivy::TantivyError>(())
 //!```
 
 pub mod conditional_collector;
