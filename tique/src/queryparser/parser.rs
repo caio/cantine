@@ -5,93 +5,126 @@ use nom::{
     character::complete::{char as is_char, multispace0},
     combinator::map,
     multi::many0,
-    sequence::{delimited, preceded},
+    sequence::{delimited, preceded, separated_pair},
     IResult,
 };
 
 #[derive(Debug, PartialEq)]
-pub enum Token<'a> {
-    Phrase(&'a str, bool),
-    Term(&'a str, bool),
+pub(crate) struct RawQuery<'a> {
+    pub input: &'a str,
+    pub is_negated: bool,
+    pub is_phrase: bool,
+    pub field_name: Option<&'a str>,
 }
 
-fn parse_not_phrase(input: &str) -> IResult<&str, Token> {
-    map(preceded(is_char('-'), parse_phrase), |t| match t {
-        Token::Phrase(inner, false) => Token::Phrase(inner, true),
-        _ => unreachable!(),
-    })(input)
+impl<'a> RawQuery<'a> {
+    fn new(input: &'a str) -> Self {
+        Self {
+            input,
+            is_negated: false,
+            is_phrase: false,
+            field_name: None,
+        }
+    }
+
+    fn negated(mut self) -> Self {
+        debug_assert!(!self.is_negated);
+        self.is_negated = true;
+        self
+    }
+
+    fn phrase(mut self) -> Self {
+        debug_assert!(!self.is_phrase);
+        self.is_phrase = true;
+        self
+    }
+
+    fn with_field(mut self, name: &'a str) -> Self {
+        debug_assert_eq!(None, self.field_name);
+        self.field_name = Some(name);
+        self
+    }
 }
 
-fn parse_phrase(input: &str) -> IResult<&str, Token> {
+pub(crate) fn parse_query(input: &str) -> IResult<&str, Vec<RawQuery>> {
+    many0(delimited(
+        multispace0,
+        alt((negated_query, field_prefixed_query, any_field_query)),
+        multispace0,
+    ))(input)
+}
+
+fn negated_query(input: &str) -> IResult<&str, RawQuery> {
     map(
-        delimited(is_char('"'), take_while1(|c| c != '"'), is_char('"')),
-        |s| Token::Phrase(s, false),
+        preceded(is_char('-'), alt((field_prefixed_query, any_field_query))),
+        |query| query.negated(),
     )(input)
 }
 
-fn parse_term(input: &str) -> IResult<&str, Token> {
-    map(take_while1(is_term_char), |s| Token::Term(s, false))(input)
+fn field_prefixed_query(input: &str) -> IResult<&str, RawQuery> {
+    map(
+        separated_pair(
+            take_while1(|c| c != ':' && is_term_char(c)),
+            is_char(':'),
+            any_field_query,
+        ),
+        |(name, term)| term.with_field(name),
+    )(input)
 }
 
-fn parse_not_term(input: &str) -> IResult<&str, Token> {
-    map(preceded(is_char('-'), parse_term), |t| match t {
-        Token::Term(inner, false) => Token::Term(inner, true),
-        _ => unreachable!(),
-    })(input)
+fn any_field_query(input: &str) -> IResult<&str, RawQuery> {
+    alt((parse_phrase, parse_term))(input)
+}
+
+fn parse_phrase(input: &str) -> IResult<&str, RawQuery> {
+    map(
+        delimited(is_char('"'), take_while1(|c| c != '"'), is_char('"')),
+        |s| RawQuery::new(s).phrase(),
+    )(input)
+}
+
+fn parse_term(input: &str) -> IResult<&str, RawQuery> {
+    map(take_while1(is_term_char), RawQuery::new)(input)
 }
 
 fn is_term_char(c: char) -> bool {
     !(c == ' ' || c == '\t' || c == '\r' || c == '\n')
 }
 
-pub fn parse_query(input: &str) -> IResult<&str, Vec<Token>> {
-    many0(delimited(
-        multispace0,
-        alt((parse_not_phrase, parse_phrase, parse_not_term, parse_term)),
-        multispace0,
-    ))(input)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    use super::Token::*;
-
     #[test]
     fn term_extraction() {
-        assert_eq!(parse_term("gula"), Ok(("", Term("gula", false))));
+        assert_eq!(parse_query("gula"), Ok(("", vec![RawQuery::new("gula")])));
     }
 
     #[test]
     fn not_term_extraction() {
-        assert_eq!(parse_not_term("-ads"), Ok(("", Term("ads", true))))
+        assert_eq!(
+            parse_query("-ads"),
+            Ok(("", vec![RawQuery::new("ads").negated()]))
+        )
     }
 
     #[test]
     fn phrase_extraction() {
         assert_eq!(
-            parse_phrase("\"gula recipes\""),
-            Ok(("", Phrase("gula recipes", false)))
+            parse_query("\"gula recipes\""),
+            Ok(("", vec![RawQuery::new("gula recipes").phrase()]))
         );
     }
 
     #[test]
     fn not_phrase_extraction() {
         assert_eq!(
-            parse_not_phrase("-\"ads and tracking\""),
-            Ok(("", Phrase("ads and tracking", true)))
+            parse_query("-\"ads and tracking\""),
+            Ok((
+                "",
+                vec![RawQuery::new("ads and tracking").negated().phrase()]
+            ))
         );
-    }
-
-    #[test]
-    fn empty_term_not_allowed() {
-        assert!(parse_term("").is_err());
-    }
-
-    #[test]
-    fn empty_phrase_not_allowed() {
-        assert!(parse_phrase("\"\"").is_err());
     }
 
     #[test]
@@ -101,25 +134,43 @@ mod tests {
             Ok((
                 "",
                 vec![
-                    Term("peanut", false),
-                    Phrase("peanut butter", true),
-                    Term("sugar", true)
+                    RawQuery::new("peanut"),
+                    RawQuery::new("peanut butter").phrase().negated(),
+                    RawQuery::new("sugar").negated()
                 ]
             ))
         );
     }
 
     #[test]
-    fn parse_query_accepts_empty_string() {
-        assert_eq!(parse_query(""), Ok(("", vec![])));
-        assert_eq!(parse_query(" "), Ok((" ", vec![])));
+    fn garbage_handling() {
+        assert_eq!(
+            parse_query("- -field: -\"\" body:\"\""),
+            Ok((
+                "",
+                vec![
+                    RawQuery::new("-"),
+                    RawQuery::new("field:").negated(),
+                    RawQuery::new("\"\"").negated(),
+                    RawQuery::new("\"\"").with_field("body"),
+                ]
+            ))
+        );
     }
 
     #[test]
-    fn garbage_is_extracted_as_term() {
+    fn parse_term_with_field() {
         assert_eq!(
-            parse_query("- \""),
-            Ok(("", vec![Term("-", false), Term("\"", false)]))
+            parse_query("title:potato:queen -instructions:mash -body:\"how to fail\" ingredient:\"golden peeler\""),
+            Ok((
+                "",
+                vec![
+                    RawQuery::new("potato:queen").with_field("title"),
+                    RawQuery::new("mash").with_field("instructions").negated(),
+                    RawQuery::new("how to fail").with_field("body").negated().phrase(),
+                    RawQuery::new("golden peeler").with_field("ingredient").phrase()
+                ]
+            ))
         );
     }
 }

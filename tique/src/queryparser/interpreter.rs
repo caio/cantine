@@ -1,4 +1,4 @@
-use super::parser::{parse_query, Token};
+use super::parser::{parse_query, RawQuery};
 
 use tantivy::{
     self,
@@ -83,22 +83,19 @@ impl QueryParser {
     }
 
     // May result in Ok(None) because the tokenizer might give us nothing
-    fn query_from_token(&self, token: &Token) -> Result<Option<Box<dyn Query>>> {
-        let (query, negate) = match token {
-            Token::Term(t, neg) => (self.assemble_query(t, false)?, *neg),
-            Token::Phrase(p, neg) => (self.assemble_query(p, true)?, *neg),
-        };
+    fn query_from_token(&self, token: &RawQuery) -> Result<Option<Box<dyn Query>>> {
+        let query = self.assemble_query(token.input, token.is_phrase)?;
 
-        if negate {
+        if token.is_negated {
             Ok(query.map(|inner| Self::negate_query(inner)))
         } else {
             Ok(query)
         }
     }
 
-    fn tokenize(&self, phrase: &str) -> Vec<(usize, Term)> {
-        let mut terms: Vec<(usize, Term)> = Vec::new();
-        let mut stream = self.tokenizer.token_stream(phrase);
+    fn tokenize(&self, input: &str) -> Vec<(usize, Term)> {
+        let mut terms = Vec::new();
+        let mut stream = self.tokenizer.token_stream(input);
 
         stream.process(&mut |token| {
             let term = Term::from_field_text(self.field, &token.text);
