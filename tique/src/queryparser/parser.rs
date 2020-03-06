@@ -314,4 +314,16 @@ mod tests {
             ))
         );
     }
+
+    use quickcheck::QuickCheck;
+
+    #[test]
+    fn can_handle_arbitrary_input() {
+        fn prop(input: String) -> bool {
+            parse_query(input.as_str(), &false).is_ok()
+                && parse_query(input.as_str(), &true).is_ok()
+        }
+
+        QuickCheck::new().quickcheck(prop as fn(String) -> bool);
+    }
 }
