@@ -1,46 +1,143 @@
-use super::parser::{parse_query, RawQuery};
+use super::raw::{parse_query, FieldNameValidator, Modifier, RawQuery};
 
 use tantivy::{
     self,
-    query::{AllQuery, BooleanQuery, Occur, PhraseQuery, Query, TermQuery},
+    query::{AllQuery, BooleanQuery, BoostQuery, Occur, PhraseQuery, Query, TermQuery},
     schema::{Field, IndexRecordOption},
     tokenizer::TextAnalyzer,
-    Result, Term,
+    Index, Result, Term,
 };
 
 pub struct QueryParser {
-    field: Field,
-    tokenizer: TextAnalyzer,
-    occur: Occur,
+    state: Vec<(Option<String>, Option<f32>, Interpreter)>,
+    default_indices: Vec<usize>,
 }
 
 impl QueryParser {
-    pub fn new(field: Field, tokenizer: TextAnalyzer, match_all: bool) -> QueryParser {
-        QueryParser {
-            field,
-            tokenizer,
-            occur: if match_all {
-                Occur::Must
-            } else {
-                Occur::Should
-            },
+    pub fn from_index(index: &Index, fields: Vec<Field>) -> Result<Self> {
+        let schema = index.schema();
+
+        let mut parser = QueryParser {
+            default_indices: (0..fields.len()).collect(),
+            state: Vec::with_capacity(fields.len()),
+        };
+
+        for field in fields.into_iter() {
+            parser.add_field(
+                field,
+                index.tokenizer_for_field(field)?,
+                Some(schema.get_field_name(field).to_owned()),
+                None,
+            );
+        }
+
+        Ok(parser)
+    }
+
+    pub fn set_boost(&mut self, field: Field, boost: Option<f32>) {
+        if let Some(row) = self
+            .position_by_field(field)
+            .map(|pos| self.state.get_mut(pos))
+            .flatten()
+        {
+            row.1 = boost;
         }
     }
 
-    pub fn parse(&self, input: &str) -> Result<Option<Box<dyn Query>>> {
-        let (_, parsed) = parse_query(input)
-            .map_err(|e| tantivy::TantivyError::InvalidArgument(format!("{:?}", e)))?;
+    pub fn set_default_fields(&mut self, fields: Vec<Field>) {
+        let mut indices = Vec::with_capacity(fields.len());
+        for field in fields.into_iter() {
+            if let Some(idx) = self.position_by_field(field) {
+                indices.push(idx);
+            }
+        }
+        indices.sort();
+        self.default_indices = indices;
+    }
 
-        Ok(match parsed.len() {
+    pub fn empty() -> Self {
+        Self {
+            state: Vec::new(),
+            default_indices: Vec::new(),
+        }
+    }
+
+    fn position_by_name(&self, field_name: &str) -> Option<usize> {
+        self.state
+            .iter()
+            .position(|(opt_name, _opt_boost, _interpreter)| {
+                opt_name
+                    .as_ref()
+                    .map(|name| name == field_name)
+                    .unwrap_or(false)
+            })
+    }
+
+    fn position_by_field(&self, field: Field) -> Option<usize> {
+        self.state
+            .iter()
+            .position(|(_opt_name, _opt_boost, interpreter)| interpreter.field == field)
+    }
+
+    pub fn add_field(
+        &mut self,
+        field: Field,
+        analyzer: TextAnalyzer,
+        name: Option<String>,
+        boost: Option<f32>,
+    ) {
+        self.state
+            .push((name, boost, Interpreter { analyzer, field }));
+    }
+
+    pub fn parse(&self, input: &str) -> Option<Box<dyn Query>> {
+        let (_, parsed) = parse_query(input, self).ok()?;
+
+        match parsed.len() {
             0 => None,
-            1 => self.query_from_token(&parsed[0])?,
+            1 => {
+                let raw = &parsed[0];
+                let query = self.query_from_raw(&raw)?;
+
+                if raw
+                    .modifier
+                    .as_ref()
+                    .map(|m| m == &Modifier::Prohibited)
+                    .unwrap_or(false)
+                {
+                    Some(negate_query(query))
+                } else {
+                    Some(query)
+                }
+            }
             _ => {
                 let mut subqueries: Vec<(Occur, Box<dyn Query>)> = Vec::new();
 
+                let mut num_must_not = 0;
                 for tok in parsed {
-                    if let Some(query) = self.query_from_token(&tok)? {
-                        subqueries.push((self.occur, query));
+                    if let Some(query) = self.query_from_raw(&tok) {
+                        let occur = tok
+                            .modifier
+                            .as_ref()
+                            .map(|m| match m {
+                                Modifier::Mandatory => Occur::Must,
+                                Modifier::Prohibited => Occur::MustNot,
+                            })
+                            .unwrap_or(Occur::Should);
+
+                        if occur == Occur::MustNot {
+                            num_must_not += 1;
+                        }
+
+                        subqueries.push((occur, query));
                     }
+                }
+
+                // Detect boolean queries with only MustNot clauses
+                // and appends a AllQuery otherwise the resulting
+                // query will match nothing
+                if num_must_not > 1 && num_must_not == subqueries.len() {
+                    subqueries.push((Occur::Must, Box::new(AllQuery)));
                 }
 
                 match subqueries.len() {
@@ -49,60 +146,100 @@ impl QueryParser {
                     _ => Some(Box::new(BooleanQuery::from(subqueries))),
                 }
             }
-        })
+        }
     }
 
-    fn assemble_query(&self, text: &str, allow_phrase: bool) -> Result<Option<Box<dyn Query>>> {
-        let tokens = self.tokenize(text);
+    fn query_from_raw(&self, raw_query: &RawQuery) -> Option<Box<dyn Query>> {
+        let indices = if let Some(position) = raw_query
+            .field_name
+            .map(|field_name| self.position_by_name(field_name))
+            .flatten()
+        {
+            vec![position]
+        } else {
+            self.default_indices.clone()
+        };
 
-        match &tokens[..] {
-            [] => Ok(None),
-            [(_, term)] => Ok(Some(Box::new(TermQuery::new(
-                term.clone(),
-                IndexRecordOption::WithFreqs,
-            )))),
-            _ => {
-                if allow_phrase {
-                    Ok(Some(Box::new(PhraseQuery::new_with_offset(tokens))))
-                } else {
-                    Err(tantivy::TantivyError::InvalidArgument(
-                        "More than one token found but allow_phrase is false".to_owned(),
-                    ))
+        let mut queries = Vec::new();
+        for idx in indices.into_iter() {
+            // the indices are guaranteed to be valid
+            if let Some((_name, opt_boost, interpreter)) = self.state.get(idx) {
+                if let Some(mut query) = interpreter.to_query(raw_query) {
+                    if let Some(boost) = opt_boost {
+                        query = Box::new(BoostQuery::new(query, *boost));
+                    }
+
+                    queries.push(query);
                 }
             }
         }
-    }
 
-    //Not[Inner] queries are always [MatchAllDocs() - Inner]
-    fn negate_query(inner: Box<dyn Query>) -> Box<dyn Query> {
-        let subqueries: Vec<(Occur, Box<dyn Query>)> =
-            vec![(Occur::MustNot, inner), (Occur::Must, Box::new(AllQuery))];
-
-        let bq: BooleanQuery = subqueries.into();
-        Box::new(bq)
-    }
-
-    // May result in Ok(None) because the tokenizer might give us nothing
-    fn query_from_token(&self, token: &RawQuery) -> Result<Option<Box<dyn Query>>> {
-        let query = self.assemble_query(token.input, token.is_phrase)?;
-
-        if token.is_negated {
-            Ok(query.map(|inner| Self::negate_query(inner)))
-        } else {
-            Ok(query)
+        match queries.len() {
+            0 => None,
+            1 => Some(queries.pop().unwrap()),
+            _ => Some(Box::new(BooleanQuery::from(
+                queries
+                    .into_iter()
+                    .map(|q| (Occur::Should, q))
+                    .collect::<Vec<_>>(),
+            ))),
         }
     }
+}
 
-    fn tokenize(&self, input: &str) -> Vec<(usize, Term)> {
+fn negate_query(inner: Box<dyn Query>) -> Box<dyn Query> {
+    let subqueries: Vec<(Occur, Box<dyn Query>)> =
+        vec![(Occur::MustNot, inner), (Occur::Must, Box::new(AllQuery))];
+
+    Box::new(BooleanQuery::from(subqueries))
+}
+
+impl FieldNameValidator for QueryParser {
+    fn check(&self, field_name: &str) -> bool {
+        self.state
+            .iter()
+            .any(|(opt_name, _opt_boost, _interpreter)| {
+                opt_name
+                    .as_ref()
+                    .map(|name| name == field_name)
+                    .unwrap_or(false)
+            })
+    }
+}
+
+struct Interpreter {
+    field: Field,
+    analyzer: TextAnalyzer,
+}
+
+impl Interpreter {
+    fn to_query(&self, raw_query: &RawQuery) -> Option<Box<dyn Query>> {
         let mut terms = Vec::new();
-        let mut stream = self.tokenizer.token_stream(input);
+        let mut stream = self.analyzer.token_stream(raw_query.input);
 
         stream.process(&mut |token| {
-            let term = Term::from_field_text(self.field, &token.text);
-            terms.push((token.position, term));
+            terms.push(Term::from_field_text(self.field, &token.text));
         });
 
-        terms
+        if terms.is_empty() {
+            return None;
+        }
+
+        let query: Box<dyn Query> = if terms.len() == 1 {
+            Box::new(TermQuery::new(
+                terms.pop().unwrap(),
+                IndexRecordOption::WithFreqs,
+            ))
+        } else if raw_query.is_phrase {
+            Box::new(PhraseQuery::new(terms))
+        } else {
+            // An analyzer might emit multiple tokens even if the
+            // raw parser only got one (say: raw takes "word", but
+            // analyzer is actually a char tokenizer)
+            Box::new(BooleanQuery::new_multiterms_query(terms))
+        };
+
+        Some(query)
     }
 }
 
@@ -112,116 +249,176 @@ mod tests {
 
     use tantivy::tokenizer::TokenizerManager;
 
-    fn test_parser() -> QueryParser {
-        QueryParser::new(
-            Field::from_field_id(0),
-            TokenizerManager::default().get("en_stem").unwrap(),
-            true,
-        )
-    }
-
-    fn parsed(input: &str) -> Box<dyn Query> {
-        test_parser()
-            .parse(input)
-            .unwrap()
-            .expect("Should have gotten Some(dyn Query)")
-    }
-
-    #[test]
-    fn can_parse_term_query() {
-        assert!(parsed("gula")
-            .as_any()
-            .downcast_ref::<TermQuery>()
-            .is_some());
-    }
-
-    #[test]
-    fn can_parse_phrase_query() {
-        assert!(parsed(" \"gula recipes\" ")
-            .as_any()
-            .downcast_ref::<PhraseQuery>()
-            .is_some());
-    }
-
-    #[test]
-    fn single_term_phrase_query_becomes_term_query() {
-        assert!(parsed(" \"gula\" ")
-            .as_any()
-            .downcast_ref::<TermQuery>()
-            .is_some());
-    }
-
-    #[test]
-    fn negation_works() {
-        let input = vec!["-hunger", "-\"ads and tracking\""];
-
-        for i in input {
-            let p = parsed(i);
-            let query = p
-                .as_any()
-                .downcast_ref::<BooleanQuery>()
-                .expect("Must be a boolean query");
-
-            let clauses = query.clauses();
-
-            assert_eq!(2, clauses.len());
-            // XXX First clause is the wrapped {Term,Phrase}Query
-
-            // Second clause is the MatchAllDocs()
-            let (occur, inner) = &clauses[1];
-            assert_eq!(Occur::Must, *occur);
-            assert!(inner.as_any().downcast_ref::<AllQuery>().is_some())
+    fn test_interpreter() -> Interpreter {
+        Interpreter {
+            field: Field::from_field_id(0),
+            analyzer: TokenizerManager::default().get("en_stem").unwrap(),
         }
     }
 
-    fn check_match_all(match_all: bool, wanted: Occur) -> Result<()> {
-        let parser = QueryParser::new(
-            Field::from_field_id(0),
+    #[test]
+    fn empty_raw_is_none() {
+        assert!(test_interpreter().to_query(&RawQuery::new("")).is_none());
+    }
+
+    #[test]
+    fn simple_raw_is_termquery() {
+        let query = test_interpreter()
+            .to_query(&RawQuery::new("word"))
+            .expect("parses to a Some(Query)");
+
+        assert!(query.as_any().downcast_ref::<TermQuery>().is_some());
+    }
+
+    #[test]
+    fn phrase_raw_is_phrasequery() {
+        let query = test_interpreter()
+            .to_query(&RawQuery::new("sweet potato").phrase())
+            .expect("parses to a Some(Query)");
+
+        assert!(query.as_any().downcast_ref::<PhraseQuery>().is_some());
+    }
+
+    #[test]
+    fn single_word_raw_phrase_is_termquery() {
+        let query = test_interpreter()
+            .to_query(&RawQuery::new("single").phrase())
+            .expect("parses to a Some(Query)");
+
+        assert!(query.as_any().downcast_ref::<TermQuery>().is_some());
+    }
+
+    fn single_field_test_parser() -> QueryParser {
+        let field = Field::from_field_id(0);
+        let mut parser = QueryParser::empty();
+        parser.add_field(
+            field,
             TokenizerManager::default().get("en_stem").unwrap(),
-            match_all,
+            None,
+            None,
         );
+        parser.set_default_fields(vec![field]);
+        parser
+    }
 
-        let parsed = parser.parse("two terms")?.unwrap();
+    #[test]
+    fn empty_query_results_in_none() {
+        assert!(single_field_test_parser().parse("").is_none());
+    }
 
-        let bq = parsed
-            .as_any()
-            .downcast_ref::<BooleanQuery>()
-            .expect("Must be a boolean query");
+    use tantivy::{
+        collector::TopDocs,
+        doc,
+        schema::{SchemaBuilder, TEXT},
+        DocAddress,
+    };
 
-        let clauses = bq.clauses();
+    #[test]
+    fn from_index() -> Result<()> {
+        let mut builder = SchemaBuilder::new();
+        let title = builder.add_text_field("title", TEXT);
+        let plot = builder.add_text_field("plot", TEXT);
+        let index = Index::create_in_ram(builder.build());
+        let mut writer = index.writer_with_num_threads(1, 3_000_000)?;
 
-        assert_eq!(2, clauses.len());
+        let doc_across = DocAddress(0, 0);
+        writer.add_document(doc!(
+            title => "Across the Universe",
+            plot => "Musical based on The Beatles songbook and set in the 60s England, \
+                    America, and Vietnam. The love story of Lucy and Jude is intertwined \
+                    with the anti-war movement and social protests of the 60s."
+        ));
 
-        for (occur, _query) in clauses {
-            assert_eq!(wanted, *occur);
+        let doc_moulin = DocAddress(0, 1);
+        writer.add_document(doc!(
+            title => "Moulin Rouge!",
+            plot => "A poet falls for a beautiful courtesan whom a jealous duke covets in \
+                    this stylish musical, with music drawn from familiar 20th century sources."
+        ));
+
+        let doc_once = DocAddress(0, 2);
+        writer.add_document(doc!(
+            title => "Once",
+            plot => "A modern-day musical about a busker and an immigrant and their eventful\
+                    week in Dublin, as they write, rehearse and record songs that tell their \
+                    love story."
+        ));
+
+        writer.commit()?;
+        let reader = index.reader()?;
+        let searcher = reader.searcher();
+
+        let parser = QueryParser::from_index(&index, vec![title, plot])?;
+
+        let search = |input, limit| {
+            let query = parser.parse(input).expect("given input yields Some()");
+            searcher
+                .search(&query, &TopDocs::with_limit(limit))
+                .expect("working index")
+        };
+
+        let found = search("+title:Once musical", 2);
+        // Even if "musical" matches every document,
+        // there's a MUST query that only one matches
+        assert_eq!(1, found.len());
+        assert_eq!(doc_once, found[0].1);
+
+        let found = search("\"the beatles\"", 1);
+        assert!(!found.is_empty());
+        assert_eq!(doc_across, found[0].1);
+
+        // Purely negative queries should work too
+        for input in &["-story -love", "-\"love story\""] {
+            let found = search(input, 3);
+            assert_eq!(1, found.len());
+            assert_eq!(doc_moulin, found[0].1);
+
+            let found = search("-music -", 3);
+            assert_eq!(1, found.len());
+            assert_eq!(doc_moulin, found[0].1);
         }
 
         Ok(())
     }
 
     #[test]
-    fn queries_are_joined_according_to_match_all() -> Result<()> {
-        check_match_all(true, Occur::Must)?;
-        check_match_all(false, Occur::Should)
-    }
+    fn field_boosting() -> Result<()> {
+        let mut builder = SchemaBuilder::new();
+        let field_a = builder.add_text_field("a", TEXT);
+        let field_b = builder.add_text_field("b", TEXT);
+        let index = Index::create_in_ram(builder.build());
+        let mut writer = index.writer_with_num_threads(1, 3_000_000)?;
 
-    #[test]
-    fn cannot_assemble_phrase_when_allow_phrase_is_false() {
-        assert!(test_parser().assemble_query("hello world", false).is_err());
-    }
+        writer.add_document(doc!(
+            field_a => "bar",
+            field_b => "foo",
+        ));
 
-    #[test]
-    fn empty_query_results_in_none() {
-        assert!(test_parser().parse("").unwrap().is_none());
-    }
+        writer.add_document(doc!(
+            field_a => "foo",
+            field_b => "foo",
+        ));
 
-    #[test]
-    fn tokenizer_may_make_query_empty() {
-        // The test parses uses en_stem
-        let parser = test_parser();
-        // A raw tokenizer would yield Term<'> here
-        assert!(parser.parse("'").unwrap().is_none());
-        // And here would be a BooleanQuery with each term
-        assert!(parser.parse("' <  !").unwrap().is_none());
+        writer.add_document(doc!(
+            field_a => "bar",
+            field_b => "foo",
+        ));
+
+        writer.commit()?;
+
+        let mut parser = QueryParser::from_index(&index, vec![field_a, field_b])?;
+        parser.set_boost(field_a, Some(1.5));
+
+        let reader = index.reader()?;
+        let searcher = reader.searcher();
+
+        let query = parser.parse("foo").unwrap();
+        let found = searcher.search(&query, &TopDocs::with_limit(3))?;
+        // foo occurs in every document
+        assert_eq!(3, found.len());
+        // but the one with it in the boosted field should be first
+        assert_eq!(DocAddress(0, 1), found[0].1);
+
+        Ok(())
     }
 }
