@@ -1,4 +1,4 @@
-use super::raw::{parse_query, FieldNameValidator, Modifier, RawQuery};
+use super::raw::{parse_query, FieldNameValidator, RawQuery};
 
 use tantivy::{
     self,
@@ -99,12 +99,7 @@ impl QueryParser {
                 let raw = &parsed[0];
                 let query = self.query_from_raw(&raw)?;
 
-                if raw
-                    .modifier
-                    .as_ref()
-                    .map(|m| m == &Modifier::Prohibited)
-                    .unwrap_or(false)
-                {
+                if raw.occur == Occur::MustNot {
                     Some(negate_query(query))
                 } else {
                     Some(query)
@@ -116,20 +111,11 @@ impl QueryParser {
                 let mut num_must_not = 0;
                 for tok in parsed {
                     if let Some(query) = self.query_from_raw(&tok) {
-                        let occur = tok
-                            .modifier
-                            .as_ref()
-                            .map(|m| match m {
-                                Modifier::Mandatory => Occur::Must,
-                                Modifier::Prohibited => Occur::MustNot,
-                            })
-                            .unwrap_or(Occur::Should);
-
-                        if occur == Occur::MustNot {
+                        if tok.occur == Occur::MustNot {
                             num_must_not += 1;
                         }
 
-                        subqueries.push((occur, query));
+                        subqueries.push((tok.occur, query));
                     }
                 }
 
@@ -160,23 +146,23 @@ impl QueryParser {
             self.default_indices.clone()
         };
 
-        let mut queries = Vec::new();
-        for idx in indices.into_iter() {
-            // the indices are guaranteed to be valid
-            if let Some((_name, opt_boost, interpreter)) = self.state.get(idx) {
-                if let Some(mut query) = interpreter.to_query(raw_query) {
-                    if let Some(boost) = opt_boost {
-                        query = Box::new(BoostQuery::new(query, *boost));
+        let queries: Vec<Box<dyn Query>> = indices
+            .into_iter()
+            .flat_map(|i| self.state.get(i))
+            .flat_map(|(_, boost, interpreter)| {
+                interpreter.to_query(raw_query).map(|query| {
+                    if let Some(val) = boost {
+                        Box::new(BoostQuery::new(query, *val))
+                    } else {
+                        query
                     }
-
-                    queries.push(query);
-                }
-            }
-        }
+                })
+            })
+            .collect();
 
         match queries.len() {
             0 => None,
-            1 => Some(queries.pop().unwrap()),
+            1 => Some(queries.into_iter().nth(0).unwrap()),
             _ => Some(Box::new(BooleanQuery::from(
                 queries
                     .into_iter()

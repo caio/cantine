@@ -8,19 +8,14 @@ use nom::{
     sequence::{delimited, preceded, separated_pair},
     IResult,
 };
+use tantivy::query::Occur;
 
 #[derive(Debug, PartialEq)]
 pub struct RawQuery<'a> {
     pub input: &'a str,
     pub is_phrase: bool,
     pub field_name: Option<&'a str>,
-    pub modifier: Option<Modifier>,
-}
-
-#[derive(Debug, PartialEq)]
-pub enum Modifier {
-    Mandatory,
-    Prohibited,
+    pub occur: Occur,
 }
 
 const FIELD_SEP: char = ':';
@@ -31,19 +26,19 @@ impl<'a> RawQuery<'a> {
             input,
             is_phrase: false,
             field_name: None,
-            modifier: None,
+            occur: Occur::Should,
         }
     }
 
-    pub fn prohibited(mut self) -> Self {
-        debug_assert!(self.modifier.is_none());
-        self.modifier.replace(Modifier::Prohibited);
+    pub fn must_not(mut self) -> Self {
+        debug_assert_eq!(Occur::Should, self.occur);
+        self.occur = Occur::MustNot;
         self
     }
 
-    pub fn mandatory(mut self) -> Self {
-        debug_assert!(self.modifier.is_none());
-        self.modifier.replace(Modifier::Mandatory);
+    pub fn must(mut self) -> Self {
+        debug_assert_eq!(Occur::Should, self.occur);
+        self.occur = Occur::Must;
         self
     }
 
@@ -107,7 +102,7 @@ fn prohibited_query<'a, C: FieldNameValidator>(
                 any_field_query,
             )),
         ),
-        |query| query.prohibited(),
+        |query| query.must_not(),
     )(input)
 }
 
@@ -123,7 +118,7 @@ fn mandatory_query<'a, C: FieldNameValidator>(
                 any_field_query,
             )),
         ),
-        |query| query.mandatory(),
+        |query| query.must(),
     )(input)
 }
 
@@ -186,7 +181,7 @@ mod tests {
     fn prohibited_term_extraction() {
         assert_eq!(
             parse_no_fields("-ads"),
-            Ok(("", vec![RawQuery::new("ads").prohibited()]))
+            Ok(("", vec![RawQuery::new("ads").must_not()]))
         )
     }
 
@@ -194,7 +189,7 @@ mod tests {
     fn mandatory_term_extraction() {
         assert_eq!(
             parse_no_fields("+love"),
-            Ok(("", vec![RawQuery::new("love").mandatory()]))
+            Ok(("", vec![RawQuery::new("love").must()]))
         )
     }
 
@@ -212,7 +207,7 @@ mod tests {
             parse_no_fields("-\"ads and tracking\""),
             Ok((
                 "",
-                vec![RawQuery::new("ads and tracking").prohibited().phrase()]
+                vec![RawQuery::new("ads and tracking").must_not().phrase()]
             ))
         );
     }
@@ -221,7 +216,7 @@ mod tests {
     fn mandatory_phrase_extraction() {
         assert_eq!(
             parse_no_fields("+\"great food\""),
-            Ok(("", vec![RawQuery::new("great food").mandatory().phrase()]))
+            Ok(("", vec![RawQuery::new("great food").must().phrase()]))
         );
     }
 
@@ -232,9 +227,9 @@ mod tests {
             Ok((
                 "",
                 vec![
-                    RawQuery::new("peanut").mandatory(),
-                    RawQuery::new("peanut butter").phrase().prohibited(),
-                    RawQuery::new("sugar").prohibited(),
+                    RawQuery::new("peanut").must(),
+                    RawQuery::new("peanut butter").phrase().must_not(),
+                    RawQuery::new("sugar").must_not(),
                     RawQuery::new("roast")
                 ]
             ))
@@ -291,8 +286,8 @@ mod tests {
                 "",
                 vec![
                     RawQuery::new("-"),
-                    RawQuery::new("field:").prohibited(),
-                    RawQuery::new("\"\"").prohibited(),
+                    RawQuery::new("field:").must_not(),
+                    RawQuery::new("\"\"").must_not(),
                     RawQuery::new("\"\"").with_field("body"),
                 ]
             ))
@@ -307,8 +302,8 @@ mod tests {
                 "",
                 vec![
                     RawQuery::new("potato:queen").with_field("title"),
-                    RawQuery::new("mash").with_field("instructions").mandatory(),
-                    RawQuery::new("how to fail").with_field("body").prohibited().phrase(),
+                    RawQuery::new("mash").with_field("instructions").must(),
+                    RawQuery::new("how to fail").with_field("body").must_not().phrase(),
                     RawQuery::new("golden peeler").with_field("ingredient").phrase()
                 ]
             ))
