@@ -12,26 +12,38 @@ use nom::{
 #[derive(Debug, PartialEq)]
 pub struct RawQuery<'a> {
     pub input: &'a str,
-    pub is_negated: bool,
     pub is_phrase: bool,
     pub field_name: Option<&'a str>,
+    pub modifier: Option<Modifier>,
 }
 
-pub const FIELD_SEP: char = ':';
+#[derive(Debug, PartialEq)]
+pub enum Modifier {
+    Mandatory,
+    Prohibited,
+}
+
+const FIELD_SEP: char = ':';
 
 impl<'a> RawQuery<'a> {
     pub fn new(input: &'a str) -> Self {
         Self {
             input,
-            is_negated: false,
             is_phrase: false,
             field_name: None,
+            modifier: None,
         }
     }
 
-    pub fn negated(mut self) -> Self {
-        debug_assert!(!self.is_negated);
-        self.is_negated = true;
+    pub fn prohibited(mut self) -> Self {
+        debug_assert!(self.modifier.is_none());
+        self.modifier.replace(Modifier::Prohibited);
+        self
+    }
+
+    pub fn mandatory(mut self) -> Self {
+        debug_assert!(self.modifier.is_none());
+        self.modifier.replace(Modifier::Mandatory);
         self
     }
 
@@ -67,18 +79,15 @@ impl FieldNameValidator for bool {
     }
 }
 
-pub fn parse_query(input: &str) -> IResult<&str, Vec<RawQuery>> {
-    parse_query_with_fields(input, &false)
-}
-
-pub fn parse_query_with_fields<'a, C: FieldNameValidator>(
+pub fn parse_query<'a, C: FieldNameValidator>(
     input: &'a str,
     validator: &'a C,
 ) -> IResult<&'a str, Vec<RawQuery<'a>>> {
     many0(delimited(
         multispace0,
         alt((
-            |input| negated_query(input, validator),
+            |input| prohibited_query(input, validator),
+            |input| mandatory_query(input, validator),
             |input| field_prefixed_query(input, validator),
             any_field_query,
         )),
@@ -86,7 +95,7 @@ pub fn parse_query_with_fields<'a, C: FieldNameValidator>(
     ))(input)
 }
 
-fn negated_query<'a, C: FieldNameValidator>(
+fn prohibited_query<'a, C: FieldNameValidator>(
     input: &'a str,
     validator: &'a C,
 ) -> IResult<&'a str, RawQuery<'a>> {
@@ -98,7 +107,23 @@ fn negated_query<'a, C: FieldNameValidator>(
                 any_field_query,
             )),
         ),
-        |query| query.negated(),
+        |query| query.prohibited(),
+    )(input)
+}
+
+fn mandatory_query<'a, C: FieldNameValidator>(
+    input: &'a str,
+    validator: &'a C,
+) -> IResult<&'a str, RawQuery<'a>> {
+    map(
+        preceded(
+            is_char('+'),
+            alt((
+                |input| field_prefixed_query(input, validator),
+                any_field_query,
+            )),
+        ),
+        |query| query.mandatory(),
     )(input)
 }
 
@@ -145,48 +170,72 @@ fn is_term_char(c: char) -> bool {
 mod tests {
     use super::*;
 
-    #[test]
-    fn term_extraction() {
-        assert_eq!(parse_query("gula"), Ok(("", vec![RawQuery::new("gula")])));
+    fn parse_no_fields(input: &str) -> IResult<&str, Vec<RawQuery>> {
+        parse_query(input, &false)
     }
 
     #[test]
-    fn not_term_extraction() {
+    fn term_extraction() {
         assert_eq!(
-            parse_query("-ads"),
-            Ok(("", vec![RawQuery::new("ads").negated()]))
+            parse_no_fields("gula"),
+            Ok(("", vec![RawQuery::new("gula")]))
+        );
+    }
+
+    #[test]
+    fn prohibited_term_extraction() {
+        assert_eq!(
+            parse_no_fields("-ads"),
+            Ok(("", vec![RawQuery::new("ads").prohibited()]))
+        )
+    }
+
+    #[test]
+    fn mandatory_term_extraction() {
+        assert_eq!(
+            parse_no_fields("+love"),
+            Ok(("", vec![RawQuery::new("love").mandatory()]))
         )
     }
 
     #[test]
     fn phrase_extraction() {
         assert_eq!(
-            parse_query("\"gula recipes\""),
+            parse_no_fields("\"gula recipes\""),
             Ok(("", vec![RawQuery::new("gula recipes").phrase()]))
         );
     }
 
     #[test]
-    fn not_phrase_extraction() {
+    fn prohibited_phrase_extraction() {
         assert_eq!(
-            parse_query("-\"ads and tracking\""),
+            parse_no_fields("-\"ads and tracking\""),
             Ok((
                 "",
-                vec![RawQuery::new("ads and tracking").negated().phrase()]
+                vec![RawQuery::new("ads and tracking").prohibited().phrase()]
             ))
+        );
+    }
+
+    #[test]
+    fn mandatory_phrase_extraction() {
+        assert_eq!(
+            parse_no_fields("+\"great food\""),
+            Ok(("", vec![RawQuery::new("great food").mandatory().phrase()]))
         );
     }
 
     #[test]
     fn parse_query_works() {
         assert_eq!(
-            parse_query(" peanut -\"peanut butter\" -sugar "),
+            parse_no_fields(" +peanut -\"peanut butter\" -sugar roast"),
             Ok((
                 "",
                 vec![
-                    RawQuery::new("peanut"),
-                    RawQuery::new("peanut butter").phrase().negated(),
-                    RawQuery::new("sugar").negated()
+                    RawQuery::new("peanut").mandatory(),
+                    RawQuery::new("peanut butter").phrase().prohibited(),
+                    RawQuery::new("sugar").prohibited(),
+                    RawQuery::new("roast")
                 ]
             ))
         );
@@ -198,7 +247,7 @@ mod tests {
 
         // No field support: fields end up in the term
         assert_eq!(
-            parse_query_with_fields(input, &false),
+            parse_query(input, &false),
             Ok((
                 "",
                 vec![
@@ -210,7 +259,7 @@ mod tests {
 
         // Any field support: field names are not valitdated at all
         assert_eq!(
-            parse_query_with_fields(input, &true),
+            parse_query(input, &true),
             Ok((
                 "",
                 vec![
@@ -223,7 +272,7 @@ mod tests {
         // Strict field support: known fields are identified, unknown
         // ones are part of the term
         assert_eq!(
-            parse_query_with_fields(input, &vec!["ingredient"]),
+            parse_query(input, &vec!["ingredient"]),
             Ok((
                 "",
                 vec![
@@ -237,13 +286,13 @@ mod tests {
     #[test]
     fn garbage_handling() {
         assert_eq!(
-            parse_query_with_fields("- -field: -\"\" body:\"\"", &true),
+            parse_query("- -field: -\"\" body:\"\"", &true),
             Ok((
                 "",
                 vec![
                     RawQuery::new("-"),
-                    RawQuery::new("field:").negated(),
-                    RawQuery::new("\"\"").negated(),
+                    RawQuery::new("field:").prohibited(),
+                    RawQuery::new("\"\"").prohibited(),
                     RawQuery::new("\"\"").with_field("body"),
                 ]
             ))
@@ -253,13 +302,13 @@ mod tests {
     #[test]
     fn parse_term_with_field() {
         assert_eq!(
-            parse_query_with_fields("title:potato:queen -instructions:mash -body:\"how to fail\" ingredient:\"golden peeler\"", &true),
+            parse_query("title:potato:queen +instructions:mash -body:\"how to fail\" ingredient:\"golden peeler\"", &true),
             Ok((
                 "",
                 vec![
                     RawQuery::new("potato:queen").with_field("title"),
-                    RawQuery::new("mash").with_field("instructions").negated(),
-                    RawQuery::new("how to fail").with_field("body").negated().phrase(),
+                    RawQuery::new("mash").with_field("instructions").mandatory(),
+                    RawQuery::new("how to fail").with_field("body").prohibited().phrase(),
                     RawQuery::new("golden peeler").with_field("ingredient").phrase()
                 ]
             ))
