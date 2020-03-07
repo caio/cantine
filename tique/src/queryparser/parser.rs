@@ -14,7 +14,7 @@ pub struct QueryParser {
 }
 
 impl QueryParser {
-    pub fn from_index(index: &Index, fields: Vec<Field>) -> Result<Self> {
+    pub fn new(index: &Index, fields: Vec<Field>) -> Result<Self> {
         let schema = index.schema();
 
         let mut parser = QueryParser {
@@ -23,12 +23,14 @@ impl QueryParser {
         };
 
         for field in fields.into_iter() {
-            parser.add_field(
-                field,
-                index.tokenizer_for_field(field)?,
+            parser.state.push((
                 Some(schema.get_field_name(field).to_owned()),
                 None,
-            );
+                Interpreter {
+                    field,
+                    analyzer: index.tokenizer_for_field(field)?,
+                },
+            ));
         }
 
         Ok(parser)
@@ -44,6 +46,16 @@ impl QueryParser {
         }
     }
 
+    pub fn set_name(&mut self, field: Field, name: Option<String>) {
+        if let Some(row) = self
+            .position_by_field(field)
+            .map(|pos| self.state.get_mut(pos))
+            .flatten()
+        {
+            row.0 = name;
+        }
+    }
+
     pub fn set_default_fields(&mut self, fields: Vec<Field>) {
         let mut indices = Vec::with_capacity(fields.len());
         for field in fields.into_iter() {
@@ -53,13 +65,6 @@ impl QueryParser {
         }
         indices.sort();
         self.default_indices = indices;
-    }
-
-    pub fn empty() -> Self {
-        Self {
-            state: Vec::new(),
-            default_indices: Vec::new(),
-        }
     }
 
     fn position_by_name(&self, field_name: &str) -> Option<usize> {
@@ -79,17 +84,6 @@ impl QueryParser {
             .position(|(_opt_name, _opt_boost, interpreter)| interpreter.field == field)
     }
 
-    pub fn add_field(
-        &mut self,
-        field: Field,
-        analyzer: TextAnalyzer,
-        name: Option<String>,
-        boost: Option<f32>,
-    ) {
-        self.state
-            .push((name, boost, Interpreter { analyzer, field }));
-    }
-
     pub fn parse(&self, input: &str) -> Option<Box<dyn Query>> {
         let (_, parsed) = parse_query(input, self).ok()?;
 
@@ -100,7 +94,10 @@ impl QueryParser {
                 let query = self.query_from_raw(&raw)?;
 
                 if raw.occur == Occur::MustNot {
-                    Some(negate_query(query))
+                    Some(Box::new(BooleanQuery::from(vec![
+                        (Occur::MustNot, query),
+                        (Occur::Must, Box::new(AllQuery)),
+                    ])))
                 } else {
                     Some(query)
                 }
@@ -171,13 +168,6 @@ impl QueryParser {
             ))),
         }
     }
-}
-
-fn negate_query(inner: Box<dyn Query>) -> Box<dyn Query> {
-    let subqueries: Vec<(Occur, Box<dyn Query>)> =
-        vec![(Occur::MustNot, inner), (Occur::Must, Box::new(AllQuery))];
-
-    Box::new(BooleanQuery::from(subqueries))
 }
 
 impl FieldNameValidator for QueryParser {
@@ -275,16 +265,17 @@ mod tests {
     }
 
     fn single_field_test_parser() -> QueryParser {
-        let field = Field::from_field_id(0);
-        let mut parser = QueryParser::empty();
-        parser.add_field(
-            field,
-            TokenizerManager::default().get("en_stem").unwrap(),
-            None,
-            None,
-        );
-        parser.set_default_fields(vec![field]);
-        parser
+        QueryParser {
+            default_indices: vec![0],
+            state: vec![(
+                None,
+                None,
+                Interpreter {
+                    field: Field::from_field_id(0),
+                    analyzer: TokenizerManager::default().get("en_stem").unwrap(),
+                },
+            )],
+        }
     }
 
     #[test]
@@ -300,7 +291,7 @@ mod tests {
     };
 
     #[test]
-    fn from_index() -> Result<()> {
+    fn index_integration() -> Result<()> {
         let mut builder = SchemaBuilder::new();
         let title = builder.add_text_field("title", TEXT);
         let plot = builder.add_text_field("plot", TEXT);
@@ -334,7 +325,7 @@ mod tests {
         let reader = index.reader()?;
         let searcher = reader.searcher();
 
-        let parser = QueryParser::from_index(&index, vec![title, plot])?;
+        let parser = QueryParser::new(&index, vec![title, plot])?;
 
         let search = |input, limit| {
             let query = parser.parse(input).expect("given input yields Some()");
@@ -377,12 +368,12 @@ mod tests {
 
         writer.add_document(doc!(
             field_a => "bar",
-            field_b => "foo",
+            field_b => "foo baz",
         ));
 
         writer.add_document(doc!(
             field_a => "foo",
-            field_b => "foo",
+            field_b => "bar",
         ));
 
         writer.add_document(doc!(
@@ -392,17 +383,26 @@ mod tests {
 
         writer.commit()?;
 
-        let mut parser = QueryParser::from_index(&index, vec![field_a, field_b])?;
-        parser.set_boost(field_a, Some(1.5));
+        let mut parser = QueryParser::new(&index, vec![field_a, field_b])?;
+
+        let input = "foo baz";
+        let normal_query = parser.parse(&input).unwrap();
 
         let reader = index.reader()?;
         let searcher = reader.searcher();
 
-        let query = parser.parse("foo").unwrap();
-        let found = searcher.search(&query, &TopDocs::with_limit(3))?;
-        // foo occurs in every document
+        let found = searcher.search(&normal_query, &TopDocs::with_limit(3))?;
         assert_eq!(3, found.len());
-        // but the one with it in the boosted field should be first
+        // the first doc matches perfectly on `field_b`
+        assert_eq!(DocAddress(0, 0), found[0].1);
+
+        parser.set_boost(field_a, Some(1.5));
+        let boosted_query = parser.parse(&input).unwrap();
+
+        let found = searcher.search(&boosted_query, &TopDocs::with_limit(3))?;
+        assert_eq!(3, found.len());
+        // the first doc matches perfectly on field_b
+        // but now matching on `field_a` is super important
         assert_eq!(DocAddress(0, 1), found[0].1);
 
         Ok(())
