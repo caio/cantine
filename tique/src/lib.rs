@@ -43,3 +43,6 @@ pub mod topterms;
 
 #[cfg(feature = "unstable")]
 pub mod queryparser;
+
+mod dismax;
+pub use dismax::DisMaxQuery;
