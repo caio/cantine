@@ -1,4 +1,5 @@
 use super::raw::{parse_query, FieldNameValidator, RawQuery};
+use crate::DisMaxQuery;
 
 use tantivy::{
     self,
@@ -84,16 +85,40 @@ impl QueryParser {
             .position(|(_opt_name, _opt_boost, interpreter)| interpreter.field == field)
     }
 
-    pub fn parse(&self, input: &str) -> Option<Box<dyn Query>> {
+    fn parse_inner<F: Fn(Vec<Box<dyn Query>>) -> Box<dyn Query>>(
+        &self,
+        input: &str,
+        // Guaranteed to receive a vec of len > 1 if called
+        many_handler: F,
+    ) -> Option<Box<dyn Query>> {
         let (_, parsed) = parse_query(input, self).ok()?;
+        let mut clauses = Vec::new();
+        let mut num_must_not = 0;
 
-        match parsed.len() {
+        parsed
+            .into_iter()
+            .map(|raw| (self.queries_from_raw(&raw), raw))
+            .filter(|(queries, _)| !queries.is_empty())
+            .for_each(|(queries, raw)| {
+                if raw.occur == Occur::MustNot {
+                    for query in queries.into_iter() {
+                        num_must_not += 1;
+                        clauses.push((Occur::MustNot, query));
+                    }
+                } else if queries.len() == 1 {
+                    clauses.push((raw.occur, queries.into_iter().next().unwrap()));
+                } else {
+                    // Now we have multiple positive queries that were generated
+                    // out of a single raw query.
+                    clauses.push((raw.occur, many_handler(queries)));
+                }
+            });
+
+        match clauses.len() {
             0 => None,
             1 => {
-                let raw = &parsed[0];
-                let query = self.query_from_raw(&raw)?;
-
-                if raw.occur == Occur::MustNot {
+                let (occur, query) = clauses.into_iter().next().unwrap();
+                if occur == Occur::MustNot {
                     Some(Box::new(BooleanQuery::from(vec![
                         (Occur::MustNot, query),
                         (Occur::Must, Box::new(AllQuery)),
@@ -102,37 +127,34 @@ impl QueryParser {
                     Some(query)
                 }
             }
-            _ => {
-                let mut subqueries: Vec<(Occur, Box<dyn Query>)> = Vec::new();
-
-                let mut num_must_not = 0;
-                for tok in parsed {
-                    if let Some(query) = self.query_from_raw(&tok) {
-                        if tok.occur == Occur::MustNot {
-                            num_must_not += 1;
-                        }
-
-                        subqueries.push((tok.occur, query));
-                    }
+            num_clauses => {
+                if num_clauses == num_must_not {
+                    clauses.push((Occur::Must, Box::new(AllQuery)));
                 }
 
-                // Detect boolean queries with only MustNot clauses
-                // and appends a AllQuery otherwise the resulting
-                // query will match nothing
-                if num_must_not > 0 && num_must_not == subqueries.len() {
-                    subqueries.push((Occur::Must, Box::new(AllQuery)));
-                }
-
-                match subqueries.len() {
-                    0 => None,
-                    1 => Some(subqueries.pop().expect("Element always present").1),
-                    _ => Some(Box::new(BooleanQuery::from(subqueries))),
-                }
+                Some(Box::new(BooleanQuery::from(clauses)))
             }
         }
     }
 
-    fn query_from_raw(&self, raw_query: &RawQuery) -> Option<Box<dyn Query>> {
+    pub fn parse_dixmax(&self, input: &str, tiebreaker: f32) -> Option<Box<dyn Query>> {
+        self.parse_inner(input, |queries| {
+            Box::new(DisMaxQuery::new(queries, tiebreaker))
+        })
+    }
+
+    pub fn parse(&self, input: &str) -> Option<Box<dyn Query>> {
+        self.parse_inner(input, |queries| {
+            Box::new(BooleanQuery::from(
+                queries
+                    .into_iter()
+                    .map(|q| (Occur::Should, q))
+                    .collect::<Vec<_>>(),
+            ))
+        })
+    }
+
+    fn queries_from_raw(&self, raw_query: &RawQuery) -> Vec<Box<dyn Query>> {
         let indices = if let Some(position) = raw_query
             .field_name
             .map(|field_name| self.position_by_name(field_name))
@@ -143,7 +165,7 @@ impl QueryParser {
             self.default_indices.clone()
         };
 
-        let queries: Vec<Box<dyn Query>> = indices
+        indices
             .into_iter()
             .flat_map(|i| self.state.get(i))
             .flat_map(|(_, boost, interpreter)| {
@@ -155,18 +177,7 @@ impl QueryParser {
                     }
                 })
             })
-            .collect();
-
-        match queries.len() {
-            0 => None,
-            1 => Some(queries.into_iter().nth(0).unwrap()),
-            _ => Some(Box::new(BooleanQuery::from(
-                queries
-                    .into_iter()
-                    .map(|q| (Occur::Should, q))
-                    .collect::<Vec<_>>(),
-            ))),
-        }
+            .collect()
     }
 }
 
