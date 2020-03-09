@@ -295,13 +295,9 @@ fn ascending_sort_works_for_relevance() -> Result<()> {
     let reader = GLOBAL.index.reader()?;
     let searcher = reader.searcher();
 
-    let parser = QueryParser::new(
-        GLOBAL.cantine.fulltext,
-        GLOBAL.index.tokenizer_for_field(GLOBAL.cantine.fulltext)?,
-        true,
-    );
+    let parser = QueryParser::new(&GLOBAL.index, vec![GLOBAL.cantine.fulltext])?;
 
-    let query = parser.parse("potato cheese")?.unwrap();
+    let query = parser.parse("+potato +cheese").unwrap();
 
     let (_total, found_ids, _next) =
         GLOBAL
