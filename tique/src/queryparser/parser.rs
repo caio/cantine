@@ -119,7 +119,7 @@ impl QueryParser {
                 // Detect boolean queries with only MustNot clauses
                 // and appends a AllQuery otherwise the resulting
                 // query will match nothing
-                if num_must_not > 1 && num_must_not == subqueries.len() {
+                if num_must_not > 0 && num_must_not == subqueries.len() {
                     subqueries.push((Occur::Must, Box::new(AllQuery)));
                 }
 
@@ -345,13 +345,9 @@ mod tests {
         assert_eq!(doc_across, found[0].1);
 
         // Purely negative queries should work too
-        for input in &["-story -love", "-\"love story\""] {
+        for input in &["-love", "-story -love", "-\"love story\""] {
             let found = search(input, 3);
-            assert_eq!(1, found.len());
-            assert_eq!(doc_moulin, found[0].1);
-
-            let found = search("-music -", 3);
-            assert_eq!(1, found.len());
+            assert_eq!(1, found.len(), "input [{}] found more than one", input);
             assert_eq!(doc_moulin, found[0].1);
         }
 
