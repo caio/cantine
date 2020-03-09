@@ -154,7 +154,7 @@ impl SearchState {
         let mut subqueries: Vec<(Occur, Box<dyn Query>)> = Vec::new();
 
         if let Some(fulltext) = &query.fulltext {
-            if let Some(parsed) = self.query_parser.parse(fulltext.as_str())? {
+            if let Some(parsed) = self.query_parser.parse(fulltext.as_str()) {
                 subqueries.push((Occur::Must, parsed));
             }
         }
@@ -218,11 +218,7 @@ async fn main() -> Result<()> {
 
     let index = Index::open_in_dir(&index_path)?;
     let recipe_index = RecipeIndex::try_from(&index.schema())?;
-    let query_parser = QueryParser::new(
-        recipe_index.fulltext,
-        index.tokenizer_for_field(recipe_index.fulltext)?,
-        true,
-    );
+    let query_parser = QueryParser::new(&index, vec![recipe_index.fulltext])?;
 
     let reader = index.reader()?;
     let search_state = Arc::new(SearchState {

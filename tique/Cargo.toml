@@ -19,3 +19,6 @@ unstable = ["nom"]
 [dependencies]
 tantivy = "0.12"
 nom = { version = "5", optional = true }
+
+[dev-dependencies]
+quickcheck = "0.9"

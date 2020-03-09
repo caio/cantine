@@ -1,4 +1,4 @@
-mod interpreter;
 mod parser;
+mod raw;
 
-pub use interpreter::QueryParser;
+pub use parser::QueryParser;
