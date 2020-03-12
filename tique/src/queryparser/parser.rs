@@ -68,21 +68,21 @@ impl QueryParser {
         self.default_indices = indices;
     }
 
-    fn position_by_name(&self, field_name: &str) -> Option<usize> {
-        self.state
-            .iter()
-            .position(|(opt_name, _opt_boost, _interpreter)| {
-                opt_name
-                    .as_ref()
-                    .map(|name| name == field_name)
-                    .unwrap_or(false)
-            })
+    pub fn parse_dixmax(&self, input: &str, tiebreaker: f32) -> Option<Box<dyn Query>> {
+        self.parse_inner(input, |queries| {
+            Box::new(DisMaxQuery::new(queries, tiebreaker))
+        })
     }
 
-    fn position_by_field(&self, field: Field) -> Option<usize> {
-        self.state
-            .iter()
-            .position(|(_opt_name, _opt_boost, interpreter)| interpreter.field == field)
+    pub fn parse(&self, input: &str) -> Option<Box<dyn Query>> {
+        self.parse_inner(input, |queries| {
+            Box::new(BooleanQuery::from(
+                queries
+                    .into_iter()
+                    .map(|q| (Occur::Should, q))
+                    .collect::<Vec<_>>(),
+            ))
+        })
     }
 
     fn parse_inner<F: Fn(Vec<Box<dyn Query>>) -> Box<dyn Query>>(
@@ -137,23 +137,6 @@ impl QueryParser {
         }
     }
 
-    pub fn parse_dixmax(&self, input: &str, tiebreaker: f32) -> Option<Box<dyn Query>> {
-        self.parse_inner(input, |queries| {
-            Box::new(DisMaxQuery::new(queries, tiebreaker))
-        })
-    }
-
-    pub fn parse(&self, input: &str) -> Option<Box<dyn Query>> {
-        self.parse_inner(input, |queries| {
-            Box::new(BooleanQuery::from(
-                queries
-                    .into_iter()
-                    .map(|q| (Occur::Should, q))
-                    .collect::<Vec<_>>(),
-            ))
-        })
-    }
-
     fn queries_from_raw(&self, raw_query: &RawQuery) -> Vec<Box<dyn Query>> {
         let indices = if let Some(position) = raw_query
             .field_name
@@ -178,6 +161,23 @@ impl QueryParser {
                 })
             })
             .collect()
+    }
+
+    fn position_by_name(&self, field_name: &str) -> Option<usize> {
+        self.state
+            .iter()
+            .position(|(opt_name, _opt_boost, _interpreter)| {
+                opt_name
+                    .as_ref()
+                    .map(|name| name == field_name)
+                    .unwrap_or(false)
+            })
+    }
+
+    fn position_by_field(&self, field: Field) -> Option<usize> {
+        self.state
+            .iter()
+            .position(|(_opt_name, _opt_boost, interpreter)| interpreter.field == field)
     }
 }
 
