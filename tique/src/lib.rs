@@ -41,8 +41,10 @@
 pub mod conditional_collector;
 pub mod topterms;
 
-#[cfg(feature = "unstable")]
-pub mod queryparser;
+#[cfg(feature = "queryparser")]
+mod queryparser;
+#[cfg(feature = "queryparser")]
+pub use queryparser::QueryParser;
 
 mod dismax;
 pub use dismax::DisMaxQuery;

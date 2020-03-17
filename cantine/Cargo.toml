@@ -10,7 +10,7 @@ publish = false
 
 [dependencies]
 cantine_derive = { path = "../cantine_derive" }
-tique = { path = "../tique", features = ["unstable"] }
+tique = { path = "../tique", features = ["queryparser"] }
 actix-rt = "1.0"
 actix-service = "1.0"
 actix-web = "2.0"

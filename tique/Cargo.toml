@@ -14,7 +14,7 @@ edition = "2018"
 
 [features]
 default = []
-unstable = ["nom"]
+queryparser = ["nom"]
 
 [dependencies]
 tantivy = "0.12"
