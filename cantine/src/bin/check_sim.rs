@@ -45,7 +45,14 @@ fn main() -> Result<()> {
 
     let recipe_index = Arc::new(RecipeIndex::try_from(&index.schema())?);
     let database = Arc::new(DatabaseReader::<Recipe>::open(&db_path)?);
-    let topterms = Arc::new(TopTerms::new(&index, vec![recipe_index.fulltext])?);
+    let topterms = Arc::new(TopTerms::new(
+        &index,
+        vec![
+            recipe_index.name,
+            recipe_index.ingredients,
+            recipe_index.instructions,
+        ],
+    )?);
 
     let (id_sender, id_receiver) = crossbeam_channel::unbounded();
     let (checked_sender, checked_receiver) = mpsc::channel();

@@ -25,13 +25,19 @@ use tique::conditional_collector::{
 #[derive(Clone)]
 pub struct RecipeIndex {
     pub id: Field,
-    pub fulltext: Field,
+
+    pub name: Field,
+    pub ingredients: Field,
+    pub instructions: Field,
+
     pub features_bincode: Field,
     pub features: FeaturesFilterFields,
 }
 
 const FIELD_ID: &str = "id";
-const FIELD_FULLTEXT: &str = "fulltext";
+const FIELD_NAME: &str = "name";
+const FIELD_INGREDIENTS: &str = "ingredients";
+const FIELD_INSTRUCTIONS: &str = "instructions";
 const FIELD_FEATURES_BINCODE: &str = "features_bincode";
 
 impl RecipeIndex {
@@ -39,16 +45,17 @@ impl RecipeIndex {
         let mut doc = Document::new();
         doc.add_u64(self.id, recipe.recipe_id);
 
-        let mut fulltext = Vec::new();
+        doc.add_text(self.name, recipe.name.as_str());
 
-        fulltext.push(recipe.name.as_str());
-        for ingredient in &recipe.ingredients {
-            fulltext.push(ingredient.as_str());
-        }
-        for instruction in &recipe.instructions {
-            fulltext.push(instruction.as_str());
-        }
-        doc.add_text(self.fulltext, fulltext.join("\n").as_str());
+        recipe
+            .ingredients
+            .iter()
+            .for_each(|i| doc.add_text(self.ingredients, i));
+
+        recipe
+            .instructions
+            .iter()
+            .for_each(|i| doc.add_text(self.instructions, i));
 
         doc.add_bytes(
             self.features_bincode,
@@ -184,7 +191,11 @@ impl From<&mut SchemaBuilder> for RecipeIndex {
     fn from(builder: &mut SchemaBuilder) -> Self {
         RecipeIndex {
             id: builder.add_u64_field(FIELD_ID, STORED | FAST),
-            fulltext: builder.add_text_field(FIELD_FULLTEXT, TEXT),
+
+            name: builder.add_text_field(FIELD_NAME, TEXT),
+            ingredients: builder.add_text_field(FIELD_INGREDIENTS, TEXT),
+            instructions: builder.add_text_field(FIELD_INSTRUCTIONS, TEXT),
+
             features_bincode: builder.add_bytes_field(FIELD_FEATURES_BINCODE),
             features: Features::create_schema(builder, INDEXED | FAST),
         }
@@ -195,22 +206,20 @@ impl TryFrom<&Schema> for RecipeIndex {
     type Error = TantivyError;
 
     fn try_from(schema: &Schema) -> Result<Self> {
-        let id = schema
-            .get_field(FIELD_ID)
-            .ok_or_else(|| TantivyError::SchemaError(format!("Missing field {}", FIELD_ID)))?;
-
-        let fulltext = schema.get_field(FIELD_FULLTEXT).ok_or_else(|| {
-            TantivyError::SchemaError(format!("Missing field {}", FIELD_FULLTEXT))
-        })?;
-
-        let features_bincode = schema.get_field(FIELD_FEATURES_BINCODE).ok_or_else(|| {
-            TantivyError::SchemaError(format!("Missing field {}", FIELD_FEATURES_BINCODE))
-        })?;
+        let get_field = |name| {
+            schema
+                .get_field(name)
+                .ok_or_else(|| TantivyError::SchemaError(format!("Missing field {}", name)))
+        };
 
         Ok(RecipeIndex {
-            id,
-            fulltext,
-            features_bincode,
+            id: get_field(FIELD_ID)?,
+
+            name: get_field(FIELD_NAME)?,
+            ingredients: get_field(FIELD_INGREDIENTS)?,
+            instructions: get_field(FIELD_INSTRUCTIONS)?,
+
+            features_bincode: get_field(FIELD_FEATURES_BINCODE)?,
             features: FeaturesFilterFields::try_from(schema)?,
         })
     }

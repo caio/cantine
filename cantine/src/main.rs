@@ -154,7 +154,7 @@ impl SearchState {
         let mut subqueries: Vec<(Occur, Box<dyn Query>)> = Vec::new();
 
         if let Some(fulltext) = &query.fulltext {
-            if let Some(parsed) = self.query_parser.parse(fulltext.as_str()) {
+            if let Some(parsed) = self.query_parser.parse_dixmax(fulltext.as_str(), 0.1) {
                 subqueries.push((Occur::Must, parsed));
             }
         }
@@ -218,7 +218,20 @@ async fn main() -> Result<()> {
 
     let index = Index::open_in_dir(&index_path)?;
     let recipe_index = RecipeIndex::try_from(&index.schema())?;
-    let query_parser = QueryParser::new(&index, vec![recipe_index.fulltext])?;
+    let mut query_parser = QueryParser::new(
+        &index,
+        vec![
+            recipe_index.name,
+            recipe_index.ingredients,
+            recipe_index.instructions,
+        ],
+    )?;
+
+    // XXX This is as scientific as "4" is random
+    // Reduce importance of instructions match
+    query_parser.set_boost(recipe_index.instructions, Some(0.7));
+    // And make name matches slightly more important than ingredient
+    query_parser.set_boost(recipe_index.name, Some(1.15));
 
     let reader = index.reader()?;
     let search_state = Arc::new(SearchState {

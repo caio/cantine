@@ -295,7 +295,14 @@ fn ascending_sort_works_for_relevance() -> Result<()> {
     let reader = GLOBAL.index.reader()?;
     let searcher = reader.searcher();
 
-    let parser = QueryParser::new(&GLOBAL.index, vec![GLOBAL.cantine.fulltext])?;
+    let parser = QueryParser::new(
+        &GLOBAL.index,
+        vec![
+            GLOBAL.cantine.name,
+            GLOBAL.cantine.ingredients,
+            GLOBAL.cantine.instructions,
+        ],
+    )?;
 
     let query = parser.parse("+potato +cheese").unwrap();
 
