@@ -2,7 +2,7 @@ use std::{convert::TryFrom, env, io, path::Path, str::FromStr, sync::Arc};
 
 use env_logger;
 use serde::Serialize;
-use tique::queryparser::QueryParser;
+use tique::QueryParser;
 use uuid::Uuid;
 
 use actix_web::{

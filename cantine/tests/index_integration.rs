@@ -14,7 +14,7 @@ use cantine::{
     model::{Recipe, RecipeId, Sort},
 };
 
-use tique::queryparser::QueryParser;
+use tique::QueryParser;
 
 struct GlobalData {
     index: Index,
