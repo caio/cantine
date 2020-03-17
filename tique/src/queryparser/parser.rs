@@ -9,12 +9,38 @@ use tantivy::{
     Index, Result, Term,
 };
 
+/// Parse queries from arbitrary end-user input
+///
+/// Words and phrases are supported as usual. For a query like:
+///
+/// > apple "peanut butter"
+///
+/// Every document that contains the word "apple" **or** the phrase
+/// "peanut butter" will be a candidate for collection.
+///
+/// You may make items required or prohibited:
+///
+/// > -"deep fry" +bacon
+///
+/// Now documents *must* contain "bacon" and must *not* contain
+/// the phrase "deep fry"
+///
+/// And you can limit which fields are looked at by prefixing an
+/// item with the field name:
+///
+/// > cake butter -ingredients:egg
+///
+/// Which ends up prohibiting documents with "egg" in the "ingredients"
+/// field from showing up.
+///
 pub struct QueryParser {
     state: Vec<(Option<String>, Option<f32>, Interpreter)>,
     default_indices: Vec<usize>,
 }
 
 impl QueryParser {
+    /// Create a QueryParser that knows about the given fields and queries
+    /// them by default.
     pub fn new(index: &Index, fields: Vec<Field>) -> Result<Self> {
         let schema = index.schema();
 
@@ -37,6 +63,11 @@ impl QueryParser {
         Ok(parser)
     }
 
+    /// Configure the importance of a field
+    ///
+    /// By default, every field has a boost of `None`, which is equivalent
+    /// to a boost of `Some(1.0)`. Less than 1.0 means lower importance,
+    /// greater means higher.
     pub fn set_boost(&mut self, field: Field, boost: Option<f32>) {
         if let Some(row) = self
             .position_by_field(field)
@@ -47,6 +78,14 @@ impl QueryParser {
         }
     }
 
+    /// Change/disable how to query a specific field
+    ///
+    /// The QueryParser uses the field name present in the index schema
+    /// as the field name, so if you have a field named "body", the parser
+    /// knows to only look at that field when searching for `body:potato`.
+    ///
+    /// You can use this to change how (or make it impossible) to address
+    /// any field from a query.
     pub fn set_name(&mut self, field: Field, name: Option<String>) {
         if let Some(row) = self
             .position_by_field(field)
@@ -57,6 +96,12 @@ impl QueryParser {
         }
     }
 
+    /// Configure which fields are queried by default
+    ///
+    /// When a query input doesn't specify a field name explicitly, the
+    /// parser uses these fields by default. So if you have a parser
+    /// with default fields `a` and `b`, a query like "foo b:bar" ends
+    /// up searching for "foo" in both fields, but "bar" only on `b`.
     pub fn set_default_fields(&mut self, fields: Vec<Field>) {
         let mut indices = Vec::with_capacity(fields.len());
         for field in fields.into_iter() {
@@ -68,12 +113,11 @@ impl QueryParser {
         self.default_indices = indices;
     }
 
-    pub fn parse_dixmax(&self, input: &str, tiebreaker: f32) -> Option<Box<dyn Query>> {
-        self.parse_inner(input, |queries| {
-            Box::new(DisMaxQuery::new(queries, tiebreaker))
-        })
-    }
-
+    /// Parse arbitrary user input into a tantivy query
+    ///
+    /// `None` may happen when the input is empty or the field analyzers end up
+    /// emitting no tokens. Example: an analyzer that filters stop words would
+    /// return `None` for a query like "the is at which".
     pub fn parse(&self, input: &str) -> Option<Box<dyn Query>> {
         self.parse_inner(input, |queries| {
             Box::new(BooleanQuery::from(
@@ -82,6 +126,29 @@ impl QueryParser {
                     .map(|q| (Occur::Should, q))
                     .collect::<Vec<_>>(),
             ))
+        })
+    }
+
+    /// Parse a query, taking multiple fields with similar vocabularies into
+    /// account.
+    ///
+    /// Behaves like `QueryParser::parse`, but uses `DisMaxQuery` when searching
+    /// over multiple fields.
+    ///
+    /// The `tiebreaker` parameter governs the importance of appearing in more
+    /// than one field and a small value like `0.1` or even `0` is a reasonable
+    /// starting point.
+    ///
+    /// Panics when `tiebreaker` is lower than zero or greater than one.
+    ///
+    /// Refer to DisMaxQuery's docs for more details.
+    pub fn parse_dixmax(&self, input: &str, tiebreaker: f32) -> Option<Box<dyn Query>> {
+        assert!(
+            (0.0..=1.0).contains(&tiebreaker),
+            "tiebreaker must be between 0 and 1.0"
+        );
+        self.parse_inner(input, |queries| {
+            Box::new(DisMaxQuery::new(queries, tiebreaker))
         })
     }
 
