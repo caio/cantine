@@ -35,16 +35,28 @@ let keywords = topterms.extract(5, "the quick fox jumps over the lazy dog");
 let similarity_query = keywords.into_boosted_query(1.0);
 ```
 
+### QueryParser
+
+A query parser with a simple grammar geared towards usage by
+end-users, with no knowledge about IR, your index nor boolean
+logic.
+
+Supports multiple fields, boosts, required (+) and restricted (-)
+items and can generate queries using `DisMaxQuery` for better
+results when you have fields with very similar vocabularies.
+
+**NOTE**: Requires the `queryparser` compilation feature.
+
+```rust
+let parser = tique::QueryParser::new(&index, vec![name, ingredients])?;
+
+if let Some(query) = parser.parse(r#"+bacon cheese -ingredients:olive "deep fry""#) {
+    // Do your thing with the query...
+}
+
+```
+
 ## Dependency Policy
 
 This library's default dependency will always be just `tantivy`, anything
 that requires more will be added as optional feature.
-
-## Unstable
-
-This crate contains unpolished functionality that is made available
-through the `unstable` feature flag:
-
-* `query_parser`: A very simple query parser that only knows about term
-  and phrase queries (and their negation). Mostly an excuse to play
-  with `nom`

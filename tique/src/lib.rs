@@ -48,6 +48,8 @@
 //! items and can generate queries using `DisMaxQuery` for better
 //! results when you have fields with very similar vocabularies.
 //!
+//! **NOTE**: Requires the `queryparser` compilation feature.
+//!
 //! ```rust
 //! # use tantivy::{Index, schema::Field};
 //! # fn test(index: &Index) -> tantivy::Result<()> {
