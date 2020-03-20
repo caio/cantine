@@ -8,7 +8,12 @@ use super::topk::Scored;
 /// before considering a matching document for inclusion in the
 /// top results.
 pub trait ConditionForSegment<T>: Clone {
+    /// The concrete type of the result from calling `for_segment`
     type Type: CheckCondition<T>;
+
+    /// Creates a `Self::Type` instance responsible for checking if
+    /// the matching documents in the given segment reader are to
+    /// be considered as collection candidates.
     fn for_segment(&self, reader: &SegmentReader) -> Self::Type;
 }
 
@@ -44,6 +49,10 @@ where
 /// a document to appear in the results it must first return true
 /// for `check`.
 pub trait CheckCondition<T>: 'static + Clone {
+    /// Decides wether the given document is a valid candidate or not
+    ///
+    /// The `ascending` parameter signals the ordering chosen via
+    /// `Ascending` or `Descending`
     fn check(&self, segment_id: SegmentLocalId, doc_id: DocId, score: T, ascending: bool) -> bool;
 }
 

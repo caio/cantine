@@ -248,6 +248,7 @@ impl Keywords {
         self.0.len()
     }
 
+    /// Check if this keywords set contains no terms
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
