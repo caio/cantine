@@ -5,7 +5,7 @@
 //! added support for declaring the ordering (ascending or
 //! descending) and collection-time conditions.
 //!
-//! ```rust
+//! ```no_run
 //! # use tique::conditional_collector::{Descending,TopCollector};
 //! # use tantivy::Score;
 //! # let condition_for_segment = true;
@@ -24,7 +24,7 @@
 //! You simply choose `Ascending` or `Descending` and let the
 //! compiler know:
 //!
-//! ```rust
+//! ```no_run
 //! # use tique::conditional_collector::{Ascending,TopCollector};
 //! # use tantivy::Score;
 //! # let limit = 10;
@@ -42,7 +42,7 @@
 //!
 //! This is a valid condition that accepts everything:
 //!
-//! ```rust
+//! ```no_run
 //! let condition_for_segment = true;
 //! ```
 //!
@@ -50,7 +50,7 @@
 //! the `ConditionForSegment` trait and you can use closures as a
 //! shortcut:
 //!
-//! ```rust
+//! ```no_run
 //! # use tantivy::{Score,SegmentReader};
 //! # use tique::conditional_collector::{TopCollector,Ascending};
 //! # let limit = 10;
@@ -76,7 +76,7 @@
 //! You can also use these tuples as a condition and they act
 //! like a cursor for pagination, so when you do something like:
 //!
-//! ```rust
+//! ```no_run
 //! # use tantivy::DocAddress;
 //! # use tique::conditional_collector::{TopCollector,Descending};
 //! let limit = 10;

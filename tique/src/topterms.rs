@@ -22,7 +22,7 @@
 //!
 //! ## Finding Similar Documents
 //!
-//!```rust
+//!```no_run
 //! # use tantivy::{DocAddress, Index, Searcher, collector::TopDocs, schema::Field, Result};
 //! # use tique::topterms::TopTerms;
 //! # fn example(index: &Index, body: Field, title: Field,
@@ -44,7 +44,7 @@
 //! works via a custom `KeywordAcceptor` that you can use via the
 //! `extract_filtered` and `extract_filtered_from_doc` methods:
 //!
-//!```rust
+//!```no_run
 //! # use tantivy::{Index, schema::{Field, Term}, Result};
 //! # use tique::topterms::TopTerms;
 //! # fn example(index: &Index, fulltext: Field, input: &str) -> Result<()> {

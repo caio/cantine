@@ -11,7 +11,7 @@
 //! cursor-based pagination (or rather: support for conditionally
 //! skipping documents that match the query).
 //!
-//! ```rust
+//! ```no_run
 //! use tique::conditional_collector::{Ascending, TopCollector};
 //! # let f64_field = tantivy::schema::Field::from_field_id(0);
 //!
@@ -24,7 +24,7 @@
 //! Uses your index to find keywords and similar items to your documents
 //! or any arbitrary input.
 //!
-//!```rust
+//!```no_run
 //! # use tantivy::{Index, collector::TopDocs, schema::{Field, Schema, TEXT}};
 //! # use tique::topterms::TopTerms;
 //! # let mut builder = Schema::builder();
@@ -50,7 +50,7 @@
 //!
 //! **NOTE**: Requires the `queryparser` compilation feature.
 //!
-//! ```rust
+//! ```no_run
 //! # use tantivy::{Index, schema::Field};
 //! # fn test(index: &Index) -> tantivy::Result<()> {
 //! # let name = tantivy::schema::Field::from_field_id(0);

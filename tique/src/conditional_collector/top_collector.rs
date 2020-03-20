@@ -21,7 +21,7 @@ use super::{
 /// The first `Score` type is usually inferred but we need to be
 /// explicit for this example.
 ///
-/// ```rust
+/// ```no_run
 /// # use tique::conditional_collector::{TopCollector,Descending};
 /// let collector =
 ///     TopCollector::<tantivy::Score, Descending, _>::new(10, true);
@@ -29,7 +29,7 @@ use super::{
 ///
 /// ## Custom condition from a closure.
 ///
-/// ```rust
+/// ```no_run
 /// # use tantivy::{Score,SegmentReader};
 /// # use tique::conditional_collector::{TopCollector,Ascending};
 /// let condition_for_segment = |reader: &SegmentReader| {
@@ -46,7 +46,7 @@ use super::{
 ///
 /// ## Customizing the Score
 ///
-/// ```rust
+/// ```no_run
 /// # use tique::conditional_collector::{TopCollector, Ascending};
 /// # use tantivy::{SegmentReader, DocId};
 /// # let limit = 10;
@@ -69,7 +69,7 @@ use super::{
 /// *CAUTION*: Using a field that is not `FAST` or is of a different
 /// type than the one you specify will lead to a panic at runtime.
 ///
-/// ```rust
+/// ```no_run
 /// # use tique::conditional_collector::{Ascending, Descending, TopCollector};
 /// # let rank_field = tantivy::schema::Field::from_field_id(0);
 /// # let id_field = tantivy::schema::Field::from_field_id(1);
