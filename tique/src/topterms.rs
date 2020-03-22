@@ -53,7 +53,7 @@
 //! let keywords = topterms.extract_filtered(
 //!      10,
 //!      input,
-//!      |term: &Term, term_freq, doc_freq, num_docs| {
+//!      &|term: &Term, term_freq, doc_freq, num_docs| {
 //!          // Only words longer than 4 characters and that appear
 //!          // in at least 10 documents
 //!          term.text().chars().count() > 4 && doc_freq >= 10
@@ -147,12 +147,12 @@ impl TopTerms {
 
     /// Extracts the `limit` most relevant terms from the input
     pub fn extract(&self, limit: usize, input: &str) -> Keywords {
-        self.extract_filtered(limit, input, ())
+        self.extract_filtered(limit, input, &())
     }
 
     /// Extracts the `limit` most relevant terms from an indexed document
     pub fn extract_from_doc(&self, limit: usize, addr: DocAddress) -> Keywords {
-        self.extract_filtered_from_doc(limit, addr, ())
+        self.extract_filtered_from_doc(limit, addr, &())
     }
 
     /// Same as `extract`, but with support inspect/filter the terms as
@@ -161,7 +161,7 @@ impl TopTerms {
         &self,
         limit: usize,
         input: &str,
-        acceptor: F,
+        acceptor: &F,
     ) -> Keywords {
         let searcher = self.reader.searcher();
         let num_docs = searcher.num_docs();
@@ -188,7 +188,7 @@ impl TopTerms {
         &self,
         limit: usize,
         addr: DocAddress,
-        acceptor: F,
+        acceptor: &F,
     ) -> Keywords {
         let searcher = self.reader.searcher();
         let num_docs = searcher.num_docs();
@@ -444,17 +444,17 @@ mod tests {
         };
 
         let marley_keywords =
-            topterms.extract_filtered_from_doc(5, DocAddress(0, 0), keyword_filter);
+            topterms.extract_filtered_from_doc(5, DocAddress(0, 0), &keyword_filter);
 
         assert_word_found("marley", marley_keywords);
 
         let holmes_keywords =
-            topterms.extract_filtered_from_doc(5, DocAddress(0, 1), keyword_filter);
+            topterms.extract_filtered_from_doc(5, DocAddress(0, 1), &keyword_filter);
 
         assert_word_found("dangerous", holmes_keywords);
 
         let groucho_keywords =
-            topterms.extract_filtered_from_doc(5, DocAddress(0, 2), keyword_filter);
+            topterms.extract_filtered_from_doc(5, DocAddress(0, 2), &keyword_filter);
 
         let reader = index.reader()?;
         let searcher = reader.searcher();
