@@ -102,7 +102,7 @@ fn prohibited_query<'a, C: FieldNameValidator>(
                 any_field_query,
             )),
         ),
-        |query| query.must_not(),
+        RawQuery::must_not,
     )(input)
 }
 
@@ -118,7 +118,7 @@ fn mandatory_query<'a, C: FieldNameValidator>(
                 any_field_query,
             )),
         ),
-        |query| query.must(),
+        RawQuery::must,
     )(input)
 }
 
