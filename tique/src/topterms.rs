@@ -118,6 +118,11 @@ where
 impl TopTerms {
     /// Creates a new TopTerms that will extract keywords by looking at
     /// the given index fields
+    ///
+    /// # Errors
+    ///
+    /// Will yield an error if the provided fields are unknown or if they
+    /// are not `tantivy::schema::TEXT`
     pub fn new(index: &Index, fields: Vec<Field>) -> Result<Self> {
         let mut field_tokenizers = Vec::new();
 

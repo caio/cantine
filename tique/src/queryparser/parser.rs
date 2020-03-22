@@ -41,6 +41,11 @@ pub struct QueryParser {
 impl QueryParser {
     /// Create a QueryParser that knows about the given fields and queries
     /// them by default.
+    ///
+    /// # Errors
+    ///
+    /// Will yield an error if any of `fields` is not known by the given
+    /// `index`
     pub fn new(index: &Index, fields: Vec<Field>) -> Result<Self> {
         let schema = index.schema();
 
