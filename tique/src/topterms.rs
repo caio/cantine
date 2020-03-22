@@ -126,7 +126,7 @@ impl TopTerms {
     pub fn new(index: &Index, fields: Vec<Field>) -> Result<Self> {
         let mut field_tokenizers = Vec::new();
 
-        for field in fields.into_iter() {
+        for field in fields {
             if field_is_valid(&index.schema(), field) {
                 let tok = index.tokenizer_for_field(field)?;
                 field_tokenizers.push((field, tok));
@@ -168,10 +168,8 @@ impl TopTerms {
 
         let mut keywords = DescendingTopK::new(limit);
 
-        for (field, tokenizer) in self.field_tokenizers.iter() {
-            let termfreq = termfreq(&input, *field, tokenizer);
-
-            for (term, tf) in termfreq.into_iter() {
+        for (field, tokenizer) in &self.field_tokenizers {
+            for (term, tf) in termfreq(&input, *field, tokenizer) {
                 let doc_freq = searcher.doc_freq(&term);
 
                 if doc_freq > 0 && acceptor.accept(&term, tf, doc_freq, num_docs) {
@@ -197,7 +195,7 @@ impl TopTerms {
 
         let mut keywords = DescendingTopK::new(limit);
 
-        for (field, _tokenizer) in self.field_tokenizers.iter() {
+        for (field, _tokenizer) in &self.field_tokenizers {
             termfreq_for_doc(&searcher, *field, addr, |term, term_freq| {
                 let doc_freq = searcher.doc_freq(&term);
                 if acceptor.accept(&term, term_freq, doc_freq, num_docs) {
@@ -233,7 +231,7 @@ impl Keywords {
 
         let mut clauses: Vec<(Occur, Box<dyn Query>)> = Vec::new();
 
-        for (term, score) in self.0.into_iter() {
+        for (term, score) in self.0 {
             let boost = boost_factor * (score / max_score);
             let tq = Box::new(TermQuery::new(term, IndexRecordOption::WithFreqs));
             clauses.push((Occur::Should, Box::new(BoostQuery::new(tq, boost))));

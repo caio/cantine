@@ -54,7 +54,7 @@ impl QueryParser {
             state: Vec::with_capacity(fields.len()),
         };
 
-        for field in fields.into_iter() {
+        for field in fields {
             parser.state.push((
                 Some(schema.get_field_name(field).to_owned()),
                 None,
@@ -107,7 +107,7 @@ impl QueryParser {
     /// up searching for "foo" in both fields, but "bar" only on `b`.
     pub fn set_default_fields(&mut self, fields: Vec<Field>) {
         let mut indices = Vec::with_capacity(fields.len());
-        for field in fields.into_iter() {
+        for field in fields {
             if let Some(idx) = self.position_by_field(field) {
                 indices.push(idx);
             }
@@ -171,7 +171,7 @@ impl QueryParser {
             .filter(|(queries, _)| !queries.is_empty())
             .for_each(|(queries, raw)| {
                 if raw.occur == Occur::MustNot {
-                    for query in queries.into_iter() {
+                    for query in queries {
                         num_must_not += 1;
                         clauses.push((Occur::MustNot, query));
                     }
