@@ -87,7 +87,7 @@ fn main() -> Result<()> {
                 let keywords = topterms.extract_filtered(
                     20,
                     input.join("\n").as_str(),
-                    |term: &Term, _tf, doc_freq, _num_docs| {
+                    &|term: &Term, _tf, doc_freq, _num_docs| {
                         // I haven't put any effort in the tokenization step,
                         // so there's plenty of "relevant rubbish" in the
                         // index like "100g", "tbsp", unicode fractions, etc.
