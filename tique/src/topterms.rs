@@ -229,7 +229,7 @@ impl Keywords {
     /// The `boost_factor` parameter is useful when building more
     /// complex queries; `1.0` is a good default.
     pub fn into_boosted_query(self, boost_factor: f32) -> BooleanQuery {
-        let max_score = self.0.first().map(|(_term, score)| *score).unwrap_or(0.0);
+        let max_score = self.0.first().map_or(0.0, |(_term, score)| *score);
 
         let mut clauses: Vec<(Occur, Box<dyn Query>)> = Vec::new();
 
@@ -310,8 +310,7 @@ where
 fn field_is_valid(schema: &Schema, field: Field) -> bool {
     if let FieldType::Str(opts) = schema.get_field_entry(field).field_type() {
         opts.get_indexing_options()
-            .map(|opts| opts.index_option().has_freq())
-            .unwrap_or(false)
+            .map_or(false, |opts| opts.index_option().has_freq())
     } else {
         false
     }

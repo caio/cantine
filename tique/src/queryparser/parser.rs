@@ -236,10 +236,7 @@ impl QueryParser {
         self.state
             .iter()
             .position(|(opt_name, _opt_boost, _interpreter)| {
-                opt_name
-                    .as_ref()
-                    .map(|name| name == field_name)
-                    .unwrap_or(false)
+                opt_name.as_ref().map_or(false, |name| name == field_name)
             })
     }
 
@@ -255,10 +252,7 @@ impl FieldNameValidator for QueryParser {
         self.state
             .iter()
             .any(|(opt_name, _opt_boost, _interpreter)| {
-                opt_name
-                    .as_ref()
-                    .map(|name| name == field_name)
-                    .unwrap_or(false)
+                opt_name.as_ref().map_or(false, |name| name == field_name)
             })
     }
 }

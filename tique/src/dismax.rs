@@ -131,8 +131,8 @@ impl Scorer for DisMaxScorer {
         let mut sum = 0.0;
 
         debug_assert!(self.current.is_some());
-        for scorer in self.scorers.iter_mut() {
-            if self.current.map(|d| scorer.doc() == d).unwrap_or(false) {
+        for scorer in &mut self.scorers {
+            if self.current.map_or(false, |d| scorer.doc() == d) {
                 let score = scorer.score();
                 sum += score;
 
@@ -153,13 +153,13 @@ impl DocSet for DisMaxScorer {
 
         for (idx, scorer) in self.scorers.iter_mut().enumerate() {
             // Advance every scorer that's on target or behind
-            if self.current.map(|d| d >= scorer.doc()).unwrap_or(true) && !scorer.advance() {
+            if self.current.map_or(true, |d| d >= scorer.doc()) && !scorer.advance() {
                 to_remove.push(idx);
                 continue;
             }
 
             let doc = scorer.doc();
-            if next_target.map(|next| doc < next).unwrap_or(true) {
+            if next_target.map_or(true, |next| doc < next) {
                 next_target.replace(doc);
             }
         }
