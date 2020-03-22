@@ -71,8 +71,7 @@ impl QueryParser {
     pub fn set_boost(&mut self, field: Field, boost: Option<f32>) {
         if let Some(row) = self
             .position_by_field(field)
-            .map(|pos| self.state.get_mut(pos))
-            .flatten()
+            .and_then(|pos| self.state.get_mut(pos))
         {
             row.1 = boost;
         }
@@ -89,8 +88,7 @@ impl QueryParser {
     pub fn set_name(&mut self, field: Field, name: Option<String>) {
         if let Some(row) = self
             .position_by_field(field)
-            .map(|pos| self.state.get_mut(pos))
-            .flatten()
+            .and_then(|pos| self.state.get_mut(pos))
         {
             row.0 = name;
         }
@@ -207,8 +205,7 @@ impl QueryParser {
     fn queries_from_raw(&self, raw_query: &RawQuery) -> Vec<Box<dyn Query>> {
         let indices = if let Some(position) = raw_query
             .field_name
-            .map(|field_name| self.position_by_name(field_name))
-            .flatten()
+            .and_then(|field_name| self.position_by_name(field_name))
         {
             vec![position]
         } else {
