@@ -59,21 +59,17 @@ impl<'a, T: Deserialize<'a>> DatabaseReader<T> {
     }
 
     pub fn find_by_id(&'a self, id: u64) -> Option<Result<T>> {
-        if let Some(&offset) = self.id_index.get(&id) {
-            Some(bincode::deserialize(&self.data[offset..]).map_err(|_| {
+        self.id_index.get(&id).map(|offset| {
+            bincode::deserialize(&self.data[*offset..]).map_err(|_| {
                 io::Error::new(io::ErrorKind::InvalidData, "Failure decoding at offset")
-            }))
-        } else {
-            None
-        }
+            })
+        })
     }
 
     pub fn find_by_uuid(&'a self, uuid: &Uuid) -> Option<Result<T>> {
-        if let Some(&id) = self.uuid_index.get(uuid) {
-            self.find_by_id(id)
-        } else {
-            None
-        }
+        self.uuid_index
+            .get(uuid)
+            .and_then(|id| self.find_by_id(*id))
     }
 
     pub fn id_for_uuid(&self, uuid: &Uuid) -> Option<&u64> {
