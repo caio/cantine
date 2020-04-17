@@ -23,6 +23,20 @@ This is a cargo workspace:
 [pub]: https://crates.io/crates/tique
 [doc]: https://docs.rs/tique
 
+## Data
+
+Interested in the recipe data only? You can download the unprocessed
+crawled recipe data from:
+
+    https://caio.co/data/recipes.crawl.original.tsv.bz2 (~ 445 MB)
+
+It is a TSV. Headers:
+
+* **source**: The url where the recipe was extracted from
+* **format**: Either `microdata` or `ldjson`, which signals how the
+  recipe data is formatted
+* **json**: The actual data :-)
+
 
 ### Running Instructions
 
@@ -32,6 +46,11 @@ You can use the sample data to run a tiny version of the API:
 cargo run --bin load /tmp/cantine < cantine/tests/sample_recipes.jsonlines
 RUST_LOG=debug BASE_DIR=/tmp/cantine cargo run
 ```
+
+If you like, you can download the full dataset already cleaned up
+and augmented from:
+
+    https://caio.co/data/cantine_recipes.jsonlines.bz2 (~ 383 MB)
 
 ## API Tutorial
 
