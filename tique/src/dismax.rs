@@ -1,7 +1,7 @@
 use tantivy::{
     self,
     query::{EmptyScorer, Explanation, Query, Scorer, Weight},
-    DocId, DocSet, Result, Score, Searcher, SegmentReader, SkipResult, TantivyError,
+    DocId, DocSet, Result, Score, Searcher, SegmentReader, TantivyError, TERMINATED,
 };
 
 /// A Maximum Disjunction query, as popularized by Lucene/Solr
@@ -87,7 +87,7 @@ impl Weight for DisMaxWeight {
     fn explain(&self, reader: &SegmentReader, doc: DocId) -> Result<Explanation> {
         let mut scorer = self.scorer(reader, 1.0)?;
 
-        if scorer.skip_next(doc) != SkipResult::Reached {
+        if scorer.doc() > doc || scorer.seek(doc) != doc {
             return Err(TantivyError::InvalidArgument("Not a match".to_owned()));
         }
 
@@ -111,16 +111,17 @@ impl Weight for DisMaxWeight {
 
 struct DisMaxScorer {
     scorers: Vec<Box<dyn Scorer>>,
-    current: Option<DocId>,
+    current: DocId,
     tiebreaker: f32,
 }
 
 impl DisMaxScorer {
     fn new(scorers: Vec<Box<dyn Scorer>>, tiebreaker: f32) -> Self {
+        let current = scorers.iter().map(|s| s.doc()).min().unwrap_or(TERMINATED);
         Self {
             scorers,
             tiebreaker,
-            current: None,
+            current,
         }
     }
 }
@@ -130,9 +131,8 @@ impl Scorer for DisMaxScorer {
         let mut max = 0.0;
         let mut sum = 0.0;
 
-        debug_assert!(self.current.is_some());
         for scorer in &mut self.scorers {
-            if self.current.map_or(false, |d| scorer.doc() == d) {
+            if scorer.doc() == self.current {
                 let score = scorer.score();
                 sum += score;
 
@@ -147,20 +147,21 @@ impl Scorer for DisMaxScorer {
 }
 
 impl DocSet for DisMaxScorer {
-    fn advance(&mut self) -> bool {
-        let mut next_target = None;
+    fn advance(&mut self) -> DocId {
+        let mut next_target = TERMINATED;
         let mut to_remove = Vec::new();
 
         for (idx, scorer) in self.scorers.iter_mut().enumerate() {
             // Advance every scorer that's on target or behind
-            if self.current.map_or(true, |d| d >= scorer.doc()) && !scorer.advance() {
+            if scorer.doc() <= self.current && scorer.advance() == TERMINATED {
                 to_remove.push(idx);
                 continue;
             }
 
             let doc = scorer.doc();
-            if next_target.map_or(true, |next| doc < next) {
-                next_target.replace(doc);
+
+            if doc < next_target {
+                next_target = doc;
             }
         }
 
@@ -168,17 +169,12 @@ impl DocSet for DisMaxScorer {
             self.scorers.remove(idx);
         }
 
-        if let Some(target) = next_target {
-            self.current.replace(target);
-            true
-        } else {
-            false
-        }
+        self.current = next_target;
+        next_target
     }
 
     fn doc(&self) -> tantivy::DocId {
-        debug_assert!(self.current.is_some());
-        self.current.unwrap_or(0)
+        self.current
     }
 
     fn size_hint(&self) -> u32 {
@@ -190,7 +186,7 @@ impl DocSet for DisMaxScorer {
 mod tests {
     use super::*;
 
-    use std::{num::Wrapping, ops::Range};
+    use std::ops::Range;
 
     use tantivy::{
         doc,
@@ -199,11 +195,10 @@ mod tests {
         DocAddress, Index, Term,
     };
 
-    // XXX ConstScorer::from(VecDocSet::from(...)), but I can't seem
-    //     import tantivy::query::VecDocSet here??
     struct VecScorer {
         doc_ids: Vec<DocId>,
-        cursor: Wrapping<usize>,
+        cursor: usize,
+        current: DocId,
     }
 
     impl Scorer for VecScorer {
@@ -212,14 +207,31 @@ mod tests {
         }
     }
 
+    impl From<Range<DocId>> for VecScorer {
+        fn from(range: Range<DocId>) -> Self {
+            let doc_ids: Vec<DocId> = range.collect();
+            let current = *doc_ids.first().unwrap_or(&TERMINATED);
+            Self {
+                doc_ids,
+                cursor: 0,
+                current,
+            }
+        }
+    }
+
     impl DocSet for VecScorer {
-        fn advance(&mut self) -> bool {
-            self.cursor += Wrapping(1);
-            self.doc_ids.len() > self.cursor.0
+        fn advance(&mut self) -> DocId {
+            self.cursor += 1;
+            if self.cursor >= self.doc_ids.len() {
+                self.current = TERMINATED;
+            } else {
+                self.current = self.doc_ids[self.cursor];
+            }
+            self.doc()
         }
 
         fn doc(&self) -> DocId {
-            self.doc_ids[self.cursor.0]
+            self.current
         }
 
         fn size_hint(&self) -> u32 {
@@ -227,61 +239,70 @@ mod tests {
         }
     }
 
-    fn test_scorer(range: Range<DocId>) -> Box<dyn Scorer> {
-        Box::new(VecScorer {
-            doc_ids: range.collect(),
-            cursor: Wrapping(usize::max_value()),
-        })
+    fn make_test_scorer(range: Range<DocId>) -> Box<dyn Scorer> {
+        Box::new(VecScorer::from(range))
     }
 
     #[test]
     fn scorer_advances_as_union() {
+        // The union of all doc ids will be:
+        //     0,1,2,3,...,29,42
         let scorers = vec![
-            test_scorer(0..10),
-            test_scorer(5..20),
-            test_scorer(9..30),
-            test_scorer(42..43),
-            test_scorer(13..13), // empty docset
+            make_test_scorer(0..10),
+            make_test_scorer(5..20),
+            make_test_scorer(9..30),
+            make_test_scorer(42..43),
+            make_test_scorer(13..13), // empty docset
         ];
 
         let mut dismax = DisMaxScorer::new(scorers, 0.0);
 
         for i in 0..30 {
-            assert!(dismax.advance(), "failed advance at i={}", i);
             assert_eq!(i, dismax.doc());
+            assert!(dismax.advance() != TERMINATED, "failed advance at i={}", i);
         }
 
-        assert!(dismax.advance());
         assert_eq!(42, dismax.doc());
-        assert!(!dismax.advance(), "scorer should have ended by now");
+        assert!(
+            dismax.advance() == TERMINATED,
+            "scorer should have ended by now"
+        );
     }
 
     #[test]
     #[allow(clippy::float_cmp)]
     fn tiebreaker() {
-        let scorers = vec![test_scorer(4..5), test_scorer(4..6), test_scorer(4..7)];
+        let scorers = vec![
+            make_test_scorer(4..5),
+            make_test_scorer(4..6),
+            make_test_scorer(4..7),
+        ];
 
         // So now the score is the sum of scores for
         // every matching scorer (VecScorer always yields 1)
         let mut dismax = DisMaxScorer::new(scorers, 1.0);
 
-        assert!(dismax.advance());
         assert_eq!(3.0, dismax.score());
-        assert!(dismax.advance());
+        assert!(dismax.advance() != TERMINATED);
         assert_eq!(2.0, dismax.score());
-        assert!(dismax.advance());
+        assert!(dismax.advance() != TERMINATED);
         assert_eq!(1.0, dismax.score());
-        assert!(!dismax.advance(), "scorer should have ended by now");
+        assert!(
+            dismax.advance() == TERMINATED,
+            "scorer should have ended by now"
+        );
 
-        let scorers = vec![test_scorer(7..8), test_scorer(7..8)];
+        let scorers = vec![make_test_scorer(7..8), make_test_scorer(7..8)];
 
         // With a tiebreaker 0, it actually uses
         // the maximum disjunction
         let mut dismax = DisMaxScorer::new(scorers, 0.0);
-        assert!(dismax.advance());
         // So now, even though doc=7 occurs twice, the score is 1
         assert_eq!(1.0, dismax.score());
-        assert!(!dismax.advance(), "scorer should have ended by now");
+        assert!(
+            dismax.advance() == TERMINATED,
+            "scorer should have ended by now"
+        );
     }
 
     #[test]

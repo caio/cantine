@@ -120,7 +120,7 @@ where
 {
     /// Transforms this collector into that that uses the given
     /// scorer instead of the default scoring functionality.
-    pub fn with_custom_scorer<C: CustomScorer<T>>(
+    pub fn with_custom_scorer<C: Send + CustomScorer<T>>(
         self,
         custom_scorer: C,
     ) -> impl Collector<Fruit = CollectionResult<T>> {
@@ -167,7 +167,7 @@ impl_top_fast_field!(f64, "Field is not a fast f64 field");
 impl<P, CF> Collector for TopCollector<Score, P, CF>
 where
     P: 'static + Send + Sync + TopKProvider<Score, DocId>,
-    CF: Sync + ConditionForSegment<Score>,
+    CF: Send + Sync + ConditionForSegment<Score>,
 {
     type Fruit = CollectionResult<Score>;
     type Child = TopSegmentCollector<Score, P::Child, CF::Type>;

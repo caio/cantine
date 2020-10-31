@@ -69,7 +69,7 @@ use tantivy::{
     query::{BooleanQuery, BoostQuery, Occur, Query, TermQuery},
     schema::{Field, FieldType, IndexRecordOption, Schema},
     tokenizer::TextAnalyzer,
-    DocAddress, DocSet, Index, IndexReader, Postings, Result, Searcher, SkipResult, Term,
+    DocAddress, DocSet, Index, IndexReader, Postings, Result, Searcher, Term,
 };
 
 use crate::conditional_collector::topk::{DescendingTopK, TopK};
@@ -297,7 +297,7 @@ where
             let mut postings =
                 inverted_index.read_postings_from_terminfo(terminfo, IndexRecordOption::WithFreqs);
 
-            if postings.skip_next(doc_id) == SkipResult::Reached {
+            if postings.seek(doc_id) == doc_id {
                 let term = Term::from_field_text(field, text);
                 consumer(term, postings.term_freq());
             }
@@ -437,7 +437,7 @@ mod tests {
         let topterms = TopTerms::new(&index, vec![source, quote])?;
 
         let keyword_filter = |term: &Term, _tf, doc_freq, num_docs| {
-            // Only words with more than characters 3
+            // Only words with more than 3 characters
             term.text().chars().count() > 3
                 // that do NOT appear in every document at this field
                 && doc_freq < num_docs

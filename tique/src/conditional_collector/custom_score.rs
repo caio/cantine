@@ -46,8 +46,8 @@ impl<T, P, C, S> Collector for CustomScoreTopCollector<T, P, C, S>
 where
     T: 'static + PartialOrd + Copy + Send + Sync,
     P: 'static + Send + Sync + TopKProvider<T, DocId>,
-    C: Sync + ConditionForSegment<T>,
-    S: CustomScorer<T>,
+    C: Send + Sync + ConditionForSegment<T>,
+    S: Send + CustomScorer<T>,
 {
     type Fruit = CollectionResult<T>;
     type Child = CustomScoreTopSegmentCollector<T, C::Type, S::Child, P::Child>;
