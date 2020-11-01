@@ -306,6 +306,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "TermQuery::explain bug triggers a debug_assert! crash. Fix at tantivy rev 730ccefffb"]
     fn explaination() -> Result<()> {
         let mut builder = SchemaBuilder::new();
         let field = builder.add_text_field("field", TEXT);
