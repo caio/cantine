@@ -297,6 +297,12 @@ where
             let mut postings =
                 inverted_index.read_postings_from_terminfo(terminfo, IndexRecordOption::WithFreqs);
 
+            // XXX SegmentPostings::seek crashes debug builds when the target
+            //     is before the current position
+            if postings.doc() > doc_id {
+                continue;
+            }
+
             if postings.seek(doc_id) == doc_id {
                 let term = Term::from_field_text(field, text);
                 consumer(term, postings.term_freq());
