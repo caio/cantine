@@ -78,19 +78,19 @@ pub trait Aggregator<Q, F>: Send + Sync {
     fn from_query(query: &Q) -> Self;
 }
 
-pub trait Aggregable: Sized + Sync {
-    type Query: Sync + Clone;
+pub trait Aggregable: Sized + Send + Sync {
+    type Query: Send + Sync + Clone;
     type Agg: Aggregator<Self::Query, Self>;
 }
 
-pub trait AggregableForSegment<T>: Sync {
+pub trait AggregableForSegment<T>: Send + Sync {
     type Output: AggregableForDoc<T>;
     fn for_segment(&self, reader: &SegmentReader) -> Self::Output;
 }
 
 impl<T, F, O> AggregableForSegment<T> for F
 where
-    F: Sync + Fn(&SegmentReader) -> O,
+    F: Send + Sync + Fn(&SegmentReader) -> O,
     O: AggregableForDoc<T>,
 {
     type Output = O;
@@ -122,7 +122,7 @@ where
 impl<T, F, O> Collector for AggregableCollector<T, F>
 where
     T: 'static + Aggregable,
-    F: AggregableForSegment<T, Output = O>,
+    F: Send + AggregableForSegment<T, Output = O>,
     O: 'static + AggregableForDoc<T>,
 {
     type Fruit = T::Agg;
