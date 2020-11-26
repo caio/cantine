@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 #![warn(missing_docs)]
 #![warn(missing_doc_code_examples)]
 //! Utilities to drive a tantivy search index
