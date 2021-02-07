@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.5.0 - 2021-02-07
+
+* Depend on tantivy 0.14+
+
 ## v0.4.0 - 2020-03-17
 
 * Stabilized `QueryParser` under the `queryparser` feature
