@@ -2,8 +2,8 @@
 
 This is a cargo workspace containing:
 
-* [tique][] is a [public crate][pub], with [live documentation][doc].
-  It features utilities for [tantivy][] so you can build your own
+* [tique][]: a [public crate][pub], with [live documentation][doc].
+  It features utilities for [tantivy][] to help you build your own
   full text search engine. Refer to the [tique][] subdirectory for
   additional information and docs.
 
