@@ -196,7 +196,7 @@ impl From<&mut SchemaBuilder> for RecipeIndex {
             ingredients: builder.add_text_field(FIELD_INGREDIENTS, TEXT),
             instructions: builder.add_text_field(FIELD_INSTRUCTIONS, TEXT),
 
-            features_bincode: builder.add_bytes_field(FIELD_FEATURES_BINCODE),
+            features_bincode: builder.add_bytes_field(FIELD_FEATURES_BINCODE, FAST),
             features: Features::create_schema(builder, INDEXED | FAST),
         }
     }
