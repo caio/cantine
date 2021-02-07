@@ -170,7 +170,7 @@ impl TopTerms {
 
         for (field, tokenizer) in &self.field_tokenizers {
             for (term, tf) in termfreq(&input, *field, tokenizer) {
-                let doc_freq = searcher.doc_freq(&term);
+                let doc_freq = searcher.doc_freq(&term).unwrap_or(0);
 
                 if doc_freq > 0 && acceptor.accept(&term, tf, doc_freq, num_docs) {
                     let score = tf as f32 * idf(doc_freq, num_docs);
@@ -196,8 +196,8 @@ impl TopTerms {
         let mut keywords = DescendingTopK::new(limit);
 
         for (field, _tokenizer) in &self.field_tokenizers {
-            termfreq_for_doc(&searcher, *field, addr, |term, term_freq| {
-                let doc_freq = searcher.doc_freq(&term);
+            let _ = termfreq_for_doc(&searcher, *field, addr, |term, term_freq| {
+                let doc_freq = searcher.doc_freq(&term).unwrap_or(0);
                 if acceptor.accept(&term, term_freq, doc_freq, num_docs) {
                     let score = term_freq as f32 * idf(doc_freq, num_docs);
                     keywords.visit(term, score);
@@ -282,20 +282,20 @@ fn termfreq(input: &str, field: Field, tokenizer: &TextAnalyzer) -> HashMap<Term
     termfreq
 }
 
-fn termfreq_for_doc<F>(searcher: &Searcher, field: Field, doc: DocAddress, mut consumer: F)
+fn termfreq_for_doc<F>(searcher: &Searcher, field: Field, doc: DocAddress, mut consumer: F) -> Result<()>
 where
     F: FnMut(Term, u32),
 {
     let DocAddress(seg_id, doc_id) = doc;
 
     let reader = searcher.segment_reader(seg_id);
-    let inverted_index = reader.inverted_index(field.clone());
-    let mut termstream = inverted_index.terms().stream();
+    let inverted_index = reader.inverted_index(field.clone())?;
+    let mut termstream = inverted_index.terms().stream()?;
 
     while let Some((bytes, terminfo)) = termstream.next() {
         if let Ok(text) = str::from_utf8(bytes) {
             let mut postings =
-                inverted_index.read_postings_from_terminfo(terminfo, IndexRecordOption::WithFreqs);
+                inverted_index.read_postings_from_terminfo(terminfo, IndexRecordOption::WithFreqs)?;
 
             // XXX SegmentPostings::seek crashes debug builds when the target
             //     is before the current position
@@ -309,6 +309,8 @@ where
             }
         }
     }
+
+    Ok(())
 }
 
 fn field_is_valid(schema: &Schema, field: Field) -> bool {
@@ -367,9 +369,9 @@ mod tests {
         let text_termfreq = termfreq(&text, body, &index.tokenizer_for_field(body)?);
 
         let reader = index.reader()?;
-        termfreq_for_doc(&reader.searcher(), body, DocAddress(0, 0), |term, tf| {
+        assert!(termfreq_for_doc(&reader.searcher(), body, DocAddress(0, 0), |term, tf| {
             assert_eq!(Some(&tf), text_termfreq.get(&term));
-        });
+        }).is_ok());
 
         Ok(())
     }
