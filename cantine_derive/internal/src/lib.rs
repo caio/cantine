@@ -125,8 +125,8 @@ fn make_filter_query(feat: &Ident, fields: &[FieldInfo]) -> TokenStream2 {
 
     let from_decls = fields.iter().map(|field| {
         let name = field.ident;
-        let field_name = format_ident!("Filterable_field_{}", &name);
-        let quoted = format!("\"{}\"", field_name);
+        let field_name = format_ident!("Filterable_field_{}", name);
+        let quoted = format!("{}", &field_name);
 
         let method = match field.schema {
             FieldType::UNSIGNED => quote!(add_u64_field),
@@ -143,7 +143,7 @@ fn make_filter_query(feat: &Ident, fields: &[FieldInfo]) -> TokenStream2 {
         let name = field.ident;
         let field_name = format_ident!("Filterable_field_{}", &name);
         let err_msg = format!("Missing field for {} ({})", name, field_name);
-        let quoted = format!("\"{}\"", field_name);
+        let quoted = format!("{}", field_name);
         quote_spanned! { field.span()=>
             #name: schema.get_field(#quoted).ok_or_else(
                 || tantivy::TantivyError::SchemaError(#err_msg.to_string()))?

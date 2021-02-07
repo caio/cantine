@@ -202,7 +202,7 @@ mod tests {
 
     use std::{convert::TryInto, ops::Range};
 
-    use tantivy::{query::AllQuery, schema::SchemaBuilder, Document, Index};
+    use tantivy::{Document, Index, query::AllQuery, schema::{self, SchemaBuilder}};
 
     // XXX Who will test the tests?
     impl Aggregator<Vec<Range<i16>>, i16> for Vec<i16> {
@@ -232,7 +232,7 @@ mod tests {
     #[test]
     fn pass() -> Result<()> {
         let mut builder = SchemaBuilder::new();
-        let bytes_field = builder.add_bytes_field("metadata_as_bytes");
+        let bytes_field = builder.add_bytes_field("metadata_as_bytes", schema::FAST);
 
         let index = Index::create_in_ram(builder.build());
         let mut writer = index.writer_with_num_threads(1, 3_000_000)?;

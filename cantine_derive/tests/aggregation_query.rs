@@ -115,7 +115,7 @@ fn agg_query_full_range_generation() {
 fn collector_integration() -> tantivy::Result<()> {
     let mut builder = SchemaBuilder::new();
 
-    let bytes_field = builder.add_bytes_field("bincode_feat");
+    let bytes_field = builder.add_bytes_field("bincode_feat", tantivy::schema::FAST);
 
     let index = Index::create_in_ram(builder.build());
     let mut writer = index.writer_with_num_threads(1, 3_000_000)?;
