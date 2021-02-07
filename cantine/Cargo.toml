@@ -11,7 +11,7 @@ publish = false
 [dependencies]
 cantine_derive = { path = "../cantine_derive" }
 tique = { path = "../tique", features = ["queryparser"] }
-actix-rt = "1.1"
+actix-rt = "2.0"
 actix-service = "1.0"
 actix-web = "3.2"
 base64 = "0.13"
@@ -32,4 +32,4 @@ zerocopy = "0.3"
 uuid = { version = "0.8", features = ["serde", "v4"]  }
 tempfile = "3.1"
 once_cell = "1.4"
-quickcheck = "0.9"
+quickcheck = "1.0"
