@@ -202,7 +202,11 @@ mod tests {
 
     use std::{convert::TryInto, ops::Range};
 
-    use tantivy::{Document, Index, query::AllQuery, schema::{self, SchemaBuilder}};
+    use tantivy::{
+        query::AllQuery,
+        schema::{self, SchemaBuilder},
+        Document, Index,
+    };
 
     // XXX Who will test the tests?
     impl Aggregator<Vec<Range<i16>>, i16> for Vec<i16> {

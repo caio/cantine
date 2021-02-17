@@ -282,7 +282,12 @@ fn termfreq(input: &str, field: Field, tokenizer: &TextAnalyzer) -> HashMap<Term
     termfreq
 }
 
-fn termfreq_for_doc<F>(searcher: &Searcher, field: Field, doc: DocAddress, mut consumer: F) -> Result<()>
+fn termfreq_for_doc<F>(
+    searcher: &Searcher,
+    field: Field,
+    doc: DocAddress,
+    mut consumer: F,
+) -> Result<()>
 where
     F: FnMut(Term, u32),
 {
@@ -294,8 +299,8 @@ where
 
     while let Some((bytes, terminfo)) = termstream.next() {
         if let Ok(text) = str::from_utf8(bytes) {
-            let mut postings =
-                inverted_index.read_postings_from_terminfo(terminfo, IndexRecordOption::WithFreqs)?;
+            let mut postings = inverted_index
+                .read_postings_from_terminfo(terminfo, IndexRecordOption::WithFreqs)?;
 
             // XXX SegmentPostings::seek crashes debug builds when the target
             //     is before the current position
@@ -369,9 +374,12 @@ mod tests {
         let text_termfreq = termfreq(&text, body, &index.tokenizer_for_field(body)?);
 
         let reader = index.reader()?;
-        assert!(termfreq_for_doc(&reader.searcher(), body, DocAddress(0, 0), |term, tf| {
-            assert_eq!(Some(&tf), text_termfreq.get(&term));
-        }).is_ok());
+        assert!(
+            termfreq_for_doc(&reader.searcher(), body, DocAddress(0, 0), |term, tf| {
+                assert_eq!(Some(&tf), text_termfreq.get(&term));
+            })
+            .is_ok()
+        );
 
         Ok(())
     }
