@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.6.0 - 2021-06-14
+
+* Depend on tantivy 0.15+
+* `contidional_collector::CheckCondition` now takes a `SegmentOrdinal`
+  instead of a `SegmentLocalId` following tantivy's changes.
+  Migration should be simply a matter of renaming.
+
 ## v0.5.0 - 2021-02-07
 
 * Depend on tantivy 0.14+
