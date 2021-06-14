@@ -291,10 +291,13 @@ fn termfreq_for_doc<F>(
 where
     F: FnMut(Term, u32),
 {
-    let DocAddress(seg_id, doc_id) = doc;
+    let DocAddress {
+        segment_ord,
+        doc_id,
+    } = doc;
 
-    let reader = searcher.segment_reader(seg_id);
-    let inverted_index = reader.inverted_index(field.clone())?;
+    let reader = searcher.segment_reader(segment_ord);
+    let inverted_index = reader.inverted_index(field)?;
     let mut termstream = inverted_index.terms().stream()?;
 
     while let Some((bytes, terminfo)) = termstream.next() {
@@ -374,12 +377,18 @@ mod tests {
         let text_termfreq = termfreq(&text, body, &index.tokenizer_for_field(body)?);
 
         let reader = index.reader()?;
-        assert!(
-            termfreq_for_doc(&reader.searcher(), body, DocAddress(0, 0), |term, tf| {
+        assert!(termfreq_for_doc(
+            &reader.searcher(),
+            body,
+            DocAddress {
+                segment_ord: 0,
+                doc_id: 0
+            },
+            |term, tf| {
                 assert_eq!(Some(&tf), text_termfreq.get(&term));
-            })
-            .is_ok()
-        );
+            }
+        )
+        .is_ok());
 
         Ok(())
     }
@@ -459,18 +468,36 @@ mod tests {
                 && doc_freq < num_docs
         };
 
-        let marley_keywords =
-            topterms.extract_filtered_from_doc(5, DocAddress(0, 0), &keyword_filter);
+        let marley_keywords = topterms.extract_filtered_from_doc(
+            5,
+            DocAddress {
+                segment_ord: 0,
+                doc_id: 0,
+            },
+            &keyword_filter,
+        );
 
         assert_word_found("marley", marley_keywords);
 
-        let holmes_keywords =
-            topterms.extract_filtered_from_doc(5, DocAddress(0, 1), &keyword_filter);
+        let holmes_keywords = topterms.extract_filtered_from_doc(
+            5,
+            DocAddress {
+                segment_ord: 0,
+                doc_id: 1,
+            },
+            &keyword_filter,
+        );
 
         assert_word_found("dangerous", holmes_keywords);
 
-        let groucho_keywords =
-            topterms.extract_filtered_from_doc(5, DocAddress(0, 2), &keyword_filter);
+        let groucho_keywords = topterms.extract_filtered_from_doc(
+            5,
+            DocAddress {
+                segment_ord: 0,
+                doc_id: 2,
+            },
+            &keyword_filter,
+        );
 
         let reader = index.reader()?;
         let searcher = reader.searcher();
@@ -480,7 +507,10 @@ mod tests {
         )?;
 
         assert_eq!(
-            Some(DocAddress(0, 2)),
+            Some(DocAddress {
+                segment_ord: 0,
+                doc_id: 2
+            }),
             similar_to_groucho.first().map(|x| x.1),
             "expected groucho's to be the most similar to its own keyword set"
         );

@@ -56,7 +56,7 @@
 //! # let limit = 10;
 //! let condition_for_segment = move |reader: &SegmentReader| {
 //!     // Fetch useful stuff from the `reader`, then:
-//!     move |segment_id, doc_id, score, is_ascending| {
+//!     move |segment_ord, doc_id, score, is_ascending| {
 //!         // Express whatever logic you want
 //!         true
 //!     }
@@ -80,7 +80,7 @@
 //! # use tantivy::DocAddress;
 //! # use tique::conditional_collector::{TopCollector,Descending};
 //! let limit = 10;
-//! let condition_for_segment = (0.42, DocAddress(0, 1));
+//! let condition_for_segment = (0.42, DocAddress{segment_ord: 0, doc_id: 1});
 //! let collector =
 //!     TopCollector::<_, Descending, _>::new(limit, condition_for_segment);
 //! ```

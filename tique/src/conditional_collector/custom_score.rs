@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 
 use tantivy::{
     collector::{Collector, CustomScorer, CustomSegmentScorer, SegmentCollector},
-    DocId, Result, Score, SegmentLocalId, SegmentReader,
+    DocId, Result, Score, SegmentOrdinal, SegmentReader,
 };
 
 use super::{
@@ -62,7 +62,7 @@ where
 
     fn for_segment(
         &self,
-        segment_id: SegmentLocalId,
+        segment_id: SegmentOrdinal,
         reader: &SegmentReader,
     ) -> Result<Self::Child> {
         let scorer = self.scorer_for_segment.segment_scorer(reader)?;
@@ -90,7 +90,7 @@ where
     C: CheckCondition<T>,
     K: TopK<T, DocId>,
 {
-    pub fn new(segment_id: SegmentLocalId, topk: K, scorer: S, condition: C) -> Self {
+    pub fn new(segment_id: SegmentOrdinal, topk: K, scorer: S, condition: C) -> Self {
         Self {
             scorer,
             collector: TopSegmentCollector::new(segment_id, topk, condition),
@@ -141,7 +141,7 @@ mod tests {
 
         let got = &res.items[0];
         // Is disregarded and doc_id is used instead
-        assert_eq!((got.1).1, got.0)
+        assert_eq!((got.1).doc_id, got.0)
     }
 
     #[test]

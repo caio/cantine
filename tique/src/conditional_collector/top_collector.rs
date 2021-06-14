@@ -2,7 +2,8 @@ use std::marker::PhantomData;
 
 use tantivy::{
     collector::{Collector, CustomScorer, SegmentCollector},
-    DocAddress, DocId, Result, Score, SegmentLocalId, SegmentReader,
+    fastfield::FastFieldReader,
+    DocAddress, DocId, Result, Score, SegmentOrdinal, SegmentReader,
 };
 
 use super::{
@@ -34,7 +35,7 @@ use super::{
 /// # use tique::conditional_collector::{TopCollector,Ascending};
 /// let condition_for_segment = |reader: &SegmentReader| {
 ///     // Fetch useful stuff from the `reader`, then:
-///     |segment_id, doc_id, score, is_ascending| {
+///     |segment_ord, doc_id, score, is_ascending| {
 ///         // Express whatever logic you want
 ///         true
 ///     }
@@ -182,11 +183,11 @@ where
 
     fn for_segment(
         &self,
-        segment_id: SegmentLocalId,
+        segment_ord: SegmentOrdinal,
         reader: &SegmentReader,
     ) -> Result<Self::Child> {
         Ok(TopSegmentCollector::new(
-            segment_id,
+            segment_ord,
             P::new_topk(self.limit),
             self.condition_for_segment.for_segment(reader),
         ))
@@ -196,7 +197,7 @@ where
 pub struct TopSegmentCollector<T, K, C> {
     total: usize,
     visited: usize,
-    segment_id: SegmentLocalId,
+    segment_ord: SegmentOrdinal,
     topk: K,
     condition: C,
     _marker: PhantomData<T>,
@@ -208,11 +209,11 @@ where
     K: TopK<T, DocId>,
     C: CheckCondition<T>,
 {
-    pub fn new(segment_id: SegmentLocalId, topk: K, condition: C) -> Self {
+    pub fn new(segment_ord: SegmentOrdinal, topk: K, condition: C) -> Self {
         Self {
             total: 0,
             visited: 0,
-            segment_id,
+            segment_ord,
             topk,
             condition,
             _marker: PhantomData,
@@ -228,7 +229,7 @@ where
         self.total += 1;
         if self
             .condition
-            .check(self.segment_id, doc, score, K::ASCENDING)
+            .check(self.segment_ord, doc, score, K::ASCENDING)
         {
             self.visited += 1;
             self.topk.visit(doc, score);
@@ -236,12 +237,20 @@ where
     }
 
     pub fn into_unsorted_collection_result(self) -> CollectionResult<T> {
-        let segment_id = self.segment_id;
+        let segment_ord = self.segment_ord;
         let items = self
             .topk
             .into_vec()
             .into_iter()
-            .map(|(doc, score)| (score, DocAddress(segment_id, doc)))
+            .map(|(doc_id, score)| {
+                (
+                    score,
+                    DocAddress {
+                        segment_ord,
+                        doc_id,
+                    },
+                )
+            })
             .collect();
 
         CollectionResult {
@@ -354,8 +363,11 @@ mod tests {
         assert_eq!(4, result.total);
         assert_eq!(2, result.items.len());
         for (score, doc) in result.items {
-            let DocAddress(seg_id, doc_id) = doc;
-            assert!(condition(seg_id, doc_id, score, true))
+            let DocAddress {
+                segment_ord,
+                doc_id,
+            } = doc;
+            assert!(condition(segment_ord, doc_id, score, true))
         }
     }
 
@@ -392,7 +404,13 @@ mod tests {
         // then we pick an arbitrary position to pivot and
         // expect the DescendingTopK to pick everything below
         // and the AscendingTopK to pick everything above
-        let marker = (0.5, DocAddress(0, 4));
+        let marker = (
+            0.5,
+            DocAddress {
+                segment_ord: 0,
+                doc_id: 4,
+            },
+        );
 
         check_segment_collector(
             DescendingTopK::new(10),

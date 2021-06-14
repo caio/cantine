@@ -298,6 +298,12 @@ mod tests {
     use super::*;
 
     use tantivy::tokenizer::TokenizerManager;
+    use tantivy::{
+        collector::TopDocs,
+        doc,
+        schema::{SchemaBuilder, TEXT},
+        DocAddress, SegmentOrdinal,
+    };
 
     fn test_interpreter() -> Interpreter {
         Interpreter {
@@ -357,12 +363,12 @@ mod tests {
         assert!(single_field_test_parser().parse("").is_none());
     }
 
-    use tantivy::{
-        collector::TopDocs,
-        doc,
-        schema::{SchemaBuilder, TEXT},
-        DocAddress,
-    };
+    fn doc_addr(segment_ord: SegmentOrdinal, doc_id: u32) -> DocAddress {
+        DocAddress {
+            segment_ord,
+            doc_id,
+        }
+    }
 
     #[test]
     fn index_integration() -> Result<()> {
@@ -372,7 +378,7 @@ mod tests {
         let index = Index::create_in_ram(builder.build());
         let mut writer = index.writer_with_num_threads(1, 3_000_000)?;
 
-        let doc_across = DocAddress(0, 0);
+        let doc_across = doc_addr(0, 0);
         writer.add_document(doc!(
             title => "Across the Universe",
             plot => "Musical based on The Beatles songbook and set in the 60s England, \
@@ -380,14 +386,14 @@ mod tests {
                     with the anti-war movement and social protests of the 60s."
         ));
 
-        let doc_moulin = DocAddress(0, 1);
+        let doc_moulin = doc_addr(0, 1);
         writer.add_document(doc!(
             title => "Moulin Rouge!",
             plot => "A poet falls for a beautiful courtesan whom a jealous duke covets in \
                     this stylish musical, with music drawn from familiar 20th century sources."
         ));
 
-        let doc_once = DocAddress(0, 2);
+        let doc_once = doc_addr(0, 2);
         writer.add_document(doc!(
             title => "Once",
             plot => "A modern-day musical about a busker and an immigrant and their eventful\
@@ -464,7 +470,7 @@ mod tests {
         let found = searcher.search(&normal_query, &TopDocs::with_limit(3))?;
         assert_eq!(3, found.len());
         // the first doc matches perfectly on `field_b`
-        assert_eq!(DocAddress(0, 0), found[0].1);
+        assert_eq!(doc_addr(0, 0), found[0].1);
 
         parser.set_boost(field_a, Some(1.5));
         let boosted_query = parser.parse(&input).unwrap();
@@ -473,7 +479,7 @@ mod tests {
         assert_eq!(3, found.len());
         // the first doc matches perfectly on field_b
         // but now matching on `field_a` is super important
-        assert_eq!(DocAddress(0, 1), found[0].1);
+        assert_eq!(doc_addr(0, 1), found[0].1);
 
         Ok(())
     }

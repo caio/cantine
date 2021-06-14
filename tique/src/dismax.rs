@@ -333,7 +333,10 @@ mod tests {
 
         let dismax = DisMaxQuery::new(vec![Box::new(foo_query), Box::new(bar_query)], 0.0);
 
-        let baz_doc = DocAddress(0, 3);
+        let baz_doc = DocAddress {
+            segment_ord: 0,
+            doc_id: 3,
+        };
         assert!(
             dismax.explain(&searcher, baz_doc).is_err(),
             "Shouldn't be able to explain a non-matching doc"
@@ -341,7 +344,13 @@ mod tests {
 
         // Ensure every other doc can be explained
         for doc_id in 0..3 {
-            let explanation = dismax.explain(&searcher, DocAddress(0, doc_id))?;
+            let explanation = dismax.explain(
+                &searcher,
+                DocAddress {
+                    segment_ord: 0,
+                    doc_id,
+                },
+            )?;
             assert!(explanation.to_pretty_json().contains("DisMaxQuery"));
         }
 

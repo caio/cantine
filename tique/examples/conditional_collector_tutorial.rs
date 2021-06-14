@@ -2,6 +2,7 @@ use std::{cmp::Ordering, ops::Neg};
 
 use tantivy::{
     collector::TopDocs,
+    fastfield::FastFieldReader,
     query::AllQuery,
     schema::{SchemaBuilder, Value, FAST, STORED},
     Document, Index, Result, SegmentReader,

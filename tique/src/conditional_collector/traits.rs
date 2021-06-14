@@ -1,6 +1,6 @@
 use std::cmp::Ordering;
 
-use tantivy::{DocAddress, DocId, SegmentLocalId, SegmentReader};
+use tantivy::{DocAddress, DocId, SegmentOrdinal, SegmentReader};
 
 use super::topk::Scored;
 
@@ -53,21 +53,21 @@ pub trait CheckCondition<T>: 'static + Clone {
     ///
     /// The `ascending` parameter signals the ordering chosen via
     /// `Ascending` or `Descending`
-    fn check(&self, segment_id: SegmentLocalId, doc_id: DocId, score: T, ascending: bool) -> bool;
+    fn check(&self, segment_ord: SegmentOrdinal, doc_id: DocId, score: T, ascending: bool) -> bool;
 }
 
 impl<T> CheckCondition<T> for bool {
-    fn check(&self, _: SegmentLocalId, _: DocId, _: T, _: bool) -> bool {
+    fn check(&self, _: SegmentOrdinal, _: DocId, _: T, _: bool) -> bool {
         *self
     }
 }
 
 impl<F, T> CheckCondition<T> for F
 where
-    F: 'static + Clone + Fn(SegmentLocalId, DocId, T, bool) -> bool,
+    F: 'static + Clone + Fn(SegmentOrdinal, DocId, T, bool) -> bool,
 {
-    fn check(&self, segment_id: SegmentLocalId, doc_id: DocId, score: T, ascending: bool) -> bool {
-        (self)(segment_id, doc_id, score, ascending)
+    fn check(&self, segment_ord: SegmentOrdinal, doc_id: DocId, score: T, ascending: bool) -> bool {
+        (self)(segment_ord, doc_id, score, ascending)
     }
 }
 
@@ -75,14 +75,19 @@ impl<T> CheckCondition<T> for (T, DocAddress)
 where
     T: 'static + PartialOrd + Copy,
 {
-    fn check(&self, segment_id: SegmentLocalId, doc_id: DocId, score: T, ascending: bool) -> bool {
+    fn check(&self, segment_ord: SegmentOrdinal, doc_id: DocId, score: T, ascending: bool) -> bool {
         let wanted = if ascending {
             Ordering::Less
         } else {
             Ordering::Greater
         };
 
-        Scored::new(self.0, self.1).cmp(&Scored::new(score, DocAddress(segment_id, doc_id)))
-            == wanted
+        Scored::new(self.0, self.1).cmp(&Scored::new(
+            score,
+            DocAddress {
+                segment_ord,
+                doc_id,
+            },
+        )) == wanted
     }
 }
