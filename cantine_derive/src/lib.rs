@@ -5,7 +5,7 @@ use tantivy::{
     collector::{Collector, SegmentCollector},
     query::Query,
     schema::{IntOptions, Schema, SchemaBuilder},
-    DocId, Document, Result, Score, SegmentLocalId, SegmentReader,
+    DocId, Document, Result, Score, SegmentOrdinal, SegmentReader,
 };
 
 pub use cantine_derive_internal::{Aggregable, Filterable};
@@ -130,7 +130,7 @@ where
 
     fn for_segment(
         &self,
-        _segment_id: SegmentLocalId,
+        _segment_ord: SegmentOrdinal,
         segment_reader: &SegmentReader,
     ) -> Result<Self::Child> {
         Ok(AggregableSegmentCollector {
