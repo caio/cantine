@@ -5,10 +5,10 @@ use serde::{Deserialize, Serialize};
 use tantivy::{
     self,
     collector::Collector,
-    fastfield::FastFieldReader,
+    fastfield::{DynamicFastFieldReader, FastFieldReader},
     query::Query,
     schema::{Field, Schema, SchemaBuilder, Value, FAST, INDEXED, STORED, TEXT},
-    DocId, Document, Result, Score, Searcher, SegmentLocalId, SegmentReader, TantivyError,
+    DocId, Document, Result, Score, Searcher, SegmentOrdinal, SegmentReader, TantivyError,
 };
 
 use crate::model::{
@@ -274,7 +274,7 @@ impl AsAfter for f32 {
 
 #[derive(Clone)]
 pub struct PaginationCondition<T> {
-    id_reader: FastFieldReader<RecipeId>,
+    id_reader: DynamicFastFieldReader<RecipeId>,
     ref_id: RecipeId,
     ref_score: T,
 }
@@ -283,7 +283,7 @@ impl<T> CheckCondition<T> for PaginationCondition<T>
 where
     T: 'static + PartialOrd + Clone,
 {
-    fn check(&self, _sid: SegmentLocalId, doc_id: DocId, score: T, ascending: bool) -> bool {
+    fn check(&self, _sid: SegmentOrdinal, doc_id: DocId, score: T, ascending: bool) -> bool {
         let recipe_id = self.id_reader.get(doc_id);
         match self.ref_score.partial_cmp(&score) {
             Some(Ordering::Greater) => !ascending,
