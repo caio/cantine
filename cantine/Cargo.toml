@@ -12,7 +12,7 @@ publish = false
 cantine_derive = { path = "../cantine_derive" }
 tique = { path = "../tique", features = ["queryparser"] }
 actix-rt = "2.0"
-actix-service = "1.0"
+actix-service = "2.0"
 actix-web = "3.2"
 base64 = "0.13"
 bincode = "1"
@@ -25,7 +25,7 @@ serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 tantivy = "0.15"
 uuid = { version = "0.8", features = ["serde"]  }
-zerocopy = "0.3"
+zerocopy = "0.5"
 
 [dev-dependencies]
 # v4 feature added to generate test uuids
