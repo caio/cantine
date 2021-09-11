@@ -21,7 +21,7 @@ queryparser = ["nom"]
 
 [dependencies]
 tantivy = "0.15"
-nom = { version = "6", optional = true }
+nom = { version = "7", optional = true }
 
 [dev-dependencies]
 quickcheck = "1.0"
