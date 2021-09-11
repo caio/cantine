@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.7.0 - 2021-09-11
+
+* Depend on tantivy 0.16+
+
 ## v0.6.0 - 2021-06-14
 
 * Depend on tantivy 0.15+
