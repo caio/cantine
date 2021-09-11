@@ -145,7 +145,7 @@ impl RecipeIndex {
                 move |doc| bincode::deserialize(features_reader.get_bytes(doc)).ok()
             });
 
-        Ok(searcher.search(query, &collector)?)
+        searcher.search(query, &collector)
     }
 
     fn render<T, C>(

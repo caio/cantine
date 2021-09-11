@@ -1,6 +1,5 @@
 use std::{convert::TryFrom, env, io, path::Path, str::FromStr, sync::Arc};
 
-use env_logger;
 use serde::Serialize;
 use tique::QueryParser;
 use uuid::Uuid;
@@ -99,10 +98,10 @@ pub async fn search(
     });
 
     Ok(HttpResponse::Ok().json(SearchResult {
-        total_found,
         items,
-        next,
+        total_found,
         agg,
+        next,
     }))
 }
 

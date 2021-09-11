@@ -55,10 +55,7 @@ fn get_public_fields(input: &DeriveInput) -> Result<Vec<&Field>, Error> {
             Fields::Named(ref fields) => Ok(fields
                 .named
                 .iter()
-                .filter(|field| match &field.vis {
-                    Visibility::Public(_) => true,
-                    _ => false,
-                })
+                .filter(|field| matches!(&field.vis, Visibility::Public(_)))
                 .collect()),
             _ => Err(Error::BadInput),
         },
@@ -129,9 +126,9 @@ fn make_filter_query(feat: &Ident, fields: &[FieldInfo]) -> TokenStream2 {
         let quoted = format!("{}", &field_name);
 
         let method = match field.schema {
-            FieldType::UNSIGNED => quote!(add_u64_field),
-            FieldType::SIGNED => quote!(add_i64_field),
-            FieldType::FLOAT => quote!(add_f64_field),
+            FieldType::Unsigned => quote!(add_u64_field),
+            FieldType::Signed => quote!(add_i64_field),
+            FieldType::Float => quote!(add_f64_field),
         };
 
         quote_spanned! { field.span()=>
@@ -154,15 +151,15 @@ fn make_filter_query(feat: &Ident, fields: &[FieldInfo]) -> TokenStream2 {
         let name = field.ident;
 
         let (from_code, query_code) = match field.schema {
-            FieldType::UNSIGNED => (
+            FieldType::Unsigned => (
                 quote!(u64::from),
                 quote!(tantivy::query::RangeQuery::new_u64),
             ),
-            FieldType::SIGNED => (
+            FieldType::Signed => (
                 quote!(i64::from),
                 quote!(tantivy::query::RangeQuery::new_i64),
             ),
-            FieldType::FLOAT => (
+            FieldType::Float => (
                 quote!(f64::from),
                 quote!(tantivy::query::RangeQuery::new_f64),
             ),
@@ -199,22 +196,22 @@ fn make_filter_query(feat: &Ident, fields: &[FieldInfo]) -> TokenStream2 {
             }
         } else {
             match field.schema {
-                FieldType::UNSIGNED => quote_spanned! { field.span()=>
+                FieldType::Unsigned => quote_spanned! { field.span()=>
                     let value = u64::from(value);
                 },
-                FieldType::SIGNED => quote_spanned! { field.span()=>
+                FieldType::Signed => quote_spanned! { field.span()=>
                     let value = i64::from(value);
                 },
-                FieldType::FLOAT => quote_spanned! { field.span()=>
+                FieldType::Float => quote_spanned! { field.span()=>
                     let value = f64::from(value);
                 },
             }
         };
 
         let add_code = match field.schema {
-            FieldType::UNSIGNED => quote!(doc.add_u64(self.#name, value);),
-            FieldType::SIGNED => quote!(doc.add_i64(self.#name, value);),
-            FieldType::FLOAT => quote!(doc.add_f64(self.#name, value);),
+            FieldType::Unsigned => quote!(doc.add_u64(self.#name, value);),
+            FieldType::Signed => quote!(doc.add_i64(self.#name, value);),
+            FieldType::Float => quote!(doc.add_f64(self.#name, value);),
         };
 
         if field.is_optional {
@@ -485,23 +482,23 @@ fn extract_type_if_option(ty: &Type) -> Option<&Type> {
 }
 
 enum FieldType {
-    UNSIGNED,
-    SIGNED,
-    FLOAT,
+    Unsigned,
+    Signed,
+    Float,
 }
 
 fn get_field_type(ty: &Type) -> Option<(FieldType, bool)> {
     match ty {
         Type::Path(tp) if tp.path.segments.len() == 1 => {
             match tp.path.segments.first()?.ident.to_string().as_str() {
-                "u64" => Some((FieldType::UNSIGNED, true)),
-                "u8" | "u16" | "u32" => Some((FieldType::UNSIGNED, false)),
+                "u64" => Some((FieldType::Unsigned, true)),
+                "u8" | "u16" | "u32" => Some((FieldType::Unsigned, false)),
 
-                "i64" => Some((FieldType::SIGNED, true)),
-                "i8" | "i16" | "i32" => Some((FieldType::SIGNED, false)),
+                "i64" => Some((FieldType::Signed, true)),
+                "i8" | "i16" | "i32" => Some((FieldType::Signed, false)),
 
-                "f64" => Some((FieldType::FLOAT, true)),
-                "f32" => Some((FieldType::FLOAT, false)),
+                "f64" => Some((FieldType::Float, true)),
+                "f32" => Some((FieldType::Float, false)),
                 _ => None,
             }
         }

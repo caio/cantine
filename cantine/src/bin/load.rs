@@ -9,8 +9,6 @@ use std::{
 };
 
 use crossbeam_channel::unbounded;
-use env_logger;
-use serde_json;
 
 use tantivy::{self, directory::MmapDirectory, schema::SchemaBuilder, Index, Result};
 
@@ -154,10 +152,10 @@ fn main() -> Result<()> {
     let num_producers = get_usize_from_env_or(NUM_PRODUCERS, 4);
 
     let options = LoadOptions {
-        output_dir,
         buffer_size,
         commit_every,
         num_producers,
+        output_dir,
     };
 
     load(options)

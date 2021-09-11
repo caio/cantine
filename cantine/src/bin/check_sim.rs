@@ -6,7 +6,6 @@ use std::{
     thread::spawn,
 };
 
-use crossbeam_channel;
 use tantivy::{schema::Term, Index, Result};
 
 use cantine::{
@@ -74,9 +73,8 @@ fn main() -> Result<()> {
                     .flatten()
                     .expect("ids are valid and db is healthy");
 
-                let mut input = Vec::new();
+                let mut input = vec![recipe.name.as_str()];
 
-                input.push(recipe.name.as_str());
                 for ingredient in &recipe.ingredients {
                     input.push(ingredient.as_str());
                 }

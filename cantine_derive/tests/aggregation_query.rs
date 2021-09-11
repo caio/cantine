@@ -1,5 +1,3 @@
-use bincode;
-
 use serde::{Deserialize, Serialize};
 use tantivy::{query::AllQuery, schema::SchemaBuilder, Document, Index, SegmentReader};
 

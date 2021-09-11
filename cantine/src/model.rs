@@ -305,8 +305,7 @@ impl<'de> Visitor<'de> for SearchCursorVisitor {
         base64::decode_config_slice(input, URL_SAFE_NO_PAD, &mut decode_buf[..])
             .map_err(|_| Error::custom("base64_decode failed"))?;
 
-        SearchCursor::from_bytes(&decode_buf.try_into().expect("Slice has correct length"))
-            .map_err(|_| Error::custom("invalid payload"))
+        SearchCursor::from_bytes(&decode_buf).map_err(|_| Error::custom("invalid payload"))
     }
 }
 
@@ -380,7 +379,7 @@ mod tests {
             TestResult::discard()
         } else {
             let visitor = SearchCursorVisitor;
-            visitor.visit_bytes::<serde_json::Error>(input.as_slice().try_into().unwrap());
+            visitor.visit_bytes::<serde_json::Error>(input.as_slice());
             TestResult::passed()
         }
     }
