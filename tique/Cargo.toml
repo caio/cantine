@@ -20,7 +20,7 @@ default = []
 queryparser = ["nom"]
 
 [dependencies]
-tantivy = "0.15"
+tantivy = "0.16"
 nom = { version = "7", optional = true }
 
 [dev-dependencies]
