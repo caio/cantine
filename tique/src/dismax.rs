@@ -120,8 +120,8 @@ impl DisMaxScorer {
         let current = scorers.iter().map(|s| s.doc()).min().unwrap_or(TERMINATED);
         Self {
             scorers,
-            tiebreaker,
             current,
+            tiebreaker,
         }
     }
 }

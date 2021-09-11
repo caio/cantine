@@ -112,7 +112,7 @@ impl QueryParser {
                 indices.push(idx);
             }
         }
-        indices.sort();
+        indices.sort_unstable();
         self.default_indices = indices;
     }
 
